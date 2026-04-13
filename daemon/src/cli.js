@@ -187,12 +187,16 @@ async function run(argv) {
         break;
 
       case 'inspect': {
-        const target = positional[1];
-        if (!target) fail('Usage: dreamer inspect <path-or-guid>');
-        // Detect GUID vs path
-        const isGuid = /^[0-9a-f]{32}$/i.test(target);
-        const args = isGuid ? { guid: target } : { assetPath: target };
-        await submitCommand('inspect_asset', args, flags);
+        if (flags['scene-object']) {
+          // Inspect a specific scene object
+          await submitCommand('inspect_asset', { sceneObjectPath: flags['scene-object'] }, flags);
+        } else {
+          const target = positional[1];
+          if (!target) fail('Usage: dreamer inspect <path-or-guid> OR dreamer inspect --scene-object NAME');
+          const isGuid = /^[0-9a-f]{32}$/i.test(target);
+          const args = isGuid ? { guid: target } : { assetPath: target };
+          await submitCommand('inspect_asset', args, flags);
+        }
         break;
       }
 
@@ -232,6 +236,7 @@ async function run(argv) {
           const isGuidRC = /^[0-9a-f]{32}$/i.test(flags.asset);
           Object.assign(rcArgs, isGuidRC ? { guid: flags.asset } : { assetPath: flags.asset });
         }
+        if (flags['child-path']) rcArgs.childPath = flags['child-path'];
         await submitCommand('remove_component', rcArgs, flags);
         break;
       }
@@ -258,6 +263,7 @@ async function run(argv) {
           const isGuidSP = /^[0-9a-f]{32}$/i.test(flags.asset);
           Object.assign(spArgs, isGuidSP ? { guid: flags.asset } : { assetPath: flags.asset });
         }
+        if (flags['child-path']) spArgs.childPath = flags['child-path'];
         await submitCommand('set_property', spArgs, flags);
         break;
       }
@@ -278,6 +284,21 @@ async function run(argv) {
           parent: flags.parent || null,
           scene: flags.scene || null,
         }, flags);
+        break;
+      }
+
+      case 'delete-gameobject': {
+        if (!flags['scene-object'] && !flags.asset) fail('--scene-object or --asset is required for delete-gameobject');
+        const dgArgs = {};
+        if (flags['scene-object']) {
+          dgArgs.sceneObjectPath = flags['scene-object'];
+        } else {
+          const isGuidDG = /^[0-9a-f]{32}$/i.test(flags.asset);
+          Object.assign(dgArgs, isGuidDG ? { guid: flags.asset } : { assetPath: flags.asset });
+          if (!flags['child-path']) fail('--child-path is required when deleting from a prefab');
+          dgArgs.childPath = flags['child-path'];
+        }
+        await submitCommand('delete_gameobject', dgArgs, flags);
         break;
       }
 

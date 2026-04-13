@@ -44,6 +44,81 @@ namespace Dreamer.AgentBridge
         }
 
         /// <summary>
+        /// Delete a GameObject from the scene or from within a prefab.
+        /// Scene: { sceneObjectPath: "Canvas/Panel/OldButton" }
+        /// Prefab: { assetPath: "X.prefab", childPath: "OldChild" }
+        /// Children are always destroyed with the parent (Unity default behavior).
+        /// </summary>
+        public static CommandResult DeleteGameObject(Dictionary<string, object> args)
+        {
+            string sceneObjectPath = SimpleJson.GetString(args, "sceneObjectPath");
+            if (!string.IsNullOrEmpty(sceneObjectPath))
+            {
+                var go = FindByPath(sceneObjectPath);
+                if (go == null)
+                    return CommandResult.Fail($"Scene object not found at path: {sceneObjectPath}");
+
+                string name = go.name;
+                int childCount = go.transform.childCount;
+
+                Undo.DestroyObjectImmediate(go);
+
+                var json = SimpleJson.Object()
+                    .Put("deleted", true)
+                    .Put("name", name)
+                    .Put("sceneObjectPath", sceneObjectPath)
+                    .Put("childrenAlsoDeleted", childCount)
+                    .ToString();
+                return CommandResult.Ok(json);
+            }
+
+            // Prefab child deletion
+            string assetPath = AssetOps.ResolveAssetPath(args);
+            if (assetPath == null)
+                return CommandResult.Fail("Target not found. Provide 'sceneObjectPath' or 'assetPath'+'childPath'.");
+
+            string childPath = SimpleJson.GetString(args, "childPath");
+            if (string.IsNullOrEmpty(childPath))
+                return CommandResult.Fail("'childPath' is required when deleting from a prefab (cannot delete prefab root).");
+
+            if (!assetPath.EndsWith(".prefab", StringComparison.OrdinalIgnoreCase))
+                return CommandResult.Fail($"Asset is not a prefab: {assetPath}");
+
+            var prefabRoot = PrefabUtility.LoadPrefabContents(assetPath);
+            if (prefabRoot == null)
+                return CommandResult.Fail($"Failed to load prefab: {assetPath}");
+
+            try
+            {
+                Transform child = prefabRoot.transform.Find(childPath);
+                if (child == null)
+                {
+                    PrefabUtility.UnloadPrefabContents(prefabRoot);
+                    return CommandResult.Fail($"Child '{childPath}' not found in prefab '{assetPath}'.");
+                }
+
+                string childName = child.gameObject.name;
+                int childChildren = child.childCount;
+
+                UnityEngine.Object.DestroyImmediate(child.gameObject);
+                PrefabUtility.SaveAsPrefabAsset(prefabRoot, assetPath);
+
+                var json = SimpleJson.Object()
+                    .Put("deleted", true)
+                    .Put("name", childName)
+                    .Put("assetPath", assetPath)
+                    .Put("childPath", childPath)
+                    .Put("childrenAlsoDeleted", childChildren)
+                    .ToString();
+                return CommandResult.Ok(json);
+            }
+            finally
+            {
+                PrefabUtility.UnloadPrefabContents(prefabRoot);
+            }
+        }
+
+        /// <summary>
         /// Inspect the scene hierarchy.
         /// Args: { scene?: "SceneName" }
         /// </summary>

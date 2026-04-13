@@ -86,14 +86,19 @@ namespace Dreamer.AgentBridge
         }
 
         /// <summary>
-        /// Inspect a specific asset in detail.
-        /// Args: { assetPath?: "path", guid?: "guid" }
+        /// Inspect a specific asset or scene object in detail.
+        /// Args: { assetPath?: "path", guid?: "guid", sceneObjectPath?: "MyObject/Child" }
         /// </summary>
         public static CommandResult InspectAsset(Dictionary<string, object> args)
         {
+            // Scene object inspection
+            string sceneObjectPath = SimpleJson.GetString(args, "sceneObjectPath");
+            if (!string.IsNullOrEmpty(sceneObjectPath))
+                return InspectSceneObject(sceneObjectPath);
+
             string assetPath = ResolveAssetPath(args);
             if (assetPath == null)
-                return CommandResult.Fail("Asset not found. Provide a valid 'assetPath' or 'guid'.");
+                return CommandResult.Fail("Target not found. Provide 'assetPath', 'guid', or 'sceneObjectPath'.");
 
             Type assetType = AssetDatabase.GetMainAssetTypeAtPath(assetPath);
             if (assetType == null)
@@ -208,6 +213,110 @@ namespace Dreamer.AgentBridge
                 .ToString();
 
             return CommandResult.Ok(json);
+        }
+
+        // ── Scene object inspection ──
+
+        static CommandResult InspectSceneObject(string objectPath)
+        {
+            var go = PropertyOps.FindSceneObject(objectPath);
+            if (go == null)
+                return CommandResult.Fail($"Scene object not found at path: {objectPath}");
+
+            var result = SimpleJson.Object()
+                .Put("name", go.name)
+                .Put("path", GetHierarchyPath(go))
+                .Put("instanceId", go.GetInstanceID())
+                .Put("active", go.activeSelf)
+                .Put("tag", go.tag)
+                .Put("layer", go.layer)
+                .Put("isStatic", go.isStatic);
+
+            // Is it a prefab instance?
+            var prefabAsset = PrefabUtility.GetCorrespondingObjectFromSource(go);
+            if (prefabAsset != null)
+            {
+                string prefabPath = AssetDatabase.GetAssetPath(prefabAsset);
+                result.Put("prefabSource", prefabPath);
+            }
+
+            // Components with serialized fields
+            var comps = SimpleJson.Array();
+            foreach (var comp in go.GetComponents<Component>())
+            {
+                if (comp == null) continue;
+                var compObj = SimpleJson.Object()
+                    .Put("type", comp.GetType().FullName)
+                    .Put("name", comp.GetType().Name);
+
+                // List serialized fields
+                var fields = SimpleJson.Array();
+                var so = new SerializedObject(comp);
+                var prop = so.GetIterator();
+                if (prop.NextVisible(true))
+                {
+                    do
+                    {
+                        // Skip internal Unity fields
+                        if (prop.name == "m_Script" || prop.name == "m_ObjectHideFlags") continue;
+                        var fieldObj = SimpleJson.Object()
+                            .Put("name", prop.name)
+                            .Put("type", prop.propertyType.ToString());
+                        // Show value for simple types
+                        switch (prop.propertyType)
+                        {
+                            case SerializedPropertyType.Integer: fieldObj.Put("value", prop.intValue); break;
+                            case SerializedPropertyType.Float: fieldObj.Put("value", prop.floatValue); break;
+                            case SerializedPropertyType.Boolean: fieldObj.Put("value", prop.boolValue); break;
+                            case SerializedPropertyType.String: fieldObj.Put("value", prop.stringValue); break;
+                            case SerializedPropertyType.Enum: fieldObj.Put("value", prop.enumNames[prop.enumValueIndex]); break;
+                            case SerializedPropertyType.ObjectReference:
+                                fieldObj.Put("value", prop.objectReferenceValue != null ? prop.objectReferenceValue.name : "null");
+                                break;
+                        }
+                        fields.AddRaw(fieldObj.ToString());
+                    } while (prop.NextVisible(false));
+                }
+                compObj.PutRaw("fields", fields.ToString());
+                comps.AddRaw(compObj.ToString());
+            }
+            result.PutRaw("components", comps.ToString());
+
+            // Children
+            var children = SimpleJson.Array();
+            for (int i = 0; i < go.transform.childCount; i++)
+            {
+                var child = go.transform.GetChild(i).gameObject;
+                var childComps = SimpleJson.Array();
+                foreach (var c in child.GetComponents<Component>())
+                {
+                    if (c == null) continue;
+                    childComps.AddRaw(SimpleJson.Object()
+                        .Put("type", c.GetType().Name)
+                        .ToString());
+                }
+                children.AddRaw(SimpleJson.Object()
+                    .Put("name", child.name)
+                    .Put("active", child.activeSelf)
+                    .Put("childCount", child.transform.childCount)
+                    .PutRaw("components", childComps.ToString())
+                    .ToString());
+            }
+            result.PutRaw("children", children.ToString());
+
+            return CommandResult.Ok(result.ToString());
+        }
+
+        static string GetHierarchyPath(GameObject go)
+        {
+            string path = go.name;
+            Transform parent = go.transform.parent;
+            while (parent != null)
+            {
+                path = parent.name + "/" + path;
+                parent = parent.parent;
+            }
+            return "/" + path;
         }
 
         // ── Helpers ──

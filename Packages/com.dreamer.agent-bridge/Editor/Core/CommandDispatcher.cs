@@ -47,6 +47,7 @@ namespace Dreamer.AgentBridge
 
             // Scene operations
             _handlers["create_gameobject"]   = SceneOps.CreateGameObject;
+            _handlers["delete_gameobject"]   = SceneOps.DeleteGameObject;
             _handlers["create_hierarchy"]    = SceneOps.CreateHierarchy;
             _handlers["inspect_hierarchy"]   = SceneOps.InspectHierarchy;
             _handlers["create_scene"]        = SceneOps.CreateScene;

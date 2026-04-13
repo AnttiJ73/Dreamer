@@ -158,11 +158,25 @@ namespace Dreamer.AgentBridge
 
             try
             {
-                var prefabComp = prefabRoot.GetComponent(componentType);
+                // Optional childPath — target a child within the prefab
+                string childPath = SimpleJson.GetString(args, "childPath");
+                GameObject target = prefabRoot;
+                if (!string.IsNullOrEmpty(childPath))
+                {
+                    Transform child = prefabRoot.transform.Find(childPath);
+                    if (child == null)
+                    {
+                        PrefabUtility.UnloadPrefabContents(prefabRoot);
+                        return CommandResult.Fail($"Child '{childPath}' not found in prefab '{assetPath}'.");
+                    }
+                    target = child.gameObject;
+                }
+
+                var prefabComp = target.GetComponent(componentType);
                 if (prefabComp == null)
                 {
                     PrefabUtility.UnloadPrefabContents(prefabRoot);
-                    return CommandResult.Fail($"Component '{componentType.Name}' not found on prefab root.");
+                    return CommandResult.Fail($"Component '{componentType.Name}' not found on '{target.name}'.");
                 }
 
                 UnityEngine.Object.DestroyImmediate(prefabComp);

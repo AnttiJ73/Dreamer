@@ -40,27 +40,39 @@ namespace Dreamer.AgentBridge
             if (assetPath == null)
                 return CommandResult.Fail("Target not found. Provide 'assetPath', 'guid', or 'sceneObjectPath'.");
 
+            string childPath = SimpleJson.GetString(args, "childPath");
+
             bool isPrefab = assetPath.EndsWith(".prefab", StringComparison.OrdinalIgnoreCase);
             if (isPrefab)
-                return SetPropertyOnPrefab(assetPath, componentTypeName, propertyPath, value);
+                return SetPropertyOnPrefab(assetPath, componentTypeName, propertyPath, value, childPath);
             else
                 return SetPropertyOnAsset(assetPath, propertyPath, value);
         }
 
         // ── Target: Prefab asset ──
 
-        static CommandResult SetPropertyOnPrefab(string assetPath, string componentTypeName, string propertyPath, object value)
+        static CommandResult SetPropertyOnPrefab(string assetPath, string componentTypeName, string propertyPath, object value, string childPath = null)
         {
             var prefabAsset = AssetDatabase.LoadMainAssetAtPath(assetPath) as GameObject;
             if (prefabAsset == null)
                 return CommandResult.Fail($"Failed to load prefab: {assetPath}");
 
-            Component target = FindComponent(prefabAsset, componentTypeName);
+            // Navigate to child if specified
+            GameObject targetObj = prefabAsset;
+            if (!string.IsNullOrEmpty(childPath))
+            {
+                Transform child = prefabAsset.transform.Find(childPath);
+                if (child == null)
+                    return CommandResult.Fail($"Child '{childPath}' not found in prefab '{assetPath}'.");
+                targetObj = child.gameObject;
+            }
+
+            Component target = FindComponent(targetObj, componentTypeName);
             if (target == null)
                 return CommandResult.Fail(
                     string.IsNullOrEmpty(componentTypeName)
-                        ? $"No components found on prefab: {assetPath}"
-                        : $"Component '{componentTypeName}' not found on prefab: {assetPath}");
+                        ? $"No components found on '{targetObj.name}'"
+                        : $"Component '{componentTypeName}' not found on '{targetObj.name}'");
 
             return ApplyPropertyAndSave(target, propertyPath, value, assetPath, prefabAsset);
         }
