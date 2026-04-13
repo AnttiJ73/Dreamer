@@ -48,5 +48,6 @@ daemon/.dreamer-daemon.log
 daemon/.dreamer-queue.json
 daemon/node_modules/
 
-# Claude Code
-.claude/
+# Claude Code (keep skill files, ignore the rest)
+.claude/*
+!.claude/commands/
