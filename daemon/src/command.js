@@ -14,6 +14,8 @@ const KIND_DEFS = {
   create_prefab:    { label: 'Create Prefab',      requirements: null },
   create_gameobject:{ label: 'Create GameObject',  requirements: null },
   delete_gameobject:{ label: 'Delete GameObject',  requirements: null },
+  rename_gameobject:{ label: 'Rename',             requirements: null },
+  duplicate:        { label: 'Duplicate',           requirements: null },
   instantiate_prefab:{ label: 'Instantiate Prefab', requirements: null },
   inspect_hierarchy:{ label: 'Inspect Hierarchy',  requirements: null },
   save_assets:      { label: 'Save Assets',        requirements: null },

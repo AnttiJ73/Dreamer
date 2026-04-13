@@ -302,6 +302,36 @@ async function run(argv) {
         break;
       }
 
+      case 'rename': {
+        if (!flags['scene-object'] && !flags.asset) fail('--scene-object or --asset is required for rename');
+        if (!flags.name) fail('--name is required for rename (the new name)');
+        const rnArgs = { newName: flags.name };
+        if (flags['scene-object']) {
+          rnArgs.sceneObjectPath = flags['scene-object'];
+        } else {
+          const isGuidRN = /^[0-9a-f]{32}$/i.test(flags.asset);
+          Object.assign(rnArgs, isGuidRN ? { guid: flags.asset } : { assetPath: flags.asset });
+        }
+        if (flags['child-path']) rnArgs.childPath = flags['child-path'];
+        await submitCommand('rename_gameobject', rnArgs, flags);
+        break;
+      }
+
+      case 'duplicate': {
+        if (!flags['scene-object'] && !flags.asset) fail('--scene-object or --asset is required for duplicate');
+        const dupArgs = {};
+        if (flags['scene-object']) {
+          dupArgs.sceneObjectPath = flags['scene-object'];
+        } else {
+          const isGuidDup = /^[0-9a-f]{32}$/i.test(flags.asset);
+          Object.assign(dupArgs, isGuidDup ? { guid: flags.asset } : { assetPath: flags.asset });
+        }
+        if (flags['child-path']) dupArgs.childPath = flags['child-path'];
+        if (flags.name) dupArgs.newName = flags.name;
+        await submitCommand('duplicate', dupArgs, flags);
+        break;
+      }
+
       case 'instantiate-prefab': {
         if (!flags.asset) fail('--asset is required for instantiate-prefab');
         const isGuidIP = /^[0-9a-f]{32}$/i.test(flags.asset);

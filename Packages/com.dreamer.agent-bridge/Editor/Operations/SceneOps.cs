@@ -44,6 +44,178 @@ namespace Dreamer.AgentBridge
         }
 
         /// <summary>
+        /// Rename a GameObject in scene or within a prefab.
+        /// Scene: { sceneObjectPath: "OldName", newName: "NewName" }
+        /// Prefab: { assetPath: "X.prefab", childPath?: "Child", newName: "NewName" }
+        /// </summary>
+        public static CommandResult RenameGameObject(Dictionary<string, object> args)
+        {
+            string newName = SimpleJson.GetString(args, "newName");
+            if (string.IsNullOrEmpty(newName))
+                return CommandResult.Fail("'newName' is required.");
+
+            string sceneObjectPath = SimpleJson.GetString(args, "sceneObjectPath");
+            if (!string.IsNullOrEmpty(sceneObjectPath))
+            {
+                var go = FindByPath(sceneObjectPath);
+                if (go == null)
+                    return CommandResult.Fail($"Scene object not found: {sceneObjectPath}");
+
+                string oldName = go.name;
+                Undo.RecordObject(go, $"Rename {oldName} to {newName}");
+                go.name = newName;
+                EditorUtility.SetDirty(go);
+
+                return CommandResult.Ok(SimpleJson.Object()
+                    .Put("renamed", true).Put("oldName", oldName).Put("newName", newName)
+                    .Put("path", GetGameObjectPath(go)).ToString());
+            }
+
+            // Prefab
+            string assetPath = AssetOps.ResolveAssetPath(args);
+            if (assetPath == null)
+                return CommandResult.Fail("Provide 'sceneObjectPath' or 'assetPath'.");
+
+            string childPath = SimpleJson.GetString(args, "childPath");
+
+            if (!assetPath.EndsWith(".prefab", StringComparison.OrdinalIgnoreCase))
+            {
+                // Rename asset file
+                string error = AssetDatabase.RenameAsset(assetPath, newName);
+                if (!string.IsNullOrEmpty(error))
+                    return CommandResult.Fail($"Failed to rename asset: {error}");
+                return CommandResult.Ok(SimpleJson.Object()
+                    .Put("renamed", true).Put("assetPath", assetPath).Put("newName", newName).ToString());
+            }
+
+            if (string.IsNullOrEmpty(childPath))
+            {
+                // Rename the prefab asset file itself
+                string error = AssetDatabase.RenameAsset(assetPath, newName);
+                if (!string.IsNullOrEmpty(error))
+                    return CommandResult.Fail($"Failed to rename prefab: {error}");
+                return CommandResult.Ok(SimpleJson.Object()
+                    .Put("renamed", true).Put("assetPath", assetPath).Put("newName", newName).ToString());
+            }
+
+            // Rename a child inside a prefab
+            var prefabRoot = PrefabUtility.LoadPrefabContents(assetPath);
+            if (prefabRoot == null)
+                return CommandResult.Fail($"Failed to load prefab: {assetPath}");
+
+            try
+            {
+                Transform child = prefabRoot.transform.Find(childPath);
+                if (child == null)
+                {
+                    PrefabUtility.UnloadPrefabContents(prefabRoot);
+                    return CommandResult.Fail($"Child '{childPath}' not found in prefab.");
+                }
+
+                string oldName = child.gameObject.name;
+                child.gameObject.name = newName;
+                PrefabUtility.SaveAsPrefabAsset(prefabRoot, assetPath);
+
+                return CommandResult.Ok(SimpleJson.Object()
+                    .Put("renamed", true).Put("oldName", oldName).Put("newName", newName)
+                    .Put("assetPath", assetPath).Put("childPath", childPath).ToString());
+            }
+            finally
+            {
+                PrefabUtility.UnloadPrefabContents(prefabRoot);
+            }
+        }
+
+        /// <summary>
+        /// Duplicate a GameObject in scene or within a prefab.
+        /// Scene: { sceneObjectPath: "MyObject", newName?: "MyObject (Copy)" }
+        /// Prefab child: { assetPath: "X.prefab", childPath: "Child", newName?: "Child (Copy)" }
+        /// Asset: { assetPath: "X.prefab", newName?: "X_Copy" } (duplicates the whole asset file)
+        /// </summary>
+        public static CommandResult DuplicateGameObject(Dictionary<string, object> args)
+        {
+            string newName = SimpleJson.GetString(args, "newName");
+
+            string sceneObjectPath = SimpleJson.GetString(args, "sceneObjectPath");
+            if (!string.IsNullOrEmpty(sceneObjectPath))
+            {
+                var go = FindByPath(sceneObjectPath);
+                if (go == null)
+                    return CommandResult.Fail($"Scene object not found: {sceneObjectPath}");
+
+                var clone = UnityEngine.Object.Instantiate(go, go.transform.parent);
+                clone.name = !string.IsNullOrEmpty(newName) ? newName : go.name + " (Copy)";
+                Undo.RegisterCreatedObjectUndo(clone, $"Duplicate {go.name}");
+
+                return CommandResult.Ok(SimpleJson.Object()
+                    .Put("duplicated", true)
+                    .Put("name", clone.name)
+                    .Put("instanceId", clone.GetInstanceID())
+                    .Put("path", GetGameObjectPath(clone))
+                    .ToString());
+            }
+
+            string assetPath = AssetOps.ResolveAssetPath(args);
+            if (assetPath == null)
+                return CommandResult.Fail("Provide 'sceneObjectPath' or 'assetPath'.");
+
+            string childPath = SimpleJson.GetString(args, "childPath");
+
+            // Duplicate a child inside a prefab
+            if (!string.IsNullOrEmpty(childPath))
+            {
+                if (!assetPath.EndsWith(".prefab", StringComparison.OrdinalIgnoreCase))
+                    return CommandResult.Fail($"Asset is not a prefab: {assetPath}");
+
+                var prefabRoot = PrefabUtility.LoadPrefabContents(assetPath);
+                if (prefabRoot == null)
+                    return CommandResult.Fail($"Failed to load prefab: {assetPath}");
+
+                try
+                {
+                    Transform child = prefabRoot.transform.Find(childPath);
+                    if (child == null)
+                    {
+                        PrefabUtility.UnloadPrefabContents(prefabRoot);
+                        return CommandResult.Fail($"Child '{childPath}' not found in prefab.");
+                    }
+
+                    var clone = UnityEngine.Object.Instantiate(child.gameObject, child.parent);
+                    clone.name = !string.IsNullOrEmpty(newName) ? newName : child.gameObject.name + " (Copy)";
+                    PrefabUtility.SaveAsPrefabAsset(prefabRoot, assetPath);
+
+                    return CommandResult.Ok(SimpleJson.Object()
+                        .Put("duplicated", true)
+                        .Put("name", clone.name)
+                        .Put("assetPath", assetPath)
+                        .ToString());
+                }
+                finally
+                {
+                    PrefabUtility.UnloadPrefabContents(prefabRoot);
+                }
+            }
+
+            // Duplicate the asset file
+            string dir = System.IO.Path.GetDirectoryName(assetPath).Replace('\\', '/');
+            string ext = System.IO.Path.GetExtension(assetPath);
+            string baseName = System.IO.Path.GetFileNameWithoutExtension(assetPath);
+            string copyName = !string.IsNullOrEmpty(newName) ? newName : baseName + "_Copy";
+            string copyPath = $"{dir}/{copyName}{ext}";
+
+            if (!AssetDatabase.CopyAsset(assetPath, copyPath))
+                return CommandResult.Fail($"Failed to duplicate asset to: {copyPath}");
+
+            string guid = AssetDatabase.AssetPathToGUID(copyPath);
+            return CommandResult.Ok(SimpleJson.Object()
+                .Put("duplicated", true)
+                .Put("sourcePath", assetPath)
+                .Put("newPath", copyPath)
+                .Put("guid", guid)
+                .ToString());
+        }
+
+        /// <summary>
         /// Delete a GameObject from the scene or from within a prefab.
         /// Scene: { sceneObjectPath: "Canvas/Panel/OldButton" }
         /// Prefab: { assetPath: "X.prefab", childPath: "OldChild" }
