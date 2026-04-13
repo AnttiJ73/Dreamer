@@ -65,14 +65,27 @@ namespace Dreamer.AgentBridge
 
             try
             {
-                // Check if component already exists
-                if (prefabRoot.GetComponent(componentType) != null)
+                // Optional childPath — target a child within the prefab
+                string childPath = SimpleJson.GetString(args, "childPath");
+                GameObject target = prefabRoot;
+                if (!string.IsNullOrEmpty(childPath))
                 {
-                    PrefabUtility.UnloadPrefabContents(prefabRoot);
-                    return CommandResult.Fail($"Component '{componentType.Name}' already exists on prefab root.");
+                    Transform child = prefabRoot.transform.Find(childPath);
+                    if (child == null)
+                    {
+                        PrefabUtility.UnloadPrefabContents(prefabRoot);
+                        return CommandResult.Fail($"Child '{childPath}' not found in prefab '{assetPath}'.");
+                    }
+                    target = child.gameObject;
                 }
 
-                prefabRoot.AddComponent(componentType);
+                if (target.GetComponent(componentType) != null)
+                {
+                    PrefabUtility.UnloadPrefabContents(prefabRoot);
+                    return CommandResult.Fail($"Component '{componentType.Name}' already exists on '{target.name}'.");
+                }
+
+                target.AddComponent(componentType);
                 PrefabUtility.SaveAsPrefabAsset(prefabRoot, assetPath);
             }
             finally

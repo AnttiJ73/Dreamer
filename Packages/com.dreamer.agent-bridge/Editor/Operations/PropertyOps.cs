@@ -278,13 +278,26 @@ namespace Dreamer.AgentBridge
             if (dict == null)
                 return "ObjectReference value must be null, a string (asset path), or {\"assetRef\":\"path\"} / {\"sceneRef\":\"path\"}.";
 
+            // Optional childPath — navigate to a child within a prefab or scene object
+            string childPath = SimpleJson.GetString(dict, "childPath");
+
             string assetRef = SimpleJson.GetString(dict, "assetRef");
             if (!string.IsNullOrEmpty(assetRef))
-                return SetObjectReferenceFromAsset(sp, assetRef, fieldType);
+                return SetObjectReferenceFromAsset(sp, assetRef, fieldType, childPath);
 
             string sceneRef = SimpleJson.GetString(dict, "sceneRef");
             if (!string.IsNullOrEmpty(sceneRef))
                 return SetObjectReferenceFromScene(sp, sceneRef, fieldType);
+
+            // "self" — reference a child within the same prefab/object being edited
+            string selfChild = SimpleJson.GetString(dict, "selfChild");
+            if (!string.IsNullOrEmpty(selfChild) && context != null)
+            {
+                Transform child = context.transform.Find(selfChild);
+                if (child == null)
+                    return $"Child '{selfChild}' not found under '{context.gameObject.name}'.";
+                return ResolveAndAssign(sp, child.gameObject, fieldType);
+            }
 
             string guidRef = SimpleJson.GetString(dict, "guid");
             if (!string.IsNullOrEmpty(guidRef))
@@ -292,43 +305,44 @@ namespace Dreamer.AgentBridge
                 string path = AssetDatabase.GUIDToAssetPath(guidRef);
                 if (string.IsNullOrEmpty(path))
                     return $"No asset found for GUID: {guidRef}";
-                return SetObjectReferenceFromAsset(sp, path, fieldType);
+                return SetObjectReferenceFromAsset(sp, path, fieldType, null);
             }
 
-            return "ObjectReference dict must contain 'assetRef', 'sceneRef', or 'guid'.";
+            return "ObjectReference dict must contain 'assetRef', 'sceneRef', 'selfChild', or 'guid'.";
         }
 
-        static string SetObjectReferenceFromAsset(SerializedProperty sp, string assetPath, Type fieldType)
+        static string SetObjectReferenceFromAsset(SerializedProperty sp, string assetPath, Type fieldType, string childPath = null)
         {
-            // Load the asset
             var asset = AssetDatabase.LoadMainAssetAtPath(assetPath);
             if (asset == null)
                 return $"Asset not found at: {assetPath}";
 
-            // If field expects a Component type (e.g., Rigidbody, Camera), resolve from prefab
-            if (fieldType != null && typeof(Component).IsAssignableFrom(fieldType))
+            // If childPath specified, navigate into the prefab hierarchy
+            if (!string.IsNullOrEmpty(childPath))
             {
-                // Asset must be a GameObject (prefab) to extract a component
                 var go = asset as GameObject;
                 if (go == null)
-                    return $"Field expects '{fieldType.Name}' but asset at '{assetPath}' is not a GameObject/Prefab.";
+                    return $"Asset at '{assetPath}' is not a GameObject — cannot navigate childPath.";
 
-                var comp = go.GetComponent(fieldType);
-                if (comp == null)
-                    return $"Prefab '{assetPath}' does not have a '{fieldType.Name}' component.";
+                Transform child = go.transform.Find(childPath);
+                if (child == null)
+                    return $"Child '{childPath}' not found in prefab '{assetPath}'.";
 
-                sp.objectReferenceValue = comp;
-                return null;
+                return ResolveAndAssign(sp, child.gameObject, fieldType);
             }
 
-            // If field expects GameObject, use asset directly if it's a GameObject
-            if (fieldType == null || fieldType == typeof(GameObject) || fieldType.IsAssignableFrom(asset.GetType()))
+            // No childPath — resolve from root
+            if (asset is GameObject rootGo)
+                return ResolveAndAssign(sp, rootGo, fieldType);
+
+            // Non-GameObject asset (Material, Texture, ScriptableObject, etc.)
+            if (fieldType == null || fieldType.IsAssignableFrom(asset.GetType()))
             {
                 sp.objectReferenceValue = asset;
                 return null;
             }
 
-            // Try loading a sub-asset of the expected type
+            // Try sub-assets
             var subAssets = AssetDatabase.LoadAllAssetsAtPath(assetPath);
             foreach (var sub in subAssets)
             {
@@ -340,6 +354,36 @@ namespace Dreamer.AgentBridge
             }
 
             return $"Asset at '{assetPath}' (type: {asset.GetType().Name}) cannot be assigned to field of type '{fieldType?.Name ?? "unknown"}'.";
+        }
+
+        /// <summary>Resolve and assign a GameObject (or one of its components) to a SerializedProperty.</summary>
+        static string ResolveAndAssign(SerializedProperty sp, GameObject go, Type fieldType)
+        {
+            // If field expects a Component type, get it from the GameObject
+            if (fieldType != null && typeof(Component).IsAssignableFrom(fieldType))
+            {
+                var comp = go.GetComponent(fieldType);
+                if (comp == null)
+                    return $"'{go.name}' does not have a '{fieldType.Name}' component.";
+                sp.objectReferenceValue = comp;
+                return null;
+            }
+
+            // If field expects GameObject or base Object
+            if (fieldType == null || fieldType == typeof(GameObject) || fieldType == typeof(UnityEngine.Object))
+            {
+                sp.objectReferenceValue = go;
+                return null;
+            }
+
+            // If field expects Transform
+            if (fieldType == typeof(Transform) || fieldType == typeof(RectTransform))
+            {
+                sp.objectReferenceValue = go.transform;
+                return null;
+            }
+
+            return $"'{go.name}' cannot be assigned to field of type '{fieldType?.Name ?? "unknown"}'.";
         }
 
         static string SetObjectReferenceFromScene(SerializedProperty sp, string objectPath, Type fieldType)

@@ -270,11 +270,14 @@ namespace Dreamer.AgentBridge
 
         /// <summary>
         /// Create a hierarchy of GameObjects with components.
-        /// Args: { name: "Canvas", components?: ["UnityEngine.Canvas"], children?: [{ name: "Panel", components?: [...], children?: [...] }] }
+        /// Scene mode (default): { name, components?, children? }
+        /// Prefab mode: { name, components?, children?, savePath: "Assets/Prefabs" }
+        ///   When savePath is provided, builds the hierarchy, saves as prefab, destroys the temp object.
         /// </summary>
         public static CommandResult CreateHierarchy(Dictionary<string, object> args)
         {
             string name = SimpleJson.GetString(args, "name", "GameObject");
+            string savePath = SimpleJson.GetString(args, "savePath");
             string parentPath = SimpleJson.GetString(args, "parentPath");
 
             Transform parent = null;
@@ -290,6 +293,42 @@ namespace Dreamer.AgentBridge
             if (go == null)
                 return CommandResult.Fail("Failed to create root GameObject.");
 
+            // Prefab mode: save as prefab and destroy the temp scene object
+            if (!string.IsNullOrEmpty(savePath))
+            {
+                // Ensure directory exists
+                string fullDir = System.IO.Path.GetFullPath(savePath);
+                if (!System.IO.Directory.Exists(fullDir))
+                {
+                    System.IO.Directory.CreateDirectory(fullDir);
+                    AssetDatabase.Refresh();
+                }
+
+                string assetPath = $"{savePath}/{name}.prefab";
+                if (System.IO.File.Exists(System.IO.Path.GetFullPath(assetPath)))
+                {
+                    UnityEngine.Object.DestroyImmediate(go);
+                    return CommandResult.Fail($"Prefab already exists at: {assetPath}");
+                }
+
+                var prefab = PrefabUtility.SaveAsPrefabAsset(go, assetPath, out bool success);
+                UnityEngine.Object.DestroyImmediate(go);
+
+                if (!success || prefab == null)
+                    return CommandResult.Fail($"Failed to save prefab at: {assetPath}");
+
+                string guid = AssetDatabase.AssetPathToGUID(assetPath);
+                var prefabJson = SimpleJson.Object()
+                    .Put("name", name)
+                    .Put("path", assetPath)
+                    .Put("guid", guid)
+                    .Put("created", true)
+                    .Put("isPrefab", true)
+                    .ToString();
+                return CommandResult.Ok(prefabJson);
+            }
+
+            // Scene mode: keep in scene
             Undo.RegisterCreatedObjectUndo(go, $"Create hierarchy {name}");
 
             var json = BuildHierarchyResult(go);

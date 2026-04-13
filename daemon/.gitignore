@@ -2,4 +2,5 @@
 .dreamer-daemon.pid
 .dreamer-daemon.log
 .dreamer-queue.json
+.dreamer-config.json
 node_modules/

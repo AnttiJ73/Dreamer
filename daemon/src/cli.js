@@ -1,6 +1,23 @@
 'use strict';
 
+const fs = require('fs');
+const path = require('path');
 const { ensureDaemon, isDaemonRunning, startDaemon, stopDaemon, httpRequest, focusUnity } = require('./daemon-manager');
+
+// ── Config ──────────────────────────────────────────────────────────────────
+
+const CONFIG_PATH = path.join(path.resolve(__dirname, '..'), '.dreamer-config.json');
+
+function loadConfig() {
+  try {
+    if (fs.existsSync(CONFIG_PATH)) {
+      return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
+    }
+  } catch { /* ignore malformed config */ }
+  return {};
+}
+
+const config = loadConfig();
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -60,8 +77,11 @@ async function submitCommand(kind, args, flags = {}) {
   await ensureDaemon();
 
   // Auto-focus Unity so its main thread is ticking when the command arrives.
-  // Skip with --no-focus flag.
-  if (!flags['no-focus']) {
+  // Controlled by config.autoFocus (default: true). Override with --no-focus or --focus.
+  const shouldFocus = flags['focus'] === true ? true
+    : flags['no-focus'] === true ? false
+    : config.autoFocus !== false;
+  if (shouldFocus) {
     await focusUnity();
   }
 
@@ -197,6 +217,7 @@ async function run(argv) {
           const isGuidAC = /^[0-9a-f]{32}$/i.test(flags.asset);
           Object.assign(acArgs, isGuidAC ? { guid: flags.asset } : { assetPath: flags.asset });
         }
+        if (flags['child-path']) acArgs.childPath = flags['child-path'];
         await submitCommand('add_component', acArgs, flags);
         break;
       }
@@ -451,6 +472,10 @@ async function run(argv) {
         } catch {
           fail('--json must be valid JSON');
         }
+        // --save-path makes it a prefab instead of a scene object
+        if (flags['save-path']) {
+          hierarchy.savePath = flags['save-path'];
+        }
         await submitCommand('create_hierarchy', hierarchy, flags);
         break;
       }
@@ -458,6 +483,33 @@ async function run(argv) {
       case 'focus-unity': {
         const focused = await focusUnity();
         out({ focused });
+        break;
+      }
+
+      case 'config': {
+        const sub = positional[1];
+        if (sub === 'set' && positional[2]) {
+          const [key, ...rest] = positional[2].split('=');
+          const val = rest.join('=');
+          if (!key || val === '') fail('Usage: dreamer config set key=value');
+          const cfg = loadConfig();
+          // Parse value: booleans, numbers, or string
+          let parsed = val;
+          if (val === 'true') parsed = true;
+          else if (val === 'false') parsed = false;
+          else if (!isNaN(val) && val.trim() !== '') parsed = Number(val);
+          cfg[key] = parsed;
+          fs.writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2) + '\n', 'utf8');
+          out({ set: key, value: parsed, configPath: CONFIG_PATH });
+        } else if (sub === 'get') {
+          out(loadConfig());
+        } else {
+          out({
+            usage: 'dreamer config get | dreamer config set key=value',
+            current: loadConfig(),
+            configPath: CONFIG_PATH,
+          });
+        }
         break;
       }
 

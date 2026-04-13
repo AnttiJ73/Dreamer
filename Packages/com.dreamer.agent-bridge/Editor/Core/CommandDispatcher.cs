@@ -1,3 +1,4 @@
+// Dreamer.AgentBridge — Command Dispatcher
 using System;
 using System.Collections.Generic;
 using UnityEngine;
