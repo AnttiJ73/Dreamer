@@ -124,9 +124,9 @@ async function run(argv) {
         'inspect <path-or-guid>',
         'inspect-hierarchy [--scene NAME]',
         'create-script --name NAME [--namespace NS] [--template TYPE] [--path FOLDER]',
-        'add-component --asset PATH_OR_GUID --type TYPENAME',
-        'remove-component --asset PATH_OR_GUID --type TYPENAME',
-        'set-property (--asset PATH | --scene-object /PATH) [--component TYPE] --property PATH --value JSON',
+        'add-component (--asset PATH | --scene-object NAME) --type TYPENAME',
+        'remove-component (--asset PATH | --scene-object NAME) --type TYPENAME',
+        'set-property (--asset PATH | --scene-object NAME) [--component TYPE] --property PATH --value JSON',
         'create-prefab --name NAME [--path FOLDER]',
         'instantiate-prefab --asset PATH [--name NAME] [--parent /PATH] [--position {x,y,z}]',
         'create-gameobject --name NAME [--parent PATH] [--scene SCENE]',
@@ -135,9 +135,22 @@ async function run(argv) {
         'queue [--state STATE] [--task TASK_ID]',
         'compile-status',
         'console [--count N]',
+        'add-child-to-prefab --asset PATH_OR_GUID --child-name NAME [--parent-path SUBPATH]',
+        'save-as-prefab --scene-object NAME [--path FOLDER] [--name PREFABNAME]',
+        'execute-menu-item "MenuItem/Path"',
+        'execute-method --type TYPENAME --method METHODNAME',
+        'create-scene --name NAME [--path FOLDER] [--set-active]',
+        'open-scene PATH [--mode single|additive]',
+        'save-scene [--path PATH]',
+        'create-scriptable-object --type TYPENAME --name NAME [--path FOLDER]',
+        'create-hierarchy --json JSON',
         'daemon start|stop|status',
       ],
-      flags: ['--wait', '--wait-timeout MS', '--origin-task-id ID', '--label TEXT', '--priority N', '--depends-on CMD_ID'],
+      flags: [
+        '--wait', '--wait-timeout MS', '--origin-task-id ID', '--label TEXT',
+        '--priority N', '--depends-on CMD_ID',
+        '--scene-object PATH  (for set-property / save-as-prefab: target a scene object instead of an asset)',
+      ],
     });
     return;
   }
@@ -175,24 +188,30 @@ async function run(argv) {
       }
 
       case 'add-component': {
-        if (!flags.asset) fail('--asset is required for add-component');
+        if (!flags.asset && !flags['scene-object']) fail('--asset or --scene-object is required for add-component');
         if (!flags.type) fail('--type is required for add-component');
-        const isGuidAC = /^[0-9a-f]{32}$/i.test(flags.asset);
-        await submitCommand('add_component', {
-          ...(isGuidAC ? { guid: flags.asset } : { assetPath: flags.asset }),
-          typeName: flags.type,
-        }, flags);
+        const acArgs = { typeName: flags.type };
+        if (flags['scene-object']) {
+          acArgs.sceneObjectPath = flags['scene-object'];
+        } else {
+          const isGuidAC = /^[0-9a-f]{32}$/i.test(flags.asset);
+          Object.assign(acArgs, isGuidAC ? { guid: flags.asset } : { assetPath: flags.asset });
+        }
+        await submitCommand('add_component', acArgs, flags);
         break;
       }
 
       case 'remove-component': {
-        if (!flags.asset) fail('--asset is required for remove-component');
+        if (!flags.asset && !flags['scene-object']) fail('--asset or --scene-object is required for remove-component');
         if (!flags.type) fail('--type is required for remove-component');
-        const isGuidRC = /^[0-9a-f]{32}$/i.test(flags.asset);
-        await submitCommand('remove_component', {
-          ...(isGuidRC ? { guid: flags.asset } : { assetPath: flags.asset }),
-          typeName: flags.type,
-        }, flags);
+        const rcArgs = { typeName: flags.type };
+        if (flags['scene-object']) {
+          rcArgs.sceneObjectPath = flags['scene-object'];
+        } else {
+          const isGuidRC = /^[0-9a-f]{32}$/i.test(flags.asset);
+          Object.assign(rcArgs, isGuidRC ? { guid: flags.asset } : { assetPath: flags.asset });
+        }
+        await submitCommand('remove_component', rcArgs, flags);
         break;
       }
 
@@ -344,6 +363,95 @@ async function run(argv) {
           default:
             fail(`Unknown daemon subcommand: '${sub}'. Use: start, stop, status`);
         }
+        break;
+      }
+
+      case 'add-child-to-prefab': {
+        if (!flags.asset) fail('--asset is required for add-child-to-prefab');
+        if (!flags['child-name']) fail('--child-name is required for add-child-to-prefab');
+        const isGuidACP = /^[0-9a-f]{32}$/i.test(flags.asset);
+        await submitCommand('add_child_to_prefab', {
+          ...(isGuidACP ? { guid: flags.asset } : { assetPath: flags.asset }),
+          childName: flags['child-name'],
+          parentPath: flags['parent-path'] || null,
+        }, flags);
+        break;
+      }
+
+      case 'save-as-prefab': {
+        if (!flags['scene-object']) fail('--scene-object is required for save-as-prefab');
+        await submitCommand('save_as_prefab', {
+          sceneObjectPath: flags['scene-object'],
+          savePath: flags.path || null,
+          name: flags.name || null,
+        }, flags);
+        break;
+      }
+
+      case 'execute-menu-item': {
+        const menuItem = positional[1];
+        if (!menuItem) fail('Usage: dreamer execute-menu-item "GameObject/UI/Canvas"');
+        await submitCommand('execute_menu_item', { menuItem }, flags);
+        break;
+      }
+
+      case 'execute-method': {
+        if (!flags.type) fail('--type is required for execute-method');
+        if (!flags.method) fail('--method is required for execute-method');
+        await submitCommand('execute_method', {
+          typeName: flags.type,
+          methodName: flags.method,
+        }, flags);
+        break;
+      }
+
+      case 'create-scene': {
+        if (!flags.name) fail('--name is required for create-scene');
+        await submitCommand('create_scene', {
+          name: flags.name,
+          path: flags.path || null,
+          setActive: flags['set-active'] === true || flags['set-active'] === 'true' || false,
+        }, flags);
+        break;
+      }
+
+      case 'open-scene': {
+        const scenePath = positional[1];
+        if (!scenePath) fail('Usage: dreamer open-scene "Assets/Scenes/Level2.unity" [--mode single|additive]');
+        await submitCommand('open_scene', {
+          path: scenePath,
+          mode: flags.mode || null,
+        }, flags);
+        break;
+      }
+
+      case 'save-scene': {
+        await submitCommand('save_scene', {
+          path: flags.path || null,
+        }, flags);
+        break;
+      }
+
+      case 'create-scriptable-object': {
+        if (!flags.type) fail('--type is required for create-scriptable-object');
+        if (!flags.name) fail('--name is required for create-scriptable-object');
+        await submitCommand('create_scriptable_object', {
+          typeName: flags.type,
+          name: flags.name,
+          path: flags.path || null,
+        }, flags);
+        break;
+      }
+
+      case 'create-hierarchy': {
+        if (!flags.json) fail('--json is required for create-hierarchy');
+        let hierarchy;
+        try {
+          hierarchy = JSON.parse(flags.json);
+        } catch {
+          fail('--json must be valid JSON');
+        }
+        await submitCommand('create_hierarchy', hierarchy, flags);
         break;
       }
 

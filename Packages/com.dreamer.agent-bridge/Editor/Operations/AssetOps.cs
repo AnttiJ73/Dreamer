@@ -157,6 +157,59 @@ namespace Dreamer.AgentBridge
             return CommandResult.Ok(SimpleJson.Object().Put("refreshed", true).ToString());
         }
 
+        /// <summary>
+        /// Create a ScriptableObject asset instance.
+        /// Args: { typeName: "Game.MyDataSO", name: "EnemyData", path?: "Assets/Data" }
+        /// </summary>
+        public static CommandResult CreateScriptableObject(Dictionary<string, object> args)
+        {
+            string typeName = SimpleJson.GetString(args, "typeName");
+            if (string.IsNullOrEmpty(typeName))
+                return CommandResult.Fail("'typeName' is required.");
+
+            string name = SimpleJson.GetString(args, "name");
+            if (string.IsNullOrEmpty(name))
+                return CommandResult.Fail("'name' is required.");
+
+            string folder = SimpleJson.GetString(args, "path", "Assets/Data");
+
+            Type soType = ComponentOps.ResolveType(typeName);
+            if (soType == null)
+                return CommandResult.Fail($"Type not found: {typeName}");
+
+            if (!typeof(ScriptableObject).IsAssignableFrom(soType))
+                return CommandResult.Fail($"Type '{typeName}' does not derive from ScriptableObject.");
+
+            // Ensure directory exists
+            string fullDir = Path.GetFullPath(folder);
+            if (!Directory.Exists(fullDir))
+            {
+                Directory.CreateDirectory(fullDir);
+                AssetDatabase.Refresh();
+            }
+
+            string assetPath = $"{folder}/{name}.asset";
+
+            var instance = ScriptableObject.CreateInstance(soType);
+            if (instance == null)
+                return CommandResult.Fail($"Failed to create instance of '{typeName}'.");
+
+            AssetDatabase.CreateAsset(instance, assetPath);
+            AssetDatabase.SaveAssets();
+
+            string guid = AssetDatabase.AssetPathToGUID(assetPath);
+
+            var json = SimpleJson.Object()
+                .Put("path", assetPath)
+                .Put("guid", guid)
+                .Put("typeName", soType.FullName)
+                .Put("name", name)
+                .Put("created", true)
+                .ToString();
+
+            return CommandResult.Ok(json);
+        }
+
         // ── Helpers ──
 
         public static string ResolveAssetPath(Dictionary<string, object> args)

@@ -19,6 +19,15 @@ const KIND_DEFS = {
   refresh_assets:   { label: 'Refresh Assets',     requirements: null },
   compile_status:   { label: 'Compile Status',     requirements: null },
   console:          { label: 'Console',            requirements: null },
+  add_child_to_prefab: { label: 'Add Child to Prefab', requirements: null },
+  save_as_prefab:      { label: 'Save As Prefab',      requirements: null },
+  execute_menu_item:   { label: 'Execute Menu Item',   requirements: null },
+  execute_method:      { label: 'Execute Method',      requirements: null },
+  create_scene:        { label: 'Create Scene',        requirements: null },
+  open_scene:          { label: 'Open Scene',          requirements: null },
+  save_scene:          { label: 'Save Scene',          requirements: null },
+  create_scriptable_object: { label: 'Create ScriptableObject', requirements: { compilation: true } },
+  create_hierarchy:    { label: 'Create Hierarchy',    requirements: null },
 };
 
 // ── Valid states and allowed transitions ─────────────────────────────────────

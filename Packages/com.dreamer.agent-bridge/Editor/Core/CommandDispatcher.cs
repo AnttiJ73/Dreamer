@@ -40,11 +40,24 @@ namespace Dreamer.AgentBridge
 
             // Prefab operations
             _handlers["create_prefab"]       = PrefabOps.CreatePrefab;
+            _handlers["add_child_to_prefab"] = PrefabOps.AddChildToPrefab;
+            _handlers["save_as_prefab"]      = PrefabOps.SaveAsPrefab;
             _handlers["instantiate_prefab"]  = SceneOps.InstantiatePrefab;
 
             // Scene operations
             _handlers["create_gameobject"]   = SceneOps.CreateGameObject;
+            _handlers["create_hierarchy"]    = SceneOps.CreateHierarchy;
             _handlers["inspect_hierarchy"]   = SceneOps.InspectHierarchy;
+            _handlers["create_scene"]        = SceneOps.CreateScene;
+            _handlers["open_scene"]          = SceneOps.OpenScene;
+            _handlers["save_scene"]          = SceneOps.SaveScene;
+
+            // Editor operations
+            _handlers["execute_menu_item"]       = EditorOps.ExecuteMenuItem;
+            _handlers["execute_method"]          = EditorOps.ExecuteMethod;
+
+            // ScriptableObject operations
+            _handlers["create_scriptable_object"] = AssetOps.CreateScriptableObject;
         }
 
         /// <summary>Dispatch a command and return the result.</summary>
@@ -99,7 +112,9 @@ namespace Dreamer.AgentBridge
         {
             return kind == "find_assets"
                 || kind == "inspect_asset"
-                || kind == "inspect_hierarchy";
+                || kind == "inspect_hierarchy"
+                || kind == "create_scene"
+                || kind == "open_scene";
         }
 
         public class CommandRecord

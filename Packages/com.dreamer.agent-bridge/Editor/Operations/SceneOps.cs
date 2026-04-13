@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using UnityEditor;
+using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 
@@ -146,6 +148,224 @@ namespace Dreamer.AgentBridge
                 .ToString();
 
             return CommandResult.Ok(json);
+        }
+
+        /// <summary>
+        /// Create a new scene.
+        /// Args: { name: "Level2", path?: "Assets/Scenes", setActive?: true }
+        /// </summary>
+        public static CommandResult CreateScene(Dictionary<string, object> args)
+        {
+            string name = SimpleJson.GetString(args, "name");
+            if (string.IsNullOrEmpty(name))
+                return CommandResult.Fail("'name' is required.");
+
+            string folder = SimpleJson.GetString(args, "path", "Assets/Scenes");
+            bool setActive = SimpleJson.GetBool(args, "setActive", true);
+
+            // Ensure directory exists
+            string fullDir = Path.GetFullPath(folder);
+            if (!Directory.Exists(fullDir))
+            {
+                Directory.CreateDirectory(fullDir);
+                AssetDatabase.Refresh();
+            }
+
+            string scenePath = $"{folder}/{name}.unity";
+
+            var mode = setActive ? NewSceneMode.Single : NewSceneMode.Additive;
+            var scene = EditorSceneManager.NewScene(NewSceneSetup.DefaultGameObjects, mode);
+
+            bool saved = EditorSceneManager.SaveScene(scene, scenePath);
+            if (!saved)
+                return CommandResult.Fail($"Failed to save scene at: {scenePath}");
+
+            if (setActive)
+                SceneManager.SetActiveScene(scene);
+
+            var json = SimpleJson.Object()
+                .Put("name", scene.name)
+                .Put("path", scenePath)
+                .Put("created", true)
+                .ToString();
+
+            return CommandResult.Ok(json);
+        }
+
+        /// <summary>
+        /// Open an existing scene.
+        /// Args: { path: "Assets/Scenes/Level2.unity", mode?: "single"|"additive" }
+        /// </summary>
+        public static CommandResult OpenScene(Dictionary<string, object> args)
+        {
+            string scenePath = SimpleJson.GetString(args, "path");
+            if (string.IsNullOrEmpty(scenePath))
+                return CommandResult.Fail("'path' is required.");
+
+            if (!File.Exists(Path.GetFullPath(scenePath)))
+                return CommandResult.Fail($"Scene file not found: {scenePath}");
+
+            string modeStr = SimpleJson.GetString(args, "mode", "single");
+            OpenSceneMode mode = modeStr.Equals("additive", StringComparison.OrdinalIgnoreCase)
+                ? OpenSceneMode.Additive
+                : OpenSceneMode.Single;
+
+            var scene = EditorSceneManager.OpenScene(scenePath, mode);
+            if (!scene.IsValid())
+                return CommandResult.Fail($"Failed to open scene: {scenePath}");
+
+            var json = SimpleJson.Object()
+                .Put("name", scene.name)
+                .Put("path", scene.path)
+                .Put("opened", true)
+                .ToString();
+
+            return CommandResult.Ok(json);
+        }
+
+        /// <summary>
+        /// Save the current scene or a specific scene.
+        /// Args: { path?: "Assets/Scenes/Level2.unity" }
+        /// </summary>
+        public static CommandResult SaveScene(Dictionary<string, object> args)
+        {
+            string scenePath = SimpleJson.GetString(args, "path");
+
+            if (!string.IsNullOrEmpty(scenePath))
+            {
+                // Save a specific scene by path
+                var scene = SceneManager.GetSceneByPath(scenePath);
+                if (!scene.IsValid() || !scene.isLoaded)
+                    return CommandResult.Fail($"Scene not found or not loaded: {scenePath}");
+
+                bool saved = EditorSceneManager.SaveScene(scene);
+                if (!saved)
+                    return CommandResult.Fail($"Failed to save scene: {scenePath}");
+
+                var json = SimpleJson.Object()
+                    .Put("name", scene.name)
+                    .Put("path", scene.path)
+                    .Put("saved", true)
+                    .ToString();
+
+                return CommandResult.Ok(json);
+            }
+            else
+            {
+                // Save all open scenes
+                bool saved = EditorSceneManager.SaveOpenScenes();
+                if (!saved)
+                    return CommandResult.Fail("Failed to save open scenes.");
+
+                var activeScene = SceneManager.GetActiveScene();
+                var json = SimpleJson.Object()
+                    .Put("name", activeScene.name)
+                    .Put("path", activeScene.path)
+                    .Put("saved", true)
+                    .ToString();
+
+                return CommandResult.Ok(json);
+            }
+        }
+
+        /// <summary>
+        /// Create a hierarchy of GameObjects with components.
+        /// Args: { name: "Canvas", components?: ["UnityEngine.Canvas"], children?: [{ name: "Panel", components?: [...], children?: [...] }] }
+        /// </summary>
+        public static CommandResult CreateHierarchy(Dictionary<string, object> args)
+        {
+            string name = SimpleJson.GetString(args, "name", "GameObject");
+            string parentPath = SimpleJson.GetString(args, "parentPath");
+
+            Transform parent = null;
+            if (!string.IsNullOrEmpty(parentPath))
+            {
+                var parentGo = FindByPath(parentPath);
+                if (parentGo == null)
+                    return CommandResult.Fail($"Parent not found at path: {parentPath}");
+                parent = parentGo.transform;
+            }
+
+            var go = CreateNode(args, parent);
+            if (go == null)
+                return CommandResult.Fail("Failed to create root GameObject.");
+
+            Undo.RegisterCreatedObjectUndo(go, $"Create hierarchy {name}");
+
+            var json = BuildHierarchyResult(go);
+            return CommandResult.Ok(json);
+        }
+
+        static GameObject CreateNode(Dictionary<string, object> nodeArgs, Transform parent)
+        {
+            string name = SimpleJson.GetString(nodeArgs, "name", "GameObject");
+            var go = new GameObject(name);
+
+            if (parent != null)
+                go.transform.SetParent(parent, false);
+
+            // Add components
+            if (nodeArgs.TryGetValue("components", out object compsObj) && compsObj is List<object> compList)
+            {
+                foreach (var compEntry in compList)
+                {
+                    string typeName = compEntry as string;
+                    if (string.IsNullOrEmpty(typeName)) continue;
+
+                    Type compType = ComponentOps.ResolveType(typeName);
+                    if (compType == null || !typeof(Component).IsAssignableFrom(compType)) continue;
+
+                    // Skip Transform — already present
+                    if (compType == typeof(Transform) || compType == typeof(RectTransform)) continue;
+
+                    if (go.GetComponent(compType) == null)
+                        go.AddComponent(compType);
+                }
+            }
+
+            // Create children recursively
+            if (nodeArgs.TryGetValue("children", out object childrenObj) && childrenObj is List<object> childList)
+            {
+                foreach (var childEntry in childList)
+                {
+                    if (childEntry is Dictionary<string, object> childArgs)
+                        CreateNode(childArgs, go.transform);
+                }
+            }
+
+            return go;
+        }
+
+        static string BuildHierarchyResult(GameObject go)
+        {
+            var obj = SimpleJson.Object()
+                .Put("name", go.name)
+                .Put("instanceId", go.GetInstanceID())
+                .Put("path", GetGameObjectPath(go))
+                .Put("created", true);
+
+            // Components
+            var comps = SimpleJson.Array();
+            foreach (var comp in go.GetComponents<Component>())
+            {
+                if (comp == null) continue;
+                comps.Add(comp.GetType().FullName);
+            }
+            obj.PutRaw("components", comps.ToString());
+
+            // Children
+            if (go.transform.childCount > 0)
+            {
+                var children = SimpleJson.Array();
+                for (int i = 0; i < go.transform.childCount; i++)
+                {
+                    var child = go.transform.GetChild(i).gameObject;
+                    children.AddRaw(BuildHierarchyResult(child));
+                }
+                obj.PutRaw("children", children.ToString());
+            }
+
+            return obj.ToString();
         }
 
         static float GetFloat(Dictionary<string, object> dict, string key)
