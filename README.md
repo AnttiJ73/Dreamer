@@ -202,16 +202,16 @@ Then Claude can use `/dreamer` or will automatically use the CLI when doing Unit
 
 Dreamer is designed for AI agents that have **terminal access** and operate from the **project root directory**. This is how Claude Code works — it sits at the root, sees the full file system, and runs CLI commands.
 
-**Compatible:**
-- **Claude Code** (CLI, VS Code extension, desktop app) — primary target, full support
-- Any agent framework with shell/terminal access
+**Primary target:**
+- **Claude Code** (CLI, VS Code extension, desktop app) — full support, skill files included
 
-**Not compatible:**
-- **GitHub Copilot** — operates inside the C# solution context (.sln/.csproj), not the project root. Has no terminal access to run CLI commands. Copilot sees the code but can't interact with the Unity Editor through Dreamer.
-- **Cursor Copilot++ / Tab** — autocomplete-focused, no command execution
-- IDE assistants that only have code context without shell access
+**Might work with effort:**
+- **GitHub Copilot (agent mode)**, **Cursor** — these can run terminal commands, but they typically open Unity projects from the `.sln`/`.csproj` context, not the project root. Their working directory, file context, and instruction systems are different. Someone could make it work, but it's not plug-and-play.
 
-The core requirement is simple: the agent needs to be able to run `dreamer <command>` in a terminal. If it can do that, it can use Dreamer.
+**Won't work:**
+- Autocomplete-only assistants (Copilot tab completions, etc.) — no command execution capability
+
+The core requirement: the agent needs to run `dreamer <command>` in a terminal from (or near) the Unity project root. If it can do that, it can use Dreamer.
 
 ## Port Configuration
 
