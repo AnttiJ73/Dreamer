@@ -1,0 +1,14 @@
+{
+  "name": "Dreamer.AgentBridge.Editor",
+  "rootNamespace": "Dreamer.AgentBridge",
+  "references": [],
+  "includePlatforms": ["Editor"],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": true,
+  "defineConstraints": [],
+  "versionDefines": [],
+  "noEngineReferences": false
+}

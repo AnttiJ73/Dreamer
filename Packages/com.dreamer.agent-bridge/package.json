@@ -1,0 +1,13 @@
+{
+  "name": "com.dreamer.agent-bridge",
+  "version": "0.1.0",
+  "displayName": "Dreamer - Agent Bridge",
+  "description": "Unity Editor automation bridge for LLM agents. Enables reliable command execution with lifecycle-aware scheduling.",
+  "unity": "6000.0",
+  "documentationUrl": "",
+  "keywords": ["agent", "automation", "ai", "bridge", "cli"],
+  "author": {
+    "name": "Dreamer"
+  },
+  "type": "library"
+}

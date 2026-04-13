@@ -1,0 +1,52 @@
+# Unity project files (this repo is the TOOL, not the Unity project)
+Assets/
+ProjectSettings/
+UserSettings/
+Library/
+Temp/
+Obj/
+Build/
+Builds/
+Logs/
+*.csproj
+*.sln
+*.slnx
+*.suo
+*.user
+*.pidb
+*.booproj
+*.svd
+*.pdb
+*.opendb
+*.VC.db
+*.mdb
+*.pidb.meta
+*.pdb.meta
+*.mdb.meta
+sysinfo.txt
+crashlytics-buildid.txt
+.vsconfig
+
+# Unity package manifest (project-specific, not part of the tool)
+Packages/manifest.json
+Packages/packages-lock.json
+
+# IDE
+.vs/
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Daemon runtime files
+daemon/.dreamer-daemon.pid
+daemon/.dreamer-daemon.log
+daemon/.dreamer-queue.json
+daemon/node_modules/
+
+# Claude Code
+.claude/
