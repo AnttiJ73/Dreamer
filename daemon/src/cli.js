@@ -67,10 +67,11 @@ function parseArgs(argv) {
  * @param {object} flags - CLI flags (may contain --wait, --priority, etc.)
  * @returns {Promise<void>}
  */
-// How long to wait before falling back to focus-stealing when a --wait
-// command hasn't reached a terminal state. Override per-invocation with
-// --focus-after MS, or globally via config.focusFallbackMs.
-const DEFAULT_FOCUS_FALLBACK_MS = 5000;
+// How long a --wait command may sit without progressing to a terminal state
+// before we conclude Unity's main thread is frozen and focus-steal to unstick
+// it. Only applies in smart mode. Override per-invocation with --focus-after,
+// or globally via config.focusStallMs.
+const DEFAULT_FOCUS_STALL_MS = 5000;
 
 const TERMINAL_STATES = new Set(['succeeded', 'failed', 'blocked', 'cancelled']);
 
@@ -96,15 +97,15 @@ async function submitCommand(kind, args, flags = {}) {
   const cmd = resp.data;
 
   if (flags.wait) {
-    // Poll until terminal state. If we didn't focus upfront, keep an eye on
-    // elapsed time — if the command stalls (Unity unfocused, main thread
-    // barely ticking), fallback-focus once to push things through. --no-focus
-    // opts out entirely; --focus means we already focused upfront.
+    // Poll until terminal state. In smart mode (the default), Unity's main
+    // thread can freeze entirely when the window is unfocused — not "tick
+    // slowly", just stop. If the command hasn't reached a terminal state after
+    // the stall window, focus Unity once to unstick it.
     const pollInterval = 500; // ms
     const timeout = parseInt(flags['wait-timeout'], 10) || 120000; // 2 min default
-    const fallbackMs = flags['no-focus'] === true || focusedUpfront
-      ? Infinity
-      : (parseInt(flags['focus-after'], 10) || config.focusFallbackMs || DEFAULT_FOCUS_FALLBACK_MS);
+    const stallMs = focusPolicy.shouldFallbackFocus(flags, config, focusedUpfront)
+      ? (parseInt(flags['focus-after'], 10) || config.focusStallMs || DEFAULT_FOCUS_STALL_MS)
+      : Infinity;
     const start = Date.now();
     const deadline = start + timeout;
     let hasFallbackFocused = false;
@@ -112,8 +113,9 @@ async function submitCommand(kind, args, flags = {}) {
     while (Date.now() < deadline) {
       await sleep(pollInterval);
 
-      // Fallback focus if the command is stalling.
-      if (!hasFallbackFocused && (Date.now() - start) >= fallbackMs) {
+      // Fallback focus: Unity has almost certainly stopped ticking if a
+      // dispatched command hasn't transitioned to terminal in this many ms.
+      if (!hasFallbackFocused && (Date.now() - start) >= stallMs) {
         hasFallbackFocused = true;
         await focusUnity();
       }
@@ -188,7 +190,7 @@ async function run(argv) {
         '--scene-object PATH  (for set-property / save-as-prefab: target a scene object instead of an asset)',
         '--focus          force Unity focus upfront (overrides policy)',
         '--no-focus       suppress all Unity focus (upfront + --wait fallback)',
-        '--focus-after MS override fallback delay before auto-focusing a stalled --wait command (default 5000)',
+        '--focus-after MS override stall threshold before focusing a --wait command that hasn\'t completed (default 5000, smart mode only)',
       ],
     });
     return;

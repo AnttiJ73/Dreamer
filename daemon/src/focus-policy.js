@@ -3,64 +3,72 @@
 /**
  * Focus policy for the CLI — decides whether to steal focus to Unity.
  *
- * Focus stealing is a real quality-of-life issue on single-monitor setups,
- * so the default is "only focus when necessary." There are three modes:
+ * Focus stealing is disruptive on single-monitor setups, so the default is
+ * "don't focus unless Unity is clearly stalled." Three modes:
  *
- *   'always' — focus before every mutation command (legacy behavior, same
- *              as config.autoFocus = true in earlier versions).
- *   'smart'  — only focus for commands that actually need Unity's main
- *              thread running to make progress (currently: create_script,
- *              refresh_assets). Other commands dispatch; if --wait is set
- *              and a command stalls past a threshold, we fall back to
- *              focusing. This is the new default.
- *   'never'  — no auto-focus ever. Pass --focus per-command if needed.
+ *   'smart'  — never focus upfront. Submit the command, let it dispatch, and
+ *              if --wait is set and the command hasn't reached a terminal
+ *              state after FOCUS_STALL_MS (default 5 s), focus once to
+ *              unstick Unity's main thread. This is the default.
+ *              Rationale: on Windows, Unity's main thread doesn't tick at
+ *              all for some work (not "slowly" — not at all) when unfocused.
+ *              If a command hasn't progressed after a few seconds, Unity is
+ *              frozen, not busy.
+ *   'always' — focus upfront before every mutation command. Use if Unity is
+ *              on a separate monitor and focus-steals don't bother you.
+ *   'never'  — no auto-focus ever. Pass --focus per command if needed.
  *
- * --focus and --no-focus flags always win over the policy mode.
+ * --focus / --no-focus flags always win over the policy mode.
+ * --no-focus also suppresses the stall-fallback.
  *
- * Why only create_script and refresh_assets?
- *   These trigger asset-database changes that Unity must process on its
- *   main thread. Without focus (on Windows) the main thread barely ticks,
- *   so the user is left waiting. Every other command either (a) completes
- *   in a single tick regardless, or (b) benefits from the --wait fallback.
+ * Config: autoFocus must be one of VALID_MODES. Bad or missing values fall
+ * back to 'smart'. (Booleans are NOT accepted — run
+ * `./bin/dreamer config set autoFocus=<mode>` if upgrading.)
  */
 
-const COMPILATION_TRIGGERING_KINDS = new Set(['create_script', 'refresh_assets']);
+const VALID_MODES = new Set(['smart', 'always', 'never']);
 
-const VALID_MODES = new Set(['always', 'smart', 'never']);
+const DEFAULT_MODE = 'smart';
 
-/**
- * Normalise the autoFocus config value to a mode string.
- *   true  → 'always' (backward compatibility with boolean config)
- *   false → 'never'
- *   'always' | 'smart' | 'never' → passed through
- *   anything else (undefined, null, bad strings) → 'smart' (default)
- */
+/** Normalise the autoFocus config value. Unknown/missing → 'smart'. */
 function resolveFocusMode(configValue) {
-  if (configValue === true) return 'always';
-  if (configValue === false) return 'never';
   if (typeof configValue === 'string' && VALID_MODES.has(configValue)) return configValue;
-  return 'smart';
+  return DEFAULT_MODE;
 }
 
 /**
  * Decide whether to focus Unity before submitting a command.
- * @param {string} kind - command kind (e.g. 'create_script')
+ * Note: in 'smart' mode this always returns false — the stall-fallback in
+ * submitCommand handles focus when (and only when) Unity has clearly stopped
+ * progressing.
+ * @param {string} _kind - command kind (unused; kept for future per-kind rules)
  * @param {object} flags - parsed CLI flags
  * @param {object} config - loaded .dreamer-config.json
  * @returns {boolean}
  */
-function shouldFocusUpfront(kind, flags, config) {
+function shouldFocusUpfront(_kind, flags, config) {
   if (flags && flags['focus'] === true) return true;
   if (flags && flags['no-focus'] === true) return false;
   const mode = resolveFocusMode(config ? config.autoFocus : undefined);
-  if (mode === 'always') return true;
-  if (mode === 'never') return false;
-  return COMPILATION_TRIGGERING_KINDS.has(kind);
+  return mode === 'always';
+}
+
+/**
+ * Should the --wait loop fallback-focus Unity on stall?
+ * True only when: --no-focus is not set, upfront focus did not happen,
+ * and mode is 'smart'. 'always' mode has already focused; 'never' stays out.
+ */
+function shouldFallbackFocus(flags, config, focusedUpfront) {
+  if (flags && flags['no-focus'] === true) return false;
+  if (focusedUpfront) return false;
+  const mode = resolveFocusMode(config ? config.autoFocus : undefined);
+  return mode === 'smart';
 }
 
 module.exports = {
-  COMPILATION_TRIGGERING_KINDS,
   VALID_MODES,
+  DEFAULT_MODE,
   resolveFocusMode,
   shouldFocusUpfront,
+  shouldFallbackFocus,
 };

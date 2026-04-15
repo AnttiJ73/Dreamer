@@ -113,8 +113,7 @@ Typed fields (e.g., `public Rigidbody rb`, `public Camera cam`) auto-resolve: po
 - Use `--scene-object "ObjectName"` instead of `--asset` to target scene instances
 - Inspect before mutating — verify asset paths and component types exist
 - After creating scripts, wait for compilation before adding them as components
-- Unity's main thread ticks slowly when unfocused (Windows); commands take longer but still execute
-- Default focus policy is `smart`: only `create_script` / `refresh_assets` auto-focus upfront (they trigger compilation); other commands dispatch immediately
-- When `--wait` is set and a command stalls past 5 s, the CLI falls back to focusing Unity once to push it through — tune with `--focus-after MS` or set `focusFallbackMs` in `daemon/.dreamer-config.json`
-- Use `--focus` to force upfront focus, `--no-focus` to suppress all focus (including the 5 s fallback)
-- Switch modes globally: `./bin/dreamer config set autoFocus=always` (or `smart` / `never`)
+- Unity's main thread stops ticking entirely when unfocused on Windows (for most Editor work — not "slowly", stops). So focus matters when, and only when, commands stall.
+- Default focus policy is `smart`: never focus upfront. If `--wait` is set and the command hasn't reached a terminal state after 5 s, the CLI focuses Unity once to unstick it. Tune with `--focus-after MS` or set `focusStallMs` in `daemon/.dreamer-config.json`.
+- Use `--focus` to force upfront focus, `--no-focus` to suppress all focus (including the stall fallback).
+- Switch modes globally: `./bin/dreamer config set autoFocus=always` (or `smart` / `never`).

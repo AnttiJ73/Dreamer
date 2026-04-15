@@ -58,9 +58,9 @@ Then ask all three questions in one `AskUserQuestion` call:
 
 1. **Port** — options: `<probed> (Recommended — free)`, `18710 (default)`, plus user can type Other. Header: `Port`.
 2. **Unity focus policy** — options: `Smart (Recommended)` / `Always` / `Never`. Header: `Focus`.
-   - `Smart` (default): only focus upfront for commands that trigger compilation or asset-database work (`create_script`, `refresh_assets`). For everything else, submit without focusing; if `--wait` is set and the command stalls past 5 s, fall back to focusing to unstick Unity's main thread. Best for single-monitor setups.
-   - `Always`: focus before every mutation command. Legacy behavior — use only if you have Unity on a separate monitor and don't mind constant focus steals.
-   - `Never`: no auto-focus ever; the user (or agent) must pass `--focus` per command if needed. Commands will still execute, just only when Unity ticks naturally.
+   - `Smart` (default): never focus upfront. If `--wait` is set and a command hasn't reached a terminal state after 5 s (tunable), focus once to unstick Unity's main thread. Rationale: on Windows, Unity's main thread doesn't tick at all for some work when unfocused — it stops, it doesn't slow down. If nothing's moved in 5 s, Unity is frozen, not busy.
+   - `Always`: focus before every mutation command. Use if Unity is on a separate monitor and focus-steals don't bother you.
+   - `Never`: no auto-focus, no stall fallback. Commands queue and only execute when Unity is focused by the user.
 3. **Default --wait timeout (ms)** — options: `30000 (default)`, `60000`, `120000`, plus Other. Header: `Wait timeout`.
 
 Remember the three values for Step 6.
@@ -99,8 +99,6 @@ Expect JSON help output. If it fails, confirm `daemon/bin/dreamer.js` exists and
 ```json
 { "port": <port>, "autoFocus": "smart"|"always"|"never", "defaultWaitTimeout": <ms> }
 ```
-
-(Boolean `true`/`false` values for `autoFocus` are also accepted for backward compatibility: `true` → `"always"`, `false` → `"never"`.)
 
 The CLI, daemon, and Unity package all read `port` from this file automatically — no `DREAMER_PORT` env var or EditorPrefs change needed.
 
