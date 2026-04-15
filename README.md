@@ -10,7 +10,7 @@ The agent doesn't need to understand Unity's compilation lifecycle, domain reloa
 Agent (Claude) → CLI (dreamer) → Daemon (localhost:18710) ← Unity Editor (polling)
 ```
 
-- **CLI** — Simple commands the agent calls (`./dreamer create-prefab`, `./dreamer add-component`, etc.)
+- **CLI** — Simple commands the agent calls (`./bin/dreamer create-prefab`, `./bin/dreamer add-component`, etc.)
 - **Daemon** — Persistent Node.js process that queues commands and waits for Unity to be ready
 - **Unity Package** — Editor-side bridge that polls for commands and executes them inside Unity
 
@@ -20,7 +20,7 @@ Commands that depend on compilation (like adding a newly created component) auto
 
 - **Unity 6** (6000.0+)
 - **Node.js 18+**
-- **git** on your PATH (used for install and `./dreamer update`)
+- **git** on your PATH (used for install and `./bin/dreamer update`)
 
 ## Install with Claude (recommended)
 
@@ -31,18 +31,18 @@ Open Claude Code in the root of your Unity project and paste this one-line promp
 Claude will:
 - clone the repo to a temp directory
 - ask you about configuration (port, auto-focus, wait timeout) with sensible defaults
-- copy the daemon, Unity package, Claude skill, and the project-local `./dreamer` wrapper into place (no global install — each Unity project gets its own independent Dreamer)
+- copy the daemon, Unity package, Claude skill, and the project-local `./bin/dreamer` wrapper into place (no global install — each Unity project gets its own independent Dreamer)
 - patch `.gitignore` and `CLAUDE.md`
 - record the source repo + ref so future updates work
-- verify with `./dreamer status`
+- verify with `./bin/dreamer status`
 
-After install, open the project in Unity. The bridge auto-activates. Run `./dreamer status` — `unity.connected` should be `true`.
+After install, open the project in Unity. The bridge auto-activates. Run `./bin/dreamer status` — `unity.connected` should be `true`.
 
 ### Updating
 
-Your install tracks `main` of this repo. To pull the latest, just tell Claude: **"update Dreamer"**. Claude runs `./dreamer update`, which replaces the daemon, Unity package, and skill in place. Your config is preserved. No re-install needed.
+Your install tracks `main` of this repo. To pull the latest, just tell Claude: **"update Dreamer"**. Claude runs `./bin/dreamer update`, which replaces the daemon, Unity package, and skill in place. Your config is preserved. No re-install needed.
 
-Pin to a specific release with `./dreamer update --ref v0.3.0`.
+Pin to a specific release with `./bin/dreamer update --ref v0.3.0`.
 
 ## Manual install
 
@@ -60,26 +60,28 @@ The bridge activates automatically. Toggle it via `Tools > Dreamer > Toggle Agen
 
 ### 2. Daemon + CLI (project-local)
 
-Dreamer is a project-local tool — no global install. Clone the repo, copy the `daemon/` directory and the two wrapper scripts (`dreamer`, `dreamer.cmd`) into your Unity project root, and make the POSIX wrapper executable:
+Dreamer is a project-local tool — no global install. Clone the repo to a **temp directory** (never into your Unity project, since `git clone` would create a `Dreamer/` folder that collides with the wrapper on case-insensitive filesystems), then copy `daemon/`, `Packages/com.dreamer.agent-bridge/`, and `bin/` into your Unity project root:
 
 ```bash
-git clone https://github.com/AnttiJ73/Dreamer.git /tmp/dreamer
-cp -r /tmp/dreamer/daemon /path/to/UnityProject/
-cp -r /tmp/dreamer/Packages/com.dreamer.agent-bridge /path/to/UnityProject/Packages/
-cp /tmp/dreamer/dreamer /tmp/dreamer/dreamer.cmd /path/to/UnityProject/
-chmod +x /path/to/UnityProject/dreamer
+TMP=$(mktemp -d)
+git clone --depth 1 https://github.com/AnttiJ73/Dreamer.git "$TMP/dreamer"
+cp -r "$TMP/dreamer/daemon"                         /path/to/UnityProject/
+cp -r "$TMP/dreamer/Packages/com.dreamer.agent-bridge" /path/to/UnityProject/Packages/
+cp -r "$TMP/dreamer/bin"                            /path/to/UnityProject/
+chmod +x /path/to/UnityProject/bin/dreamer
+rm -rf "$TMP"
 ```
 
-From now on, invoke the CLI as `./dreamer <command>` (POSIX/bash) or `.\dreamer <command>` (Windows cmd/PowerShell) from the Unity project root. The daemon auto-starts on any command.
+From now on, invoke the CLI as `./bin/dreamer <command>` (POSIX/bash) or `.\bin\dreamer <command>` (Windows cmd/PowerShell) from the Unity project root. The daemon auto-starts on any command.
 
-Note: manual installs skip the `.dreamer-source.json` marker, so `./dreamer update` will not work until you create the file by hand (`{ "repo": "https://github.com/AnttiJ73/Dreamer.git", "ref": "main" }` in `daemon/.dreamer-source.json`) or redo the install via Claude.
+Note: manual installs skip the `.dreamer-source.json` marker, so `./bin/dreamer update` will not work until you create the file by hand (`{ "repo": "https://github.com/AnttiJ73/Dreamer.git", "ref": "main" }` in `daemon/.dreamer-source.json`) or redo the install via Claude.
 
 ### 3. Verify
 
 With Unity open and the package installed:
 
 ```bash
-./dreamer status
+./bin/dreamer status
 ```
 
 You should see `"connected": true`.
@@ -88,44 +90,44 @@ You should see `"connected": true`.
 
 ```bash
 # Find all prefabs in the project
-./dreamer find-assets --type prefab
+./bin/dreamer find-assets --type prefab
 
 # Create a new script
-./dreamer create-script --name PlayerController --namespace Game --path "Assets/Scripts"
+./bin/dreamer create-script --name PlayerController --namespace Game --path "Assets/Scripts"
 
 # If you wrote scripts to disk externally (not via create-script), refresh Unity
-./dreamer refresh-assets --wait
+./bin/dreamer refresh-assets --wait
 
 # Create a prefab
-./dreamer create-prefab --name Player --path "Assets/Prefabs" --wait
+./bin/dreamer create-prefab --name Player --path "Assets/Prefabs" --wait
 
 # Add a component (auto-waits for compilation if needed)
-./dreamer add-component --asset "Assets/Prefabs/Player.prefab" --type "Game.PlayerController" --wait
+./bin/dreamer add-component --asset "Assets/Prefabs/Player.prefab" --type "Game.PlayerController" --wait
 
 # Set a property
-./dreamer set-property --asset "Assets/Prefabs/Player.prefab" --component "Game.PlayerController" --property "speed" --value "10" --wait
+./bin/dreamer set-property --asset "Assets/Prefabs/Player.prefab" --component "Game.PlayerController" --property "speed" --value "10" --wait
 
 # Set a prefab reference field (e.g., public GameObject enemyPrefab)
-./dreamer set-property --asset "Assets/Prefabs/Player.prefab" --component "Game.PlayerController" --property "enemyPrefab" --value '{"assetRef":"Assets/Prefabs/Enemy.prefab"}' --wait
+./bin/dreamer set-property --asset "Assets/Prefabs/Player.prefab" --component "Game.PlayerController" --property "enemyPrefab" --value '{"assetRef":"Assets/Prefabs/Enemy.prefab"}' --wait
 
 # Set a typed component reference (e.g., public Rigidbody targetBody)
 # Automatically resolves to the Rigidbody component on the target prefab
-./dreamer set-property --asset "Assets/Prefabs/Player.prefab" --component "Game.PlayerController" --property "targetBody" --value '{"assetRef":"Assets/Prefabs/Enemy.prefab"}' --wait
+./bin/dreamer set-property --asset "Assets/Prefabs/Player.prefab" --component "Game.PlayerController" --property "targetBody" --value '{"assetRef":"Assets/Prefabs/Enemy.prefab"}' --wait
 
 # Instantiate a prefab into the scene
-./dreamer instantiate-prefab --asset "Assets/Prefabs/Player.prefab" --position '{"x":0,"y":1,"z":0}' --wait
+./bin/dreamer instantiate-prefab --asset "Assets/Prefabs/Player.prefab" --position '{"x":0,"y":1,"z":0}' --wait
 
 # Set a scene object reference (e.g., assign Main Camera to a Camera field)
-./dreamer set-property --scene-object "Player" --component "Game.PlayerController" --property "mainCamera" --value '{"sceneRef":"Main Camera"}' --wait
+./bin/dreamer set-property --scene-object "Player" --component "Game.PlayerController" --property "mainCamera" --value '{"sceneRef":"Main Camera"}' --wait
 
 # Inspect what's on a prefab
-./dreamer inspect "Assets/Prefabs/Player.prefab" --wait
+./bin/dreamer inspect "Assets/Prefabs/Player.prefab" --wait
 
 # View scene hierarchy
-./dreamer inspect-hierarchy --wait
+./bin/dreamer inspect-hierarchy --wait
 
 # Save everything
-./dreamer save-assets --wait
+./bin/dreamer save-assets --wait
 ```
 
 ## Command Reference
@@ -133,21 +135,21 @@ You should see `"connected": true`.
 ### Asset Discovery
 | Command | Description |
 |---------|-------------|
-| `./dreamer find-assets [--type TYPE] [--name PATTERN] [--path FOLDER]` | Search assets. Types: prefab, script, scene, material, texture |
-| `./dreamer inspect <path-or-guid>` | Detailed info about an asset (components, fields, children) |
-| `./dreamer inspect-hierarchy [--scene NAME]` | Scene hierarchy with components |
+| `./bin/dreamer find-assets [--type TYPE] [--name PATTERN] [--path FOLDER]` | Search assets. Types: prefab, script, scene, material, texture |
+| `./bin/dreamer inspect <path-or-guid>` | Detailed info about an asset (components, fields, children) |
+| `./bin/dreamer inspect-hierarchy [--scene NAME]` | Scene hierarchy with components |
 
 ### Creation & Mutation
 | Command | Description |
 |---------|-------------|
-| `./dreamer create-script --name NAME [--namespace NS] [--template TYPE] [--path FOLDER]` | Create a C# script. Templates: monobehaviour, scriptableobject, editor, plain |
-| `./dreamer create-prefab --name NAME [--path FOLDER]` | Create an empty prefab |
-| `./dreamer add-component --asset PATH --type TYPENAME` | Add a component to a prefab |
-| `./dreamer remove-component --asset PATH --type TYPENAME` | Remove a component |
-| `./dreamer set-property --asset PATH --component TYPE --property FIELD --value JSON` | Set any property (primitives, vectors, colors, object references) |
-| `./dreamer set-property --scene-object PATH --component TYPE --property FIELD --value JSON` | Set property on a scene object instance |
-| `./dreamer instantiate-prefab --asset PATH [--position JSON] [--name NAME]` | Add a prefab instance to the scene |
-| `./dreamer create-gameobject --name NAME [--parent PATH]` | Create an empty GameObject in the scene |
+| `./bin/dreamer create-script --name NAME [--namespace NS] [--template TYPE] [--path FOLDER]` | Create a C# script. Templates: monobehaviour, scriptableobject, editor, plain |
+| `./bin/dreamer create-prefab --name NAME [--path FOLDER]` | Create an empty prefab |
+| `./bin/dreamer add-component --asset PATH --type TYPENAME` | Add a component to a prefab |
+| `./bin/dreamer remove-component --asset PATH --type TYPENAME` | Remove a component |
+| `./bin/dreamer set-property --asset PATH --component TYPE --property FIELD --value JSON` | Set any property (primitives, vectors, colors, object references) |
+| `./bin/dreamer set-property --scene-object PATH --component TYPE --property FIELD --value JSON` | Set property on a scene object instance |
+| `./bin/dreamer instantiate-prefab --asset PATH [--position JSON] [--name NAME]` | Add a prefab instance to the scene |
+| `./bin/dreamer create-gameobject --name NAME [--parent PATH]` | Create an empty GameObject in the scene |
 
 ### Object References
 
@@ -172,20 +174,20 @@ Typed component references (e.g., `public Rigidbody rb`) auto-resolve — if you
 ### Status & Diagnostics
 | Command | Description |
 |---------|-------------|
-| `./dreamer status` | Daemon + Unity connection status |
-| `./dreamer compile-status` | Is Unity compiling? Any errors? |
-| `./dreamer console [--count N]` | Recent Unity console entries |
-| `./dreamer queue [--state STATE]` | View queued/running/completed commands |
-| `./dreamer refresh-assets` | Force Unity to detect file changes on disk |
-| `./dreamer save-assets` | Save all modified assets |
+| `./bin/dreamer status` | Daemon + Unity connection status |
+| `./bin/dreamer compile-status` | Is Unity compiling? Any errors? |
+| `./bin/dreamer console [--count N]` | Recent Unity console entries |
+| `./bin/dreamer queue [--state STATE]` | View queued/running/completed commands |
+| `./bin/dreamer refresh-assets` | Force Unity to detect file changes on disk |
+| `./bin/dreamer save-assets` | Save all modified assets |
 
 ### Daemon Management
 | Command | Description |
 |---------|-------------|
-| `./dreamer daemon start` | Explicitly start the daemon |
-| `./dreamer daemon stop` | Stop the daemon |
-| `./dreamer daemon status` | Check if daemon is running |
-| `./dreamer focus-unity` | Bring Unity window to foreground |
+| `./bin/dreamer daemon start` | Explicitly start the daemon |
+| `./bin/dreamer daemon stop` | Stop the daemon |
+| `./bin/dreamer daemon status` | Check if daemon is running |
+| `./bin/dreamer focus-unity` | Bring Unity window to foreground |
 
 ### Flags
 

@@ -21,10 +21,10 @@ Agent (Claude) → CLI (dreamer) → Daemon (HTTP, :18710) ← Unity Editor (HTT
 
 ## Running
 
-Dreamer is **project-local** — no global install. Use the `./dreamer` wrapper at the project root (or `.\dreamer` on Windows cmd/PowerShell). The daemon auto-starts on the first invocation.
+Dreamer is **project-local** — no global install. Use the `./bin/dreamer` wrapper at the project root (or `.\bin\dreamer` on Windows cmd/PowerShell). The daemon auto-starts on the first invocation.
 
 ```bash
-./dreamer status    # Auto-starts daemon, shows status
+./bin/dreamer status    # Auto-starts daemon, shows status
 
 # Or run the daemon process explicitly
 node daemon/src/server.js
@@ -35,14 +35,14 @@ Unity side activates automatically when the package is loaded (InitializeOnLoad)
 ## Key commands
 
 ```bash
-./dreamer find-assets --type prefab --name "Player*"
-./dreamer inspect Assets/Prefabs/Player.prefab
-./dreamer create-script --name PlayerController --namespace Game
-./dreamer add-component --asset Assets/Prefabs/Player.prefab --type PlayerController --wait
-./dreamer set-property --asset Assets/Prefabs/Player.prefab --component PlayerController --property speed --value 5.0
-./dreamer queue --state waiting
-./dreamer compile-status
-./dreamer console --count 20
+./bin/dreamer find-assets --type prefab --name "Player*"
+./bin/dreamer inspect Assets/Prefabs/Player.prefab
+./bin/dreamer create-script --name PlayerController --namespace Game
+./bin/dreamer add-component --asset Assets/Prefabs/Player.prefab --type PlayerController --wait
+./bin/dreamer set-property --asset Assets/Prefabs/Player.prefab --component PlayerController --property speed --value 5.0
+./bin/dreamer queue --state waiting
+./bin/dreamer compile-status
+./bin/dreamer console --count 20
 ```
 
 ## Development conventions

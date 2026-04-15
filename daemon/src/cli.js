@@ -584,8 +584,8 @@ async function run(argv) {
           { src: 'daemon/package.json', dst: 'daemon/package.json', type: 'file' },
           { src: 'Packages/com.dreamer.agent-bridge', dst: 'Packages/com.dreamer.agent-bridge', type: 'dir' },
           { src: '.claude/commands/dreamer.md', dst: '.claude/commands/dreamer.md', type: 'file' },
-          { src: 'dreamer', dst: 'dreamer', type: 'file', chmod: 0o755 },
-          { src: 'dreamer.cmd', dst: 'dreamer.cmd', type: 'file' },
+          { src: 'bin/dreamer', dst: 'bin/dreamer', type: 'file', chmod: 0o755 },
+          { src: 'bin/dreamer.cmd', dst: 'bin/dreamer.cmd', type: 'file' },
         ];
 
         const missing = targets.filter((t) => !fs.existsSync(path.join(cloneDir, t.src)));
