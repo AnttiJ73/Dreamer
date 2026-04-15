@@ -8,6 +8,7 @@ const path = require('path');
 const CommandQueue = require('./queue');
 const UnityState = require('./unity-state');
 const Scheduler = require('./scheduler');
+const AssetWatcher = require('./asset-watcher');
 const { getPort } = require('./config');
 const log = require('./log').create('server');
 const createCommandHandlers = require('./handlers/commands');
@@ -32,9 +33,11 @@ queue.load();
 
 const unityState = new UnityState();
 const scheduler = new Scheduler(queue, unityState);
+const assetWatcher = new AssetWatcher(path.resolve(DAEMON_DIR, '..'));
+assetWatcher.start();
 const commandHandlers = createCommandHandlers(queue, scheduler, unityState);
-const unityHandlers = createUnityHandlers(queue, unityState, scheduler);
-const statusHandlers = createStatusHandlers(queue, unityState);
+const unityHandlers = createUnityHandlers(queue, unityState, scheduler, assetWatcher);
+const statusHandlers = createStatusHandlers(queue, unityState, assetWatcher);
 
 // ── HTTP helpers ─────────────────────────────────────────────────────────────
 

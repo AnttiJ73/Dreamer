@@ -8,8 +8,10 @@ const {
   validateTransition,
   isKnownKind,
   isTerminalState,
+  isCompileSafe,
   STATES,
   TERMINAL_STATES,
+  COMPILE_SAFE_KINDS,
 } = require('../src/command');
 
 test('createCommand rejects unknown kinds', () => {
@@ -105,4 +107,14 @@ test('STATES includes every state referenced by isTerminalState', () => {
   for (const s of TERMINAL_STATES) {
     assert.ok(STATES.includes(s), `STATES missing ${s}`);
   }
+});
+
+test('isCompileSafe covers the read-only kinds, nothing else', () => {
+  for (const k of COMPILE_SAFE_KINDS) {
+    assert.equal(isCompileSafe(k), true);
+  }
+  for (const k of ['add_component', 'set_property', 'create_prefab', 'create_script', 'instantiate_prefab']) {
+    assert.equal(isCompileSafe(k), false, `${k} should not be compile-safe`);
+  }
+  assert.equal(isCompileSafe('nonexistent_kind'), false);
 });

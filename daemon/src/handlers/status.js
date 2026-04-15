@@ -6,7 +6,7 @@
  * @param {import('../unity-state')} unityState
  * @returns {object}
  */
-function createStatusHandlers(queue, unityState) {
+function createStatusHandlers(queue, unityState, assetWatcher) {
   return {
     /**
      * GET /api/status — Overall daemon + Unity status.
@@ -23,6 +23,7 @@ function createStatusHandlers(queue, unityState) {
           },
           unity: unityState.toJSON(),
           queue: queue.getStats(),
+          assets: assetWatcher ? assetWatcher.toJSON() : null,
         },
       };
     },

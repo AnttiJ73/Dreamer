@@ -9,7 +9,7 @@ const log = require('../log').create('unity');
  * @param {import('../scheduler')} scheduler
  * @returns {object} Route handler map
  */
-function createUnityHandlers(queue, unityState, scheduler) {
+function createUnityHandlers(queue, unityState, scheduler, assetWatcher) {
   return {
     /**
      * GET /api/unity/pending — Unity polls this for commands to execute.
@@ -57,6 +57,12 @@ function createUnityHandlers(queue, unityState, scheduler) {
             state: 'succeeded',
             result,
           });
+          // A successful refresh means Unity has re-scanned the asset DB; any
+          // .cs changes the file watcher flagged before this point have been
+          // imported. Clear the dirty flag so we stop auto-prepending refreshes.
+          if (cmd.kind === 'refresh_assets' && assetWatcher) {
+            assetWatcher.markClean();
+          }
         } else {
           queue.update(body.id, {
             state: 'failed',

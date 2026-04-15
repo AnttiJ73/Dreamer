@@ -43,6 +43,30 @@ const STATES = [
 const TERMINAL_STATES = new Set(['succeeded', 'failed', 'blocked', 'cancelled']);
 
 /**
+ * Kinds that Unity's CommandDispatcher will execute even during compilation.
+ * Mirror of the Unity-side IsCompileSafe list in
+ * Packages/com.dreamer.agent-bridge/Editor/Core/CommandDispatcher.cs —
+ * keep the two in sync when adding commands.
+ *
+ * Every other kind must wait for compilation to finish before dispatch,
+ * or Unity will reject it mid-flight with "Cannot execute this command
+ * while Unity is compiling." That rejection surfaces as a terminal
+ * `failed` state, which is worse than holding the command in `waiting`
+ * until Unity is ready.
+ */
+const COMPILE_SAFE_KINDS = new Set([
+  'find_assets',
+  'inspect_asset',
+  'inspect_hierarchy',
+  'create_scene',
+  'open_scene',
+]);
+
+function isCompileSafe(kind) {
+  return COMPILE_SAFE_KINDS.has(kind);
+}
+
+/**
  * Map from current state → set of states it may transition to.
  * Any transition not listed here is illegal.
  */
@@ -141,7 +165,9 @@ module.exports = {
   validateTransition,
   isKnownKind,
   isTerminalState,
+  isCompileSafe,
   STATES,
   TERMINAL_STATES,
+  COMPILE_SAFE_KINDS,
   KIND_DEFS,
 };

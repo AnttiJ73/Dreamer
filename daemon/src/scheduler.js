@@ -1,6 +1,6 @@
 'use strict';
 
-const { validateTransition } = require('./command');
+const { validateTransition, isCompileSafe } = require('./command');
 const log = require('./log').create('scheduler');
 
 const SCHEDULER_INTERVAL_MS = 200;
@@ -79,32 +79,30 @@ class Scheduler {
         continue;
       }
 
-      // ── Requirements check ────────────────────────────────────────────
+      // ── Global compilation gate ───────────────────────────────────────
+      // Unity's CommandDispatcher rejects any non-compile-safe kind with
+      // "Cannot execute this command while Unity is compiling". Hold such
+      // commands in `waiting` until compilation finishes instead of letting
+      // them fail terminally. The fresh-daemon-race gate (Waiting for
+      // initial Unity state) applies to the same set — without the first
+      // state report, we don't know whether Unity is compiling.
+      if (!isCompileSafe(cmd.kind)) {
+        if (!this.unityState.hasReceivedState) {
+          this._tryTransition(cmd.id, 'waiting', { waitingReason: 'Waiting for initial Unity state' });
+          continue;
+        }
+        if (this.unityState.isCompiling()) {
+          this._tryTransition(cmd.id, 'waiting', { waitingReason: 'Waiting for compilation to finish' });
+          continue;
+        }
+      }
+
+      // ── Compile-errors gate (only for kinds with requirements.compilation) ─
       const reqs = cmd.requirements;
       if (reqs) {
         if (reqs.compilation) {
-          // Fresh daemon / pre-first-state-report race: don't dispatch
-          // compilation-gated commands until Unity has told us whether it's
-          // compiling or has errors. Otherwise the gate is effectively a
-          // no-op for the first ~3 s and Unity bounces commands back with
-          // "Type not found" on transient compile errors.
-          if (!this.unityState.hasReceivedState) {
-            this._tryTransition(cmd.id, 'waiting', { waitingReason: 'Waiting for initial Unity state' });
-            continue;
-          }
-          if (this.unityState.isCompiling()) {
-            this._tryTransition(cmd.id, 'waiting', { waitingReason: 'Waiting for compilation to finish' });
-            continue;
-          }
           if (this.unityState.getCompileErrors().length > 0) {
             this._tryTransition(cmd.id, 'waiting', { waitingReason: 'Compile errors present' });
-            continue;
-          }
-        }
-        if (reqs.types && Array.isArray(reqs.types) && reqs.types.length > 0) {
-          // Types are verified Unity-side, but don't dispatch during compilation
-          if (this.unityState.isCompiling()) {
-            this._tryTransition(cmd.id, 'waiting', { waitingReason: 'Waiting for compilation (type resolution)' });
             continue;
           }
         }

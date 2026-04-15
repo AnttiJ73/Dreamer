@@ -109,21 +109,24 @@ Typed fields (e.g., `public Rigidbody rb`, `public Camera cam`) auto-resolve: po
 
 ## Workflows: writing / editing C# scripts
 
-Several paths exist, and some fail silently if you skip the refresh step:
+The daemon runs an asset watcher on `Assets/**/*.{cs,asmdef,asmref}`. When you run a compile-gated command (`add-component`, `set-property`, `create-prefab`, etc.) and there have been `.cs` changes since the last refresh, the CLI automatically prepends `refresh-assets --wait` before submitting. You don't need to manage this — just write files and run commands.
 
-| Path | Needs explicit refresh? | Works if Unity unfocused? |
-|---|---|---|
-| `./bin/dreamer create-script` | no (the command handles it) | yes |
-| Direct write (any tool) + `./bin/dreamer refresh-assets --wait` | yes — required | yes |
-| Direct write, no refresh, Unity focused | no (Unity auto-imports in a few seconds) | n/a |
-| Direct write, no refresh, Unity unfocused | yes — Unity never sees it | ❌ command fails "Type not found" |
-| Edit existing `.cs` directly, no refresh | yes — Unity has stale compiled assembly | ❌ command fails "Property not found" |
+| Path | What happens |
+|---|---|
+| `./bin/dreamer create-script` | Asset pipeline handles everything end-to-end. |
+| Direct write (any tool) + compile-gated command | CLI sees the watcher's dirty flag, auto-refreshes, then runs your command. ✓ |
+| Direct write then `./bin/dreamer refresh-assets --wait` manually | Also fine — the auto-refresh sees clean state and is a no-op. |
+| Direct write while Unity is minimized | Auto-refresh triggers the import; Unity compiles as part of dispatching the refresh, then the command runs. ✓ |
 
-**Rule of thumb:** if you (or your native editor tools) wrote or edited a `.cs` file directly, always run `./bin/dreamer refresh-assets --wait` and confirm `./bin/dreamer compile-status` before using the new type/property. When in doubt, prefer `./bin/dreamer create-script` — it goes through Unity's asset pipeline end-to-end.
+Opt-outs if needed:
+- `--no-refresh` on an individual command — skip the auto-refresh.
+- `./bin/dreamer config set autoRefresh=false` — global opt-out.
+
+Check watcher state any time: `./bin/dreamer status` includes an `assets: { active, dirty, lastChangedFile }` block.
 
 ## Failure Mode: Stale Asset DB (Type / Property not found)
 
-When a command fails with `"Type not found: X"` or `"Property 'X' not found on 'Y'"`, the CLI detects this pattern and appends a hint:
+The auto-refresh usually prevents this, but it can still appear if the watcher missed an event, you passed `--no-refresh`, or Unity's import silently failed. When a command fails with `"Type not found: X"` or `"Property 'X' not found on 'Y'"`, the CLI detects this pattern and appends a hint:
 
 ```json
 {

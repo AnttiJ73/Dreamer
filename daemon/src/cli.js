@@ -6,6 +6,7 @@ const { ensureDaemon, isDaemonRunning, startDaemon, stopDaemon, httpRequest, foc
 const configModule = require('./config');
 const schemas = require('./schemas');
 const focusPolicy = require('./focus-policy');
+const { KIND_DEFS } = require('./command');
 
 // ── Config ──────────────────────────────────────────────────────────────────
 
@@ -88,8 +89,52 @@ function isStaleAssetError(errorMsg) {
       || /^Property '.+' not found on/i.test(errorMsg);
 }
 
+/**
+ * Auto-prepend a refresh-assets when a compile-gated command is about to
+ * submit and the asset watcher has seen .cs changes since the last refresh.
+ * This lets direct-write workflows (agent writes .cs via its native Write
+ * tool, then calls add-component) Just Work without a manual refresh step.
+ *
+ * Opt-out: --no-refresh flag, or config.autoRefresh === false.
+ */
+async function maybeAutoRefreshAssets(kind, flags) {
+  if (flags['no-refresh'] === true) return;
+  if (config.autoRefresh === false) return;
+  const def = KIND_DEFS[kind];
+  if (!def || !def.requirements || def.requirements.compilation !== true) return;
+  if (kind === 'refresh_assets') return; // don't recurse
+
+  let statusResp;
+  try {
+    statusResp = await httpRequest('GET', '/api/status');
+  } catch { return; /* daemon not reachable, let submit fail naturally */ }
+  const dirty = statusResp && statusResp.data && statusResp.data.assets && statusResp.data.assets.dirty;
+  if (!dirty) return;
+
+  // Issue a synchronous refresh. We use the daemon API directly (not a
+  // recursive submitCommand) so we don't double-focus or re-enter this path.
+  const refreshResp = await httpRequest('POST', '/api/commands', {
+    kind: 'refresh_assets',
+    args: {},
+    options: { humanLabel: 'Auto-refresh (stale asset DB)' },
+  });
+  if (refreshResp.status >= 400) return; // best-effort; surface the original failure later if needed
+  const refreshId = refreshResp.data.id;
+
+  // Poll until the refresh completes or we hit a reasonable timeout.
+  const deadline = Date.now() + 15000;
+  while (Date.now() < deadline) {
+    await sleep(250);
+    const check = await httpRequest('GET', `/api/commands/${refreshId}`);
+    if (check.status !== 200) break;
+    if (TERMINAL_STATES.has(check.data.state)) return;
+  }
+}
+
 async function submitCommand(kind, args, flags = {}) {
   await ensureDaemon();
+
+  await maybeAutoRefreshAssets(kind, flags);
 
   const focusedUpfront = focusPolicy.shouldFocusUpfront(kind, flags, config);
   if (focusedUpfront) {
@@ -234,6 +279,7 @@ async function run(argv) {
         '--focus          force Unity focus upfront (overrides policy)',
         '--no-focus       suppress all Unity focus (upfront + --wait fallback)',
         '--focus-after MS override stall threshold before focusing a --wait command that hasn\'t completed (default 5000, smart mode only)',
+        '--no-refresh     skip the auto refresh-assets that runs before compile-gated commands when .cs files have changed',
       ],
     });
     return;
