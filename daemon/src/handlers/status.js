@@ -19,6 +19,7 @@ function createStatusHandlers(queue, unityState) {
             uptime: process.uptime(),
             pid: process.pid,
             version: '0.1.0',
+            projectPath: unityState.getDaemonProjectPath(),
           },
           unity: unityState.toJSON(),
           queue: queue.getStats(),

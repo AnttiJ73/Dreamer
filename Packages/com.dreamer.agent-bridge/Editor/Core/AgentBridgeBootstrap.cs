@@ -161,10 +161,13 @@ namespace Dreamer.AgentBridge
                 }
             }
 
+            string projectPath = System.IO.Path.GetDirectoryName(Application.dataPath);
+
             var json = SimpleJson.Object()
                 .Put("compiling", CompilationMonitor.IsCompiling || EditorApplication.isCompiling)
                 .Put("compileErrors", CompilationMonitor.GetErrorArray())
                 .Put("playMode", EditorApplication.isPlaying)
+                .Put("projectPath", projectPath)
                 .PutRaw("recentConsole", consoleArr.ToString())
                 .ToString();
 

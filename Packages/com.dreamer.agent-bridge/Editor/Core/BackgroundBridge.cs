@@ -24,6 +24,10 @@ namespace Dreamer.AgentBridge
         static volatile bool _running;
         static string _baseUrl;
 
+        // Project root this Unity Editor has open. Captured on Start from the main
+        // thread (Application.dataPath is not safe to call from background threads).
+        static string _projectPath;
+
         // State snapshot (set from main thread, read from background thread)
         static volatile string _pendingStateJson;
 
@@ -40,6 +44,10 @@ namespace Dreamer.AgentBridge
             _running = true;
             _baseUrl = baseUrl;
             _consecutiveErrors = 0;
+
+            // Capture project root from main thread — Application.dataPath is "<project>/Assets".
+            try { _projectPath = System.IO.Path.GetDirectoryName(Application.dataPath); }
+            catch { _projectPath = null; }
 
             // Heartbeat every 3s, start immediately
             _heartbeatTimer = new Timer(HeartbeatTick, null, 0, 3000);
@@ -108,11 +116,14 @@ namespace Dreamer.AgentBridge
             if (!_running) return;
             try
             {
-                var json = SimpleJson.Object()
+                var body = SimpleJson.Object()
                     .Put("timestamp", DateTime.UtcNow.ToString("o"))
-                    .Put("pid", System.Diagnostics.Process.GetCurrentProcess().Id)
-                    .ToString();
-                HttpPost($"{_baseUrl}/api/unity/heartbeat", json);
+                    .Put("pid", System.Diagnostics.Process.GetCurrentProcess().Id);
+                if (!string.IsNullOrEmpty(_projectPath))
+                {
+                    body.Put("projectPath", _projectPath);
+                }
+                HttpPost($"{_baseUrl}/api/unity/heartbeat", body.ToString());
                 OnSuccess();
             }
             catch (Exception ex)

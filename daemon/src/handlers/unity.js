@@ -110,7 +110,7 @@ function createUnityHandlers(queue, unityState, scheduler) {
         if (hasState) {
           unityState.update(body);
         } else {
-          unityState.heartbeat();
+          unityState.heartbeat(body.projectPath);
         }
 
         if (body.recentConsole) {
@@ -120,7 +120,22 @@ function createUnityHandlers(queue, unityState, scheduler) {
         unityState.heartbeat();
       }
 
-      return { status: 200, body: { ok: true } };
+      // Log once when a mismatched Unity connects, to surface the issue in the daemon log.
+      const match = unityState.isProjectMatch();
+      if (match === false && !unityState._warnedMismatch) {
+        unityState._warnedMismatch = true;
+        log.warn(`Unity connected from a different project: ${unityState.connectedProjectPath} (daemon is for ${unityState.getDaemonProjectPath()})`);
+      } else if (match === true) {
+        unityState._warnedMismatch = false;
+      }
+
+      return {
+        status: 200,
+        body: {
+          ok: true,
+          projectMatch: match,
+        },
+      };
     },
   };
 }

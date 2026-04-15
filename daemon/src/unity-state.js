@@ -1,7 +1,24 @@
 'use strict';
 
+const path = require('path');
 const log = require('./log').create('unity-state');
 const MAX_CONSOLE_ENTRIES = 200;
+
+/**
+ * Canonicalise a path for equality comparison across platforms.
+ * - Converts backslashes to forward slashes.
+ * - Lowercases on Windows (case-insensitive filesystem).
+ * - Strips trailing slashes.
+ */
+function normalisePath(p) {
+  if (!p || typeof p !== 'string') return null;
+  let n = p.replace(/\\/g, '/').replace(/\/+$/, '');
+  if (process.platform === 'win32') n = n.toLowerCase();
+  return n;
+}
+
+/** The Unity project root this daemon belongs to — derived from its install location. */
+const DAEMON_PROJECT_ROOT = path.resolve(__dirname, '..', '..');
 
 /**
  * Tracks the current state of the Unity Editor as reported via heartbeats
@@ -15,6 +32,8 @@ class UnityState {
     this.compileErrors = [];
     this.playMode = false;
     this.lastCompileSuccess = null;
+    /** The project root of the Unity that's talking to us, as reported in heartbeats. */
+    this.connectedProjectPath = null;
     /** @type {Array<{type:string, message:string, stackTrace?:string, timestamp:string}>} */
     this.consoleEntries = [];
   }
@@ -30,6 +49,9 @@ class UnityState {
     if (state.compiling !== undefined) this.compiling = !!state.compiling;
     if (state.compileErrors !== undefined) this.compileErrors = Array.isArray(state.compileErrors) ? state.compileErrors : [];
     if (state.playMode !== undefined) this.playMode = !!state.playMode;
+    if (state.projectPath && typeof state.projectPath === 'string') {
+      this.connectedProjectPath = state.projectPath;
+    }
 
     this.connected = true;
     this.lastHeartbeat = Date.now();
@@ -45,11 +67,33 @@ class UnityState {
   }
 
   /**
-   * Record a heartbeat from Unity.
+   * Record a heartbeat from Unity. Optionally accepts the Unity-reported project path.
+   * @param {string} [projectPath]
    */
-  heartbeat() {
+  heartbeat(projectPath) {
     this.connected = true;
     this.lastHeartbeat = Date.now();
+    if (projectPath && typeof projectPath === 'string') {
+      this.connectedProjectPath = projectPath;
+    }
+  }
+
+  /**
+   * Get the daemon's own project root.
+   * @returns {string}
+   */
+  getDaemonProjectPath() {
+    return DAEMON_PROJECT_ROOT;
+  }
+
+  /**
+   * True iff Unity is connected AND the Unity project path matches the daemon's project root.
+   * Null if Unity hasn't reported a path yet.
+   * @returns {boolean|null}
+   */
+  isProjectMatch() {
+    if (!this.connectedProjectPath) return null;
+    return normalisePath(this.connectedProjectPath) === normalisePath(DAEMON_PROJECT_ROOT);
   }
 
   /**
@@ -127,6 +171,8 @@ class UnityState {
       compileErrors: this.compileErrors,
       playMode: this.playMode,
       lastCompileSuccess: this.lastCompileSuccess,
+      projectPath: this.connectedProjectPath,
+      projectMatch: this.isProjectMatch(),
     };
   }
 }

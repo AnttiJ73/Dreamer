@@ -78,6 +78,10 @@ namespace Dreamer.AgentBridge
             GUI.color = statusColor;
             EditorGUI.LabelField(rect, $"Status: {status}", style);
             GUI.color = prevColor;
+
+            // Project path (helps debug multi-project setups)
+            string projectPath = System.IO.Path.GetDirectoryName(Application.dataPath);
+            EditorGUILayout.LabelField("Project", projectPath, EditorStyles.miniLabel);
         }
 
         void DrawConnectionSettings()
