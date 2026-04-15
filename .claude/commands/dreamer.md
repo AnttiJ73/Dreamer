@@ -69,6 +69,10 @@ When you write .cs files directly to disk (not via `./bin/dreamer create-script`
 ./bin/dreamer update            # updates to the ref stored in daemon/.dreamer-source.json (usually main)
 ./bin/dreamer update --ref v0.3.0
 ./bin/dreamer update --dry-run  # show what would change without writing
+
+# Probe for a free port (useful when setting up a second Unity project on the same machine)
+./bin/dreamer probe-port                    # returns first free port in [18710, 18719]
+./bin/dreamer probe-port --start 19000 --count 20
 ```
 
 ## Updating Dreamer

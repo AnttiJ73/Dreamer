@@ -8,13 +8,14 @@ const path = require('path');
 const CommandQueue = require('./queue');
 const UnityState = require('./unity-state');
 const Scheduler = require('./scheduler');
+const { getPort } = require('./config');
 const createCommandHandlers = require('./handlers/commands');
 const createUnityHandlers = require('./handlers/unity');
 const createStatusHandlers = require('./handlers/status');
 
 // ── Configuration ────────────────────────────────────────────────────────────
 
-const PORT = parseInt(process.env.DREAMER_PORT, 10) || 18710;
+const PORT = getPort();
 const DAEMON_DIR = path.resolve(__dirname, '..');
 const QUEUE_FILE = path.join(DAEMON_DIR, '.dreamer-queue.json');
 const PID_FILE = path.join(DAEMON_DIR, '.dreamer-daemon.pid');

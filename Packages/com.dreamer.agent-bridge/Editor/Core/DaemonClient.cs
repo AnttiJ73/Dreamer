@@ -24,18 +24,61 @@ namespace Dreamer.AgentBridge
         static int _consecutiveErrors;
         const int ErrorSuppressThreshold = 3;
 
+        // Port cache — refreshed on domain reload (static state resets), which
+        // is when the user most likely changed config. Avoids file I/O on every
+        // HTTP request.
+        static int? _cachedConfigPort;
+
         // ── Public API ──
 
+        /// <summary>
+        /// Daemon port. Precedence:
+        ///   DREAMER_PORT env var > daemon/.dreamer-config.json > EditorPrefs > 18710.
+        /// Reading from the per-project config file keeps multiple Unity projects
+        /// on distinct ports without relying on the (machine-global) EditorPrefs.
+        /// </summary>
         public static int Port
         {
             get
             {
                 string envPort = Environment.GetEnvironmentVariable("DREAMER_PORT");
                 if (!string.IsNullOrEmpty(envPort) && int.TryParse(envPort, out int p)) return p;
+
+                int configPort = ReadConfigPort();
+                if (configPort > 0) return configPort;
+
                 return EditorPrefs.GetInt(PrefPort, DefaultPort);
             }
             set => EditorPrefs.SetInt(PrefPort, value);
         }
+
+        static int ReadConfigPort()
+        {
+            if (_cachedConfigPort.HasValue) return _cachedConfigPort.Value;
+            int result = -1;
+            try
+            {
+                // Application.dataPath is <project>/Assets — parent is the project root.
+                string projectRoot = System.IO.Path.GetDirectoryName(Application.dataPath);
+                string configPath = System.IO.Path.Combine(projectRoot, "daemon", ".dreamer-config.json");
+                if (System.IO.File.Exists(configPath))
+                {
+                    string json = System.IO.File.ReadAllText(configPath);
+                    // Narrow regex — config is machine-written, always simple key:value.
+                    var match = System.Text.RegularExpressions.Regex.Match(json, "\"port\"\\s*:\\s*(\\d+)");
+                    if (match.Success && int.TryParse(match.Groups[1].Value, out int p) && p > 0)
+                    {
+                        result = p;
+                    }
+                }
+            }
+            catch { /* treat as missing */ }
+            _cachedConfigPort = result;
+            return result;
+        }
+
+        /// <summary>Force a re-read of the config port on next access (call after editing config).</summary>
+        public static void InvalidatePortCache() => _cachedConfigPort = null;
 
         public static string BaseUrl => $"http://localhost:{Port}";
 

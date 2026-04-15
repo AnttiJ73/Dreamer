@@ -3,20 +3,12 @@
 const fs = require('fs');
 const path = require('path');
 const { ensureDaemon, isDaemonRunning, startDaemon, stopDaemon, httpRequest, focusUnity } = require('./daemon-manager');
+const configModule = require('./config');
 
 // ── Config ──────────────────────────────────────────────────────────────────
 
-const CONFIG_PATH = path.join(path.resolve(__dirname, '..'), '.dreamer-config.json');
-
-function loadConfig() {
-  try {
-    if (fs.existsSync(CONFIG_PATH)) {
-      return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
-    }
-  } catch { /* ignore malformed config */ }
-  return {};
-}
-
+const CONFIG_PATH = configModule.CONFIG_PATH;
+const loadConfig = configModule.load;
 const config = loadConfig();
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -167,6 +159,7 @@ async function run(argv) {
         'daemon start|stop|status',
         'update [--ref REF] [--dry-run]',
         'config get | config set key=value',
+        'probe-port [--start PORT] [--count N]',
       ],
       flags: [
         '--wait', '--wait-timeout MS', '--origin-task-id ID', '--label TEXT',
@@ -649,7 +642,7 @@ async function run(argv) {
           else if (val === 'false') parsed = false;
           else if (!isNaN(val) && val.trim() !== '') parsed = Number(val);
           cfg[key] = parsed;
-          fs.writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2) + '\n', 'utf8');
+          configModule.save(cfg);
           out({ set: key, value: parsed, configPath: CONFIG_PATH });
         } else if (sub === 'get') {
           out(loadConfig());
@@ -660,6 +653,20 @@ async function run(argv) {
             configPath: CONFIG_PATH,
           });
         }
+        break;
+      }
+
+      case 'probe-port': {
+        // Find the first free TCP port in [start, start+count). For multi-
+        // project installs: run this during install to pick a non-conflicting
+        // port. Does not start the daemon.
+        const start = parseInt(flags.start, 10) || configModule.DEFAULT_PORT;
+        const count = parseInt(flags.count, 10) || 10;
+        const free = await configModule.findFreePort(start, count);
+        if (free === null) {
+          fail(`No free port in [${start}, ${start + count}). Pass --start / --count to widen the range.`);
+        }
+        out({ port: free, probedRange: [start, start + count - 1] });
         break;
       }
 

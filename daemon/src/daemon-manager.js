@@ -4,18 +4,18 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
+const { getPort } = require('./config');
 
 const DAEMON_DIR = path.resolve(__dirname, '..');
 const PID_FILE = path.join(DAEMON_DIR, '.dreamer-daemon.pid');
 const SERVER_JS = path.join(__dirname, 'server.js');
 
 /**
- * Get the daemon base URL (respects DREAMER_PORT env).
+ * Get the daemon base URL. Port precedence: DREAMER_PORT env > config > 18710.
  * @returns {string}
  */
 function getDaemonUrl() {
-  const port = parseInt(process.env.DREAMER_PORT, 10) || 18710;
-  return `http://127.0.0.1:${port}`;
+  return `http://127.0.0.1:${getPort()}`;
 }
 
 /**

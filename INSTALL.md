@@ -35,8 +35,15 @@ Check whether `<project-root>/daemon/.dreamer-config.json` already exists.
 - **If it exists** (re-install over a prior Dreamer install): read and display the current values. Ask the user: "Keep existing config, or reconfigure?" If they keep it, skip the questions below and reuse the file as-is in Step 7. If they reconfigure, ask the questions using current values as defaults.
 - **If it does not exist** (fresh install): ask the questions below with the listed defaults. Accept "default" / empty as "use the default".
 
-1. **Daemon port** (default: `18710`)
-   - localhost TCP port the daemon listens on; Unity polls it. Change only if 18710 conflicts on this machine.
+1. **Daemon port** (default: `18710`, but **probe first** for multi-project installs — see below)
+   - localhost TCP port the daemon listens on; Unity polls it.
+   - **Each Unity project using Dreamer must have its own port.** If the user already runs Dreamer in another project on this machine, 18710 is taken and a second install on the same port will fail to start its daemon.
+   - **Probe for a free port** before asking. Run from the clone:
+     ```bash
+     node <tmp-dir>/daemon/bin/dreamer.js probe-port
+     ```
+     It returns the first free port in `[18710, 18719]` as JSON, e.g. `{"port": 18711, ...}`. Use the returned port as the default you suggest to the user. If the probe returns port 18710, they're the only Dreamer user on this machine — nothing special to do.
+   - If the probe reports all ports busy, tell the user and ask them to free one or pass `--start 19000 --count 10` for a wider range.
 2. **Auto-focus Unity** (default: `true`)
    - When true, every mutation command brings Unity to the foreground (Windows pauses unfocused Unity). Set to `false` if the user runs Unity on a second monitor and doesn't want focus stolen. `--no-focus` / `--focus` still override per-command.
 3. **Default wait timeout in ms** (default: `30000`)
@@ -143,7 +150,7 @@ Both should print the JSON help output. If not, check that `<project-root>/daemo
 }
 ```
 
-If `port` is not the default (`18710`), tell the user they must also `export DREAMER_PORT=<port>` in their shell if they ever launch the daemon directly with `node src/server.js` (the CLI reads `.dreamer-config.json` automatically).
+The daemon, the CLI, and the Unity package all read `port` from this file automatically. No EditorPrefs change and no `DREAMER_PORT` env var is needed. (The env var is still honored as an override if set.)
 
 **7b — Source marker.** Write `<project-root>/daemon/.dreamer-source.json` with the repo URL and ref you used in Step 2:
 
