@@ -20,8 +20,34 @@ Commands that depend on compilation (like adding a newly created component) auto
 
 - **Unity 6** (6000.0+)
 - **Node.js 18+**
+- **git** on your PATH (used for install and `dreamer update`)
 
-## Installation
+## Install with Claude (recommended)
+
+Open Claude Code in the root of your Unity project and paste this one-line prompt:
+
+> Install Dreamer into this Unity project by cloning `https://github.com/AnttiJ73/Dreamer.git` and following its `INSTALL.md`.
+
+Claude will:
+- clone the repo to a temp directory
+- ask you about configuration (port, auto-focus, wait timeout) with sensible defaults
+- copy the daemon, Unity package, and Claude skill into place
+- run `npm link` so the `dreamer` CLI is globally available
+- patch `.gitignore` and `CLAUDE.md`
+- record the source repo + ref so future updates work
+- verify with `dreamer status`
+
+After install, open the project in Unity. The bridge auto-activates. Run `dreamer status` — `unity.connected` should be `true`.
+
+### Updating
+
+Your install tracks `main` of this repo. To pull the latest, just tell Claude: **"update Dreamer"**. Claude runs `dreamer update`, which replaces the daemon, Unity package, and skill in place. Your config is preserved. No re-install needed.
+
+Pin to a specific release with `dreamer update --ref v0.3.0`.
+
+## Manual install
+
+If you'd rather not use Claude, do it by hand:
 
 ### 1. Unity Package
 
@@ -36,15 +62,12 @@ The bridge activates automatically. Toggle it via `Tools > Dreamer > Toggle Agen
 ### 2. Daemon + CLI
 
 ```bash
-# Clone the repo (or just the daemon directory)
 git clone https://github.com/AnttiJ73/Dreamer.git
-
-# Install the CLI globally
 cd Dreamer/daemon
 npm link
 ```
 
-This makes the `dreamer` command available globally. The daemon auto-starts when you run any command.
+This makes the `dreamer` command available globally. The daemon auto-starts when you run any command. Note: manual installs skip the `.dreamer-source.json` marker, so `dreamer update` will not work until you create it by hand or redo the install via Claude.
 
 ### 3. Verify
 

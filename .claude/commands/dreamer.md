@@ -62,7 +62,21 @@ dreamer status
 dreamer compile-status
 dreamer console --count 20
 dreamer queue --state waiting
+
+# Self-update (pulls latest from the repo recorded at install time)
+dreamer update            # updates to the ref stored in daemon/.dreamer-source.json (usually main)
+dreamer update --ref v0.3.0
+dreamer update --dry-run  # show what would change without writing
 ```
+
+## Updating Dreamer
+
+When the user asks to update Dreamer (e.g. "update Dreamer", "pull the latest Dreamer"):
+
+1. Run `dreamer update`. It clones the recorded repo shallowly, stops the daemon, and replaces `daemon/src`, `daemon/bin`, `daemon/package.json`, `Packages/com.dreamer.agent-bridge/`, and `.claude/commands/dreamer.md`. `daemon/.dreamer-config.json` and queue state are preserved.
+2. Report the new commit SHA from the output.
+3. Tell the user Unity may reimport the package briefly. Run `dreamer status` to confirm the daemon restarted and Unity is still connected.
+4. If the CLI fails with "No daemon/.dreamer-source.json", the install pre-dates self-update — tell the user to redownload and rerun the installer.
 
 ## Object Reference Values
 

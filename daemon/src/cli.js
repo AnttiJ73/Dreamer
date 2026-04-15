@@ -165,6 +165,8 @@ async function run(argv) {
         'create-scriptable-object --type TYPENAME --name NAME [--path FOLDER]',
         'create-hierarchy --json JSON',
         'daemon start|stop|status',
+        'update [--ref REF] [--dry-run]',
+        'config get | config set key=value',
       ],
       flags: [
         '--wait', '--wait-timeout MS', '--origin-task-id ID', '--label TEXT',
@@ -534,6 +536,98 @@ async function run(argv) {
       case 'focus-unity': {
         const focused = await focusUnity();
         out({ focused });
+        break;
+      }
+
+      case 'update': {
+        const { spawnSync } = require('child_process');
+        const os = require('os');
+        const SOURCE_PATH = path.join(path.resolve(__dirname, '..'), '.dreamer-source.json');
+        if (!fs.existsSync(SOURCE_PATH)) {
+          fail('No daemon/.dreamer-source.json — self-update disabled. This Dreamer install was not produced by the installer, or the source file was deleted. Reinstall via https://github.com/AnttiJ73/Dreamer/blob/main/INSTALL.md, or pull manually.');
+        }
+        let source;
+        try { source = JSON.parse(fs.readFileSync(SOURCE_PATH, 'utf8')); }
+        catch (e) { fail(`Malformed .dreamer-source.json: ${e.message}`); }
+        if (!source.repo) fail('.dreamer-source.json missing "repo" field');
+
+        const ref = flags.ref || source.ref || 'main';
+        const dryRun = flags['dry-run'] === true;
+        const projectRoot = path.resolve(__dirname, '..', '..');
+
+        // Verify git available
+        const gitCheck = spawnSync('git', ['--version'], { stdio: 'ignore' });
+        if (gitCheck.error || gitCheck.status !== 0) {
+          fail('git not found on PATH. Install git and retry.');
+        }
+
+        // Clone shallow to temp dir
+        const tmpBase = fs.mkdtempSync(path.join(os.tmpdir(), 'dreamer-update-'));
+        const cloneDir = path.join(tmpBase, 'repo');
+        const clone = spawnSync('git', ['clone', '--depth', '1', '--branch', ref, source.repo, cloneDir], {
+          stdio: ['ignore', 'pipe', 'pipe'],
+        });
+        if (clone.status !== 0) {
+          const err = (clone.stderr && clone.stderr.toString().trim()) || (clone.stdout && clone.stdout.toString().trim()) || 'unknown error';
+          try { fs.rmSync(tmpBase, { recursive: true, force: true }); } catch { /* ignore */ }
+          fail(`git clone failed for ${source.repo}@${ref}: ${err}`);
+        }
+
+        // Resolve commit SHA
+        const rev = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: cloneDir, stdio: ['ignore', 'pipe', 'pipe'] });
+        const newSha = rev.status === 0 ? rev.stdout.toString().trim() : 'unknown';
+
+        // Paths to replace (src inside clone → dst inside projectRoot)
+        const targets = [
+          { src: 'daemon/src', dst: 'daemon/src', type: 'dir' },
+          { src: 'daemon/bin', dst: 'daemon/bin', type: 'dir' },
+          { src: 'daemon/package.json', dst: 'daemon/package.json', type: 'file' },
+          { src: 'Packages/com.dreamer.agent-bridge', dst: 'Packages/com.dreamer.agent-bridge', type: 'dir' },
+          { src: '.claude/commands/dreamer.md', dst: '.claude/commands/dreamer.md', type: 'file' },
+        ];
+
+        const missing = targets.filter((t) => !fs.existsSync(path.join(cloneDir, t.src)));
+        if (missing.length > 0) {
+          try { fs.rmSync(tmpBase, { recursive: true, force: true }); } catch { /* ignore */ }
+          fail(`Source repo missing expected paths at ref '${ref}': ${missing.map((m) => m.src).join(', ')}`);
+        }
+
+        if (dryRun) {
+          try { fs.rmSync(tmpBase, { recursive: true, force: true }); } catch { /* ignore */ }
+          out({ dryRun: true, repo: source.repo, ref, sha: newSha, wouldReplace: targets.map((t) => t.dst) });
+        }
+
+        // Stop running daemon so we can swap its files safely
+        try { await stopDaemon(); } catch { /* ignore */ }
+
+        // Apply replacements
+        const applied = [];
+        for (const t of targets) {
+          const srcAbs = path.join(cloneDir, t.src);
+          const dstAbs = path.join(projectRoot, t.dst);
+          if (t.type === 'dir') {
+            if (fs.existsSync(dstAbs)) fs.rmSync(dstAbs, { recursive: true, force: true });
+            fs.mkdirSync(path.dirname(dstAbs), { recursive: true });
+            fs.cpSync(srcAbs, dstAbs, { recursive: true });
+          } else {
+            fs.mkdirSync(path.dirname(dstAbs), { recursive: true });
+            fs.copyFileSync(srcAbs, dstAbs);
+          }
+          applied.push(t.dst);
+        }
+
+        // Cleanup
+        try { fs.rmSync(tmpBase, { recursive: true, force: true }); } catch { /* ignore */ }
+
+        out({
+          updated: true,
+          repo: source.repo,
+          ref,
+          sha: newSha,
+          replaced: applied,
+          preserved: ['daemon/.dreamer-config.json', 'daemon/.dreamer-source.json', 'daemon/.dreamer-queue.json'],
+          note: 'Daemon stopped; it will auto-restart on the next dreamer command. Unity may need a moment to reimport the updated package.',
+        });
         break;
       }
 
