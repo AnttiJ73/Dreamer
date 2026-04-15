@@ -123,22 +123,22 @@ test('schema registry loads every shipped schema with a kind, args, and summary'
   }
 });
 
-test('add_component schema rejects missing type and ambiguous target', () => {
+test('add_component schema rejects missing typeName and no target', () => {
   const schemas = require('../src/schemas');
   const s = schemas.get('add_component');
   assert.ok(s);
 
-  // Missing 'type' + no target → multiple errors
+  // Missing 'typeName' + no target → multiple errors
   let r = validate(s, {});
   assert.equal(r.valid, false);
-  assert.ok(r.errors.some((e) => /Missing required arg: 'type'/.test(e)));
-  assert.ok(r.errors.some((e) => /Exactly one of/.test(e)));
+  assert.ok(r.errors.some((e) => /Missing required arg: 'typeName'/.test(e)));
+  assert.ok(r.errors.some((e) => /At least one of/.test(e)));
 
-  // Both asset and sceneObject
-  r = validate(s, { asset: 'x', sceneObject: 'y', type: 'T' });
-  assert.equal(r.valid, false);
-  assert.ok(r.errors.some((e) => /Only one of/.test(e)));
+  // assetPath + guid together are fine (Unity treats guid as fallback)
+  r = validate(s, { assetPath: 'Assets/Prefabs/P.prefab', guid: 'abc123', typeName: 'Game.X' });
+  assert.equal(r.valid, true);
 
-  // Valid: one target + type
-  assert.equal(validate(s, { asset: 'Assets/Prefabs/P.prefab', type: 'Game.X' }).valid, true);
+  // Valid: one target + typeName
+  assert.equal(validate(s, { assetPath: 'Assets/Prefabs/P.prefab', typeName: 'Game.X' }).valid, true);
+  assert.equal(validate(s, { sceneObjectPath: 'Main Camera', typeName: 'UnityEngine.AudioListener' }).valid, true);
 });

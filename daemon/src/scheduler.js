@@ -83,6 +83,15 @@ class Scheduler {
       const reqs = cmd.requirements;
       if (reqs) {
         if (reqs.compilation) {
+          // Fresh daemon / pre-first-state-report race: don't dispatch
+          // compilation-gated commands until Unity has told us whether it's
+          // compiling or has errors. Otherwise the gate is effectively a
+          // no-op for the first ~3 s and Unity bounces commands back with
+          // "Type not found" on transient compile errors.
+          if (!this.unityState.hasReceivedState) {
+            this._tryTransition(cmd.id, 'waiting', { waitingReason: 'Waiting for initial Unity state' });
+            continue;
+          }
           if (this.unityState.isCompiling()) {
             this._tryTransition(cmd.id, 'waiting', { waitingReason: 'Waiting for compilation to finish' });
             continue;

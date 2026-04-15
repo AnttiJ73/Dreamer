@@ -107,6 +107,22 @@ When the user asks to update Dreamer (e.g. "update Dreamer", "pull the latest Dr
 
 Typed fields (e.g., `public Rigidbody rb`, `public Camera cam`) auto-resolve: point to a prefab or scene object and Dreamer finds the matching component.
 
+## Failure Mode: Unity Compile Errors
+
+When Unity has compile errors, commands that need compiled types (`add_component`, `remove_component`, `create_script`, etc.) can't proceed. The daemon gates them with `waitingReason: "Compile errors present"`. If you use `--wait`, the CLI detects this and short-circuits immediately — you don't have to wait out the timeout — returning:
+
+```json
+{
+  "error": "Cannot proceed: Unity has compile errors",
+  "commandId": "...",
+  "kind": "add_component",
+  "waitingReason": "Compile errors present",
+  "compileErrors": ["Assets/…cs(5,21): error CS1002: ; expected", …],
+  "hint": "Fix the scripts … then re-run."
+}
+```
+Exit code is 1. When you see this, fix the scripts, run `./bin/dreamer refresh-assets --wait`, confirm `./bin/dreamer compile-status` shows no errors, then retry the original command. Unity must be focused to actually run compilation — if `compile-status` seems frozen, `./bin/dreamer focus-unity` forces a tick.
+
 ## Important Notes
 
 - Commands that need compiled types (`add_component`, `remove_component`) auto-wait for compilation

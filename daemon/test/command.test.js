@@ -66,6 +66,12 @@ test('validateTransition blocks running → queued (cannot un-run a command)', (
   assert.match(result.reason, /Cannot transition/);
 });
 
+test('validateTransition allows waiting → waiting (so waitingReason can update)', () => {
+  // Added to fix stale waitingReason — e.g. a command first waits on
+  // "unity_disconnected", later the real blocker is "Compile errors present".
+  assert.equal(validateTransition('waiting', 'waiting').valid, true);
+});
+
 test('validateTransition blocks transitions out of terminal states', () => {
   for (const terminal of TERMINAL_STATES) {
     if (terminal === 'blocked') continue; // blocked → cancelled is allowed

@@ -50,6 +50,27 @@ test('update() captures projectPath from state payload', () => {
   assert.equal(s.connectedProjectPath, '/tmp/AnotherProject');
 });
 
+test('hasReceivedState is false until first state-bearing update', () => {
+  const s = new UnityState();
+  assert.equal(s.hasReceivedState, false);
+  s.heartbeat(); // heartbeat alone does not count
+  assert.equal(s.hasReceivedState, false);
+  s.heartbeat('/some/project'); // still heartbeat, not a state report
+  assert.equal(s.hasReceivedState, false);
+  s.update({ compiling: false }); // real state report
+  assert.equal(s.hasReceivedState, true);
+});
+
+test('hasReceivedState flips on any of {compiling, compileErrors, playMode}', () => {
+  for (const key of ['compiling', 'compileErrors', 'playMode']) {
+    const s = new UnityState();
+    const payload = {};
+    payload[key] = key === 'compileErrors' ? [] : false;
+    s.update(payload);
+    assert.equal(s.hasReceivedState, true, `${key} should set hasReceivedState`);
+  }
+});
+
 test('isProjectMatch returns null when Unity has not reported a path', () => {
   const s = new UnityState();
   assert.equal(s.isProjectMatch(), null);

@@ -48,7 +48,9 @@ const TERMINAL_STATES = new Set(['succeeded', 'failed', 'blocked', 'cancelled'])
  */
 const TRANSITIONS = {
   queued:      new Set(['waiting', 'dispatched', 'blocked', 'cancelled']),
-  waiting:     new Set(['queued', 'dispatched', 'blocked', 'cancelled']),
+  // waiting → waiting is intentional: lets the scheduler update waitingReason
+  // as blocking conditions change (e.g. "unity_disconnected" → "Compile errors present").
+  waiting:     new Set(['waiting', 'queued', 'dispatched', 'blocked', 'cancelled']),
   dispatched:  new Set(['running', 'waiting', 'queued', 'failed', 'cancelled']),
   running:     new Set(['succeeded', 'failed', 'cancelled']),
   succeeded:   new Set(),

@@ -23,10 +23,6 @@ module.exports = {
       enum: ['monobehaviour', 'scriptableobject', 'editor', 'plain'],
       description: 'Script template. Defaults to "monobehaviour".',
     },
-    content: {
-      type: 'string',
-      description: 'Custom script body (overrides the template entirely). Use for non-standard class shapes.',
-    },
   },
   result: {
     type: 'object',

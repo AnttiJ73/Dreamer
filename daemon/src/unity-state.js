@@ -32,6 +32,11 @@ class UnityState {
     this.compileErrors = [];
     this.playMode = false;
     this.lastCompileSuccess = null;
+    /** True once Unity has reported full state at least once. Compilation-gated
+     *  commands must wait until this is true, otherwise a fresh daemon with an
+     *  empty state snapshot will dispatch them before the first state tick and
+     *  Unity will bounce them with "Type not found" if compile errors exist. */
+    this.hasReceivedState = false;
     /** The project root of the Unity that's talking to us, as reported in heartbeats. */
     this.connectedProjectPath = null;
     /** @type {Array<{type:string, message:string, stackTrace?:string, timestamp:string}>} */
@@ -51,6 +56,13 @@ class UnityState {
     if (state.playMode !== undefined) this.playMode = !!state.playMode;
     if (state.projectPath && typeof state.projectPath === 'string') {
       this.connectedProjectPath = state.projectPath;
+    }
+
+    // Any non-heartbeat state update counts — at this point we know Unity
+    // has told us about compiling/compileErrors/playMode, so compilation-
+    // gated dispatch can proceed without the fresh-daemon race.
+    if (state.compiling !== undefined || state.compileErrors !== undefined || state.playMode !== undefined) {
+      this.hasReceivedState = true;
     }
 
     this.connected = true;

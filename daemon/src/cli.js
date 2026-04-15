@@ -129,6 +129,24 @@ async function submitCommand(kind, args, flags = {}) {
         out(current);
         return;
       }
+
+      // Short-circuit on dead-wait conditions — situations where polling
+      // will never succeed without external intervention. Fetch extra
+      // context (compile errors) and surface a clear, non-zero failure
+      // instead of letting the user wait out the timeout.
+      if (current.state === 'waiting' && current.waitingReason === 'Compile errors present') {
+        const cs = await httpRequest('GET', '/api/compile-status').catch(() => null);
+        const errors = (cs && cs.data && cs.data.errors) || [];
+        process.stderr.write(JSON.stringify({
+          error: 'Cannot proceed: Unity has compile errors',
+          commandId: current.id,
+          kind: current.kind,
+          waitingReason: current.waitingReason,
+          compileErrors: errors,
+          hint: 'Fix the scripts causing compile errors, then re-run this command. Check `./bin/dreamer compile-status` for the current state.',
+        }, null, 2) + '\n');
+        process.exit(1);
+      }
     }
     fail(`Timed out waiting for command ${cmd.id} after ${timeout}ms`);
   } else {

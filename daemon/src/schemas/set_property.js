@@ -5,19 +5,27 @@ module.exports = {
   summary: 'Set a property or serialized field on a component attached to a prefab or scene object.',
   requirements: null,
   args: {
-    asset: {
+    assetPath: {
       type: 'string',
       description: 'Path to a prefab asset, e.g. "Assets/Prefabs/Player.prefab".',
     },
-    sceneObject: {
+    guid: {
+      type: 'string',
+      description: 'Asset GUID (alternative to assetPath).',
+    },
+    sceneObjectPath: {
       type: 'string',
       description: 'Name or hierarchy path of a scene object instance.',
     },
-    component: {
+    childPath: {
+      type: 'string',
+      description: 'For nested GameObjects inside a prefab, the slash-separated path from the root.',
+    },
+    componentType: {
       type: 'string',
       description: 'Fully-qualified component type name (e.g. "Game.PlayerController"). Optional if the property is on the GameObject itself (e.g. "name", "layer").',
     },
-    property: {
+    propertyPath: {
       type: 'string',
       required: true,
       description: 'Field name. May be a nested path for sub-objects. For arrays, use "fieldName[index]".',
@@ -29,7 +37,7 @@ module.exports = {
     },
   },
   constraints: [
-    { rule: 'exactlyOne', fields: ['asset', 'sceneObject'] },
+    { rule: 'atLeastOne', fields: ['assetPath', 'guid', 'sceneObjectPath'] },
   ],
   result: {
     type: 'object',
@@ -39,8 +47,8 @@ module.exports = {
     },
   },
   examples: [
-    { args: { asset: 'Assets/Prefabs/Player.prefab', component: 'Game.PlayerController', property: 'speed', value: 10 } },
-    { args: { asset: 'Assets/Prefabs/A.prefab', component: 'Game.MyComponent', property: 'target', value: { assetRef: 'Assets/Prefabs/B.prefab' } } },
-    { args: { sceneObject: 'Player', component: 'Game.PlayerController', property: 'mainCamera', value: { sceneRef: 'Main Camera' } } },
+    { args: { assetPath: 'Assets/Prefabs/Player.prefab', componentType: 'Game.PlayerController', propertyPath: 'speed', value: 10 } },
+    { args: { assetPath: 'Assets/Prefabs/A.prefab', componentType: 'Game.MyComponent', propertyPath: 'target', value: { assetRef: 'Assets/Prefabs/B.prefab' } } },
+    { args: { sceneObjectPath: 'Player', componentType: 'Game.PlayerController', propertyPath: 'mainCamera', value: { sceneRef: 'Main Camera' } } },
   ],
 };
