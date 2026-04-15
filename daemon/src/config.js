@@ -4,7 +4,10 @@ const fs = require('fs');
 const path = require('path');
 const net = require('net');
 
-const CONFIG_PATH = path.join(path.resolve(__dirname, '..'), '.dreamer-config.json');
+// Path precedence: DREAMER_CONFIG_PATH env var > conventional daemon/.dreamer-config.json.
+// The env-var override exists primarily for tests and unusual dev setups.
+const CONFIG_PATH = process.env.DREAMER_CONFIG_PATH
+  || path.join(path.resolve(__dirname, '..'), '.dreamer-config.json');
 const DEFAULT_PORT = 18710;
 
 /** Read `.dreamer-config.json`. Returns `{}` if missing or malformed. */

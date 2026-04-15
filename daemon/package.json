@@ -4,7 +4,11 @@
   "description": "Daemon and CLI for Dreamer Unity agent automation bridge",
   "bin": { "dreamer": "./bin/dreamer.js" },
   "main": "src/server.js",
-  "scripts": { "start": "node src/server.js", "daemon": "node src/server.js --daemon" },
+  "scripts": {
+    "start": "node src/server.js",
+    "daemon": "node src/server.js --daemon",
+    "test": "node --test \"test/*.test.js\""
+  },
   "engines": { "node": ">=18.0.0" },
   "license": "MIT"
 }
