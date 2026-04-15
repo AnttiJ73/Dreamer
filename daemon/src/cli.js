@@ -5,6 +5,7 @@ const path = require('path');
 const { ensureDaemon, isDaemonRunning, startDaemon, stopDaemon, httpRequest, focusUnity } = require('./daemon-manager');
 const configModule = require('./config');
 const schemas = require('./schemas');
+const focusPolicy = require('./focus-policy');
 
 // ── Config ──────────────────────────────────────────────────────────────────
 
@@ -66,15 +67,18 @@ function parseArgs(argv) {
  * @param {object} flags - CLI flags (may contain --wait, --priority, etc.)
  * @returns {Promise<void>}
  */
+// How long to wait before falling back to focus-stealing when a --wait
+// command hasn't reached a terminal state. Override per-invocation with
+// --focus-after MS, or globally via config.focusFallbackMs.
+const DEFAULT_FOCUS_FALLBACK_MS = 5000;
+
+const TERMINAL_STATES = new Set(['succeeded', 'failed', 'blocked', 'cancelled']);
+
 async function submitCommand(kind, args, flags = {}) {
   await ensureDaemon();
 
-  // Auto-focus Unity so its main thread is ticking when the command arrives.
-  // Controlled by config.autoFocus (default: true). Override with --no-focus or --focus.
-  const shouldFocus = flags['focus'] === true ? true
-    : flags['no-focus'] === true ? false
-    : config.autoFocus !== false;
-  if (shouldFocus) {
+  const focusedUpfront = focusPolicy.shouldFocusUpfront(kind, flags, config);
+  if (focusedUpfront) {
     await focusUnity();
   }
 
@@ -92,19 +96,34 @@ async function submitCommand(kind, args, flags = {}) {
   const cmd = resp.data;
 
   if (flags.wait) {
-    // Poll until terminal state
+    // Poll until terminal state. If we didn't focus upfront, keep an eye on
+    // elapsed time — if the command stalls (Unity unfocused, main thread
+    // barely ticking), fallback-focus once to push things through. --no-focus
+    // opts out entirely; --focus means we already focused upfront.
     const pollInterval = 500; // ms
     const timeout = parseInt(flags['wait-timeout'], 10) || 120000; // 2 min default
-    const deadline = Date.now() + timeout;
+    const fallbackMs = flags['no-focus'] === true || focusedUpfront
+      ? Infinity
+      : (parseInt(flags['focus-after'], 10) || config.focusFallbackMs || DEFAULT_FOCUS_FALLBACK_MS);
+    const start = Date.now();
+    const deadline = start + timeout;
+    let hasFallbackFocused = false;
 
     while (Date.now() < deadline) {
       await sleep(pollInterval);
+
+      // Fallback focus if the command is stalling.
+      if (!hasFallbackFocused && (Date.now() - start) >= fallbackMs) {
+        hasFallbackFocused = true;
+        await focusUnity();
+      }
+
       const check = await httpRequest('GET', `/api/commands/${cmd.id}`);
       if (check.status !== 200) {
         fail(`Failed to poll command: ${check.data.error || check.status}`);
       }
       const current = check.data;
-      if (['succeeded', 'failed', 'blocked', 'cancelled'].includes(current.state)) {
+      if (TERMINAL_STATES.has(current.state)) {
         out(current);
         return;
       }
@@ -167,6 +186,9 @@ async function run(argv) {
         '--wait', '--wait-timeout MS', '--origin-task-id ID', '--label TEXT',
         '--priority N', '--depends-on CMD_ID',
         '--scene-object PATH  (for set-property / save-as-prefab: target a scene object instead of an asset)',
+        '--focus          force Unity focus upfront (overrides policy)',
+        '--no-focus       suppress all Unity focus (upfront + --wait fallback)',
+        '--focus-after MS override fallback delay before auto-focusing a stalled --wait command (default 5000)',
       ],
     });
     return;

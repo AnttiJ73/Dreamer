@@ -113,5 +113,8 @@ Typed fields (e.g., `public Rigidbody rb`, `public Camera cam`) auto-resolve: po
 - Use `--scene-object "ObjectName"` instead of `--asset` to target scene instances
 - Inspect before mutating — verify asset paths and component types exist
 - After creating scripts, wait for compilation before adding them as components
-- Unity must be focused for commands to execute (CLI auto-focuses by default)
-- Use `--no-focus` to queue commands without stealing focus
+- Unity's main thread ticks slowly when unfocused (Windows); commands take longer but still execute
+- Default focus policy is `smart`: only `create_script` / `refresh_assets` auto-focus upfront (they trigger compilation); other commands dispatch immediately
+- When `--wait` is set and a command stalls past 5 s, the CLI falls back to focusing Unity once to push it through — tune with `--focus-after MS` or set `focusFallbackMs` in `daemon/.dreamer-config.json`
+- Use `--focus` to force upfront focus, `--no-focus` to suppress all focus (including the 5 s fallback)
+- Switch modes globally: `./bin/dreamer config set autoFocus=always` (or `smart` / `never`)
