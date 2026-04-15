@@ -3,6 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const { validateTransition, isTerminalState } = require('./command');
+const log = require('./log').create('queue');
 
 const PRUNE_AGE_MS = 60 * 60 * 1000; // 1 hour
 const DEBOUNCE_MS = 100;
@@ -38,7 +39,7 @@ class CommandQueue {
         }
       }
     } catch (err) {
-      console.error(`[queue] Failed to load queue file: ${err.message}`);
+      log.error(`Failed to load queue file: ${err.message}`);
     }
     this._prune();
   }
@@ -207,7 +208,7 @@ class CommandQueue {
       const data = JSON.stringify(Array.from(this.commands.values()), null, 2);
       fs.writeFileSync(this.filePath, data, 'utf8');
     } catch (err) {
-      console.error(`[queue] Failed to persist: ${err.message}`);
+      log.error(`Failed to persist: ${err.message}`);
     }
   }
 }

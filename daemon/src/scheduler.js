@@ -1,6 +1,7 @@
 'use strict';
 
 const { validateTransition } = require('./command');
+const log = require('./log').create('scheduler');
 
 const SCHEDULER_INTERVAL_MS = 200;
 const HEARTBEAT_TIMEOUT_MS = 10000;
@@ -138,7 +139,7 @@ class Scheduler {
       this.queue.update(id, { state: newState, ...extra });
     } catch (err) {
       // Non-fatal — log and continue
-      console.error(`[scheduler] Transition error for ${id}: ${err.message}`);
+      log.error(`Transition error for ${id}: ${err.message}`);
     }
   }
 }

@@ -1,5 +1,6 @@
 'use strict';
 
+const log = require('./log').create('unity-state');
 const MAX_CONSOLE_ENTRIES = 200;
 
 /**
@@ -67,7 +68,7 @@ class UnityState {
     // If disconnected for >30s, reset compiling state — stale data is worse than unknown
     if (elapsed > 30000 && this.compiling) {
       this.compiling = false;
-      console.log('[unity-state] Resetting stale compiling state after prolonged disconnect');
+      log.info('Resetting stale compiling state after prolonged disconnect');
     }
   }
 

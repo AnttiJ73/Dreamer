@@ -1,5 +1,7 @@
 'use strict';
 
+const log = require('../log').create('unity');
+
 /**
  * Build handlers for /api/unity routes (Unity editor polling).
  * @param {import('../queue')} queue
@@ -25,7 +27,7 @@ function createUnityHandlers(queue, unityState, scheduler) {
         queue.update(cmd.id, { state: 'running' });
       } catch (err) {
         // If transition fails, still return it — it may already be running
-        console.error(`[unity] Failed to mark ${cmd.id} as running: ${err.message}`);
+        log.error(`Failed to mark ${cmd.id} as running: ${err.message}`);
       }
       return { status: 200, body: { commands: [cmd] } };
     },

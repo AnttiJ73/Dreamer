@@ -70,7 +70,7 @@ namespace Dreamer.AgentBridge
 
             _lastStateSnapshot = EditorApplication.timeSinceStartup;
 
-            Debug.Log($"[AgentBridge] Started. Daemon URL: {DaemonClient.BaseUrl}");
+            DreamerLog.Info($"Started. Daemon URL: {DaemonClient.BaseUrl}");
         }
 
         public static void Stop()
@@ -86,22 +86,22 @@ namespace Dreamer.AgentBridge
             CompilationMonitor.Shutdown();
             ConsoleCapture.Shutdown();
 
-            Debug.Log("[AgentBridge] Stopped.");
+            DreamerLog.Info("Stopped.");
         }
 
         // ── Menu items ──
 
-        [MenuItem("Tools/Dreamer/Toggle Agent Bridge")]
+        [MenuItem("Tools/Dreamer/Toggle Bridge")]
         static void ToggleMenu()
         {
             IsEnabled = !IsEnabled;
-            Debug.Log($"[AgentBridge] Bridge {(IsEnabled ? "enabled" : "disabled")}.");
+            DreamerLog.Info($"Bridge {(IsEnabled ? "enabled" : "disabled")}.");
         }
 
-        [MenuItem("Tools/Dreamer/Toggle Agent Bridge", true)]
+        [MenuItem("Tools/Dreamer/Toggle Bridge", true)]
         static bool ToggleMenuValidate()
         {
-            Menu.SetChecked("Tools/Dreamer/Toggle Agent Bridge", IsEnabled);
+            Menu.SetChecked("Tools/Dreamer/Toggle Bridge", IsEnabled);
             return true;
         }
 
@@ -139,7 +139,7 @@ namespace Dreamer.AgentBridge
             }
             catch (Exception ex)
             {
-                Debug.LogWarning($"[AgentBridge] Unhandled error executing '{cmd.kind}': {ex.Message}");
+                DreamerLog.Warn($"Unhandled error executing '{cmd.kind}': {ex.Message}");
                 BackgroundBridge.ReportResult(cmd.id, false, null, $"Unhandled error: {ex.Message}");
             }
         }

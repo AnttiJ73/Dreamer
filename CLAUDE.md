@@ -30,7 +30,7 @@ Dreamer is **project-local** — no global install. Use the `./bin/dreamer` wrap
 node daemon/src/server.js
 ```
 
-Unity side activates automatically when the package is loaded (InitializeOnLoad). Toggle via `Tools > Dreamer > Toggle Agent Bridge`.
+Unity side activates automatically when the package is loaded (InitializeOnLoad). Toggle via `Tools > Dreamer > Toggle Bridge`.
 
 ## Key commands
 

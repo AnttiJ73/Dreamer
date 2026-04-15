@@ -114,11 +114,11 @@ namespace Dreamer.AgentBridge
                     _consecutiveErrors++;
                     if (_consecutiveErrors <= ErrorSuppressThreshold)
                     {
-                        Debug.LogWarning($"[AgentBridge] HTTP {req.www.method} {req.www.url} failed: {req.www.error}");
+                        DreamerLog.Warn($"HTTP {req.www.method} {req.www.url} failed: {req.www.error}");
                     }
                     else if (_consecutiveErrors == ErrorSuppressThreshold + 1)
                     {
-                        Debug.LogWarning("[AgentBridge] Suppressing further connection errors until daemon becomes available.");
+                        DreamerLog.Warn("Suppressing further connection errors until daemon becomes available.");
                         _suppressErrors = true;
                     }
                     req.onError?.Invoke(req.www.error ?? "Unknown error");
@@ -127,7 +127,7 @@ namespace Dreamer.AgentBridge
                 {
                     if (_suppressErrors)
                     {
-                        Debug.Log("[AgentBridge] Daemon connection restored.");
+                        DreamerLog.Info("Daemon connection restored.");
                         _suppressErrors = false;
                     }
                     _consecutiveErrors = 0;
@@ -199,7 +199,7 @@ namespace Dreamer.AgentBridge
                 }
                 catch (Exception ex)
                 {
-                    Debug.LogWarning($"[AgentBridge] Failed to parse pending commands: {ex.Message}");
+                    DreamerLog.Warn($"Failed to parse pending commands: {ex.Message}");
                 }
                 onSuccess?.Invoke(commands);
             },

@@ -221,7 +221,7 @@ namespace Dreamer.AgentBridge
         {
             if (_consecutiveErrors > ErrorLogThreshold)
             {
-                Debug.Log("[AgentBridge] Background bridge: daemon connection restored.");
+                DreamerLog.Info("Background bridge: daemon connection restored.");
             }
             _consecutiveErrors = 0;
         }
@@ -231,7 +231,7 @@ namespace Dreamer.AgentBridge
             _consecutiveErrors++;
             if (_consecutiveErrors <= ErrorLogThreshold)
             {
-                Debug.LogWarning($"[AgentBridge] Background bridge error: {ex.Message}");
+                DreamerLog.Warn($"Background bridge error: {ex.Message}");
             }
         }
     }

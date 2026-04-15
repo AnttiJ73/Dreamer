@@ -96,7 +96,7 @@ namespace Dreamer.AgentBridge
             }
             catch (Exception ex)
             {
-                Debug.LogWarning($"[AgentBridge] Command '{command.kind}' threw: {ex}");
+                DreamerLog.Warn($"Command '{command.kind}' threw: {ex}");
                 result = CommandResult.Fail($"Internal error: {ex.Message}");
             }
 

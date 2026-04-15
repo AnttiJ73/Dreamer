@@ -368,7 +368,7 @@ namespace Dreamer.AgentBridge
                 if (parent != null)
                     instance.transform.SetParent(parent.transform, false);
                 else
-                    Debug.LogWarning($"[AgentBridge] Parent not found: {parentPath}, placing at root.");
+                    DreamerLog.Warn($"Parent not found: {parentPath}, placing at root.");
             }
 
             // Optional position

@@ -10,11 +10,11 @@ namespace Dreamer.AgentBridge
         int _portInput;
         bool _initialized;
 
-        [MenuItem("Tools/Dreamer/Agent Bridge Status")]
+        [MenuItem("Tools/Dreamer/Status")]
         static void ShowWindow()
         {
             var wnd = GetWindow<AgentBridgeWindow>();
-            wnd.titleContent = new GUIContent("Agent Bridge");
+            wnd.titleContent = new GUIContent("Dreamer");
             wnd.minSize = new Vector2(320, 400);
             wnd.Show();
         }

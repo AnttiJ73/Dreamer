@@ -55,8 +55,10 @@ namespace Dreamer.AgentBridge
 
         static void OnLogMessage(string message, string stackTrace, LogType logType)
         {
-            // Skip our own messages to avoid feedback loops
-            if (message != null && message.StartsWith("[AgentBridge]")) return;
+            // Skip our own messages to avoid feedback loops. DreamerLog.Tag ("[Dreamer]")
+            // is preserved as plain text inside the rich-text color wrapper, so a
+            // substring match works whether or not color tags are present.
+            if (message != null && message.Contains(DreamerLog.Tag)) return;
 
             string typeStr;
             switch (logType)

@@ -156,7 +156,7 @@ Delete `<tmp>` recursively.
 ## 10. Tell the user
 
 1. Open the project in Unity 6. Agent Bridge auto-activates via `InitializeOnLoad`.
-2. `Tools > Dreamer > Toggle Agent Bridge` menu should exist.
+2. `Tools > Dreamer > Toggle Bridge` menu should exist.
 3. Re-run `./bin/dreamer status` — `unity.connected` should be `true`.
 4. Smoke test: `./bin/dreamer find-assets --type prefab --wait`.
 5. Report the install commit SHA from Step 2.

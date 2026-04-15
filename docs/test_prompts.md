@@ -96,3 +96,5 @@ Set the vehicle speed to 20, turn speed to 45, health to 500. Set the turret rot
 Duplicate the whole vehicle, rename it "HeavyTank", and change its health to 1000, speed to 10, and turret damage to 75.
 
 Put both vehicles in the scene at different spots and inspect them to make sure the nested structure looks right.
+
+'

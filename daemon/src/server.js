@@ -9,6 +9,7 @@ const CommandQueue = require('./queue');
 const UnityState = require('./unity-state');
 const Scheduler = require('./scheduler');
 const { getPort } = require('./config');
+const log = require('./log').create('server');
 const createCommandHandlers = require('./handlers/commands');
 const createUnityHandlers = require('./handlers/unity');
 const createStatusHandlers = require('./handlers/status');
@@ -202,7 +203,7 @@ async function handleRequest(req, res) {
     sendJSON(res, result.status, result.body);
 
   } catch (err) {
-    console.error(`[server] Request error: ${err.message}`);
+    log.error(`Request error: ${err.message}`);
     sendJSON(res, 500, { error: err.message });
   }
 }
@@ -212,7 +213,7 @@ async function handleRequest(req, res) {
 const server = http.createServer(handleRequest);
 
 function shutdown() {
-  console.log('[server] Shutting down gracefully...');
+  log.info('Shutting down gracefully...');
   scheduler.stop();
   queue.shutdown();
 
@@ -222,7 +223,7 @@ function shutdown() {
   } catch { /* ignore */ }
 
   server.close(() => {
-    console.log('[server] Closed.');
+    log.info('Closed.');
     process.exit(0);
   });
 
@@ -234,24 +235,24 @@ process.on('SIGTERM', shutdown);
 process.on('SIGINT', shutdown);
 
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`[server] Listening on 0.0.0.0:${PORT}`);
+  log.info(`Listening on 0.0.0.0:${PORT}`);
 
   // Write PID file
   try {
     fs.writeFileSync(PID_FILE, String(process.pid), 'utf8');
   } catch (err) {
-    console.error(`[server] Failed to write PID file: ${err.message}`);
+    log.error(`Failed to write PID file: ${err.message}`);
   }
 
   // Start the scheduler
   scheduler.start();
-  console.log('[server] Scheduler started');
+  log.info('Scheduler started');
 });
 
 server.on('error', (err) => {
   if (err.code === 'EADDRINUSE') {
-    console.error(`[server] Port ${PORT} already in use. Is the daemon already running?`);
+    log.error(`Port ${PORT} already in use. Is the daemon already running?`);
     process.exit(1);
   }
-  console.error(`[server] Server error: ${err.message}`);
+  log.error(`Server error: ${err.message}`);
 });
