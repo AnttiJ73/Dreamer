@@ -1,258 +1,42 @@
 # Dreamer
 
-Unity Editor automation bridge for LLM agents. Lets Claude (or any agent) create scripts, prefabs, components, set properties, instantiate into scenes, and wire up references — all through a simple CLI.
-
-The agent doesn't need to understand Unity's compilation lifecycle, domain reloads, or asset refresh timing. Dreamer handles all of that.
-
-## How it works
-
-```
-Agent (Claude) → CLI (dreamer) → Daemon (localhost:18710) ← Unity Editor (polling)
-```
-
-- **CLI** — Simple commands the agent calls (`./bin/dreamer create-prefab`, `./bin/dreamer add-component`, etc.)
-- **Daemon** — Persistent Node.js process that queues commands and waits for Unity to be ready
-- **Unity Package** — Editor-side bridge that polls for commands and executes them inside Unity
-
-Commands that depend on compilation (like adding a newly created component) automatically wait until Unity finishes compiling. The agent just submits commands and they execute when safe.
+Unity Editor automation bridge for LLM agents. Lets Claude (or any
+agent with terminal access) create scripts, prefabs, components, scene
+objects, and wire up references via a simple CLI. The agent doesn't
+need to track Unity's compilation or domain reloads — Dreamer handles
+the timing.
 
 ## Prerequisites
 
-- **Unity 6** (6000.0+)
-- **Node.js 18+**
-- **git** on your PATH (used for install and `./bin/dreamer update`)
+Unity 6 (6000.0+), Node.js 18+, `git` on PATH, and
+[Claude Code](https://claude.com/product/claude-code) in the Unity
+project root.
 
-## Install with Claude (recommended)
+## Install
 
-Open Claude Code in the root of your Unity project and paste this one-line prompt:
+Open Claude Code in your Unity project root and paste:
 
-> Install Dreamer into this Unity project by cloning `https://github.com/AnttiJ73/Dreamer.git` and following its `INSTALL.md`.
+> Install Dreamer into this Unity project by cloning
+> `https://github.com/AnttiJ73/Dreamer.git` and following its
+> `INSTALL.md`.
 
-Claude will:
-- clone the repo to a temp directory
-- ask you about configuration (port, auto-focus, wait timeout) with sensible defaults
-- copy the daemon, Unity package, Claude skill, and the project-local `./bin/dreamer` wrapper into place (no global install — each Unity project gets its own independent Dreamer)
-- patch `.gitignore` and `CLAUDE.md`
-- record the source repo + ref so future updates work
-- verify with `./bin/dreamer status`
+Claude clones the repo, asks about config (port, auto-focus, wait
+timeout — probing for a free port if another project already uses
+18710), copies the daemon + Unity package + Claude skill into place,
+and verifies with `./bin/dreamer status`. Each project gets its own
+independent install — no global state, multiple Unity projects coexist
+on distinct ports.
 
-After install, open the project in Unity. The bridge auto-activates. Run `./bin/dreamer status` — `unity.connected` should be `true`.
+## Updating
 
-### Updating
+Tell Claude *"update Dreamer"*. Claude runs `./bin/dreamer update`,
+pulls the latest, replaces files in place, preserves your config.
 
-Your install tracks `main` of this repo. To pull the latest, just tell Claude: **"update Dreamer"**. Claude runs `./bin/dreamer update`, which replaces the daemon, Unity package, and skill in place. Your config is preserved. No re-install needed.
+## Docs
 
-Pin to a specific release with `./bin/dreamer update --ref v0.3.0`.
-
-## Manual install
-
-If you'd rather not use Claude, do it by hand:
-
-### 1. Unity Package
-
-In your Unity project, open `Window > Package Manager`, click `+`, choose **Add package from git URL**, and enter:
-
-```
-https://github.com/AnttiJ73/Dreamer.git?path=Packages/com.dreamer.agent-bridge
-```
-
-The bridge activates automatically. Toggle it via `Tools > Dreamer > Toggle Agent Bridge`.
-
-### 2. Daemon + CLI (project-local)
-
-Dreamer is a project-local tool — no global install. Clone the repo to a **temp directory** (never into your Unity project, since `git clone` would create a `Dreamer/` folder that collides with the wrapper on case-insensitive filesystems), then copy `daemon/`, `Packages/com.dreamer.agent-bridge/`, and `bin/` into your Unity project root:
-
-```bash
-TMP=$(mktemp -d)
-git clone --depth 1 https://github.com/AnttiJ73/Dreamer.git "$TMP/dreamer"
-cp -r "$TMP/dreamer/daemon"                         /path/to/UnityProject/
-cp -r "$TMP/dreamer/Packages/com.dreamer.agent-bridge" /path/to/UnityProject/Packages/
-cp -r "$TMP/dreamer/bin"                            /path/to/UnityProject/
-chmod +x /path/to/UnityProject/bin/dreamer
-rm -rf "$TMP"
-```
-
-From now on, invoke the CLI as `./bin/dreamer <command>` (POSIX/bash) or `.\bin\dreamer <command>` (Windows cmd/PowerShell) from the Unity project root. The daemon auto-starts on any command.
-
-Note: manual installs skip the `.dreamer-source.json` marker, so `./bin/dreamer update` will not work until you create the file by hand (`{ "repo": "https://github.com/AnttiJ73/Dreamer.git", "ref": "main" }` in `daemon/.dreamer-source.json`) or redo the install via Claude.
-
-### 3. Verify
-
-With Unity open and the package installed:
-
-```bash
-./bin/dreamer status
-```
-
-You should see `"connected": true`.
-
-## Quick Start
-
-```bash
-# Find all prefabs in the project
-./bin/dreamer find-assets --type prefab
-
-# Create a new script
-./bin/dreamer create-script --name PlayerController --namespace Game --path "Assets/Scripts"
-
-# If you wrote scripts to disk externally (not via create-script), refresh Unity
-./bin/dreamer refresh-assets --wait
-
-# Create a prefab
-./bin/dreamer create-prefab --name Player --path "Assets/Prefabs" --wait
-
-# Add a component (auto-waits for compilation if needed)
-./bin/dreamer add-component --asset "Assets/Prefabs/Player.prefab" --type "Game.PlayerController" --wait
-
-# Set a property
-./bin/dreamer set-property --asset "Assets/Prefabs/Player.prefab" --component "Game.PlayerController" --property "speed" --value "10" --wait
-
-# Set a prefab reference field (e.g., public GameObject enemyPrefab)
-./bin/dreamer set-property --asset "Assets/Prefabs/Player.prefab" --component "Game.PlayerController" --property "enemyPrefab" --value '{"assetRef":"Assets/Prefabs/Enemy.prefab"}' --wait
-
-# Set a typed component reference (e.g., public Rigidbody targetBody)
-# Automatically resolves to the Rigidbody component on the target prefab
-./bin/dreamer set-property --asset "Assets/Prefabs/Player.prefab" --component "Game.PlayerController" --property "targetBody" --value '{"assetRef":"Assets/Prefabs/Enemy.prefab"}' --wait
-
-# Instantiate a prefab into the scene
-./bin/dreamer instantiate-prefab --asset "Assets/Prefabs/Player.prefab" --position '{"x":0,"y":1,"z":0}' --wait
-
-# Set a scene object reference (e.g., assign Main Camera to a Camera field)
-./bin/dreamer set-property --scene-object "Player" --component "Game.PlayerController" --property "mainCamera" --value '{"sceneRef":"Main Camera"}' --wait
-
-# Inspect what's on a prefab
-./bin/dreamer inspect "Assets/Prefabs/Player.prefab" --wait
-
-# View scene hierarchy
-./bin/dreamer inspect-hierarchy --wait
-
-# Save everything
-./bin/dreamer save-assets --wait
-```
-
-## Command Reference
-
-### Asset Discovery
-| Command | Description |
-|---------|-------------|
-| `./bin/dreamer find-assets [--type TYPE] [--name PATTERN] [--path FOLDER]` | Search assets. Types: prefab, script, scene, material, texture |
-| `./bin/dreamer inspect <path-or-guid>` | Detailed info about an asset (components, fields, children) |
-| `./bin/dreamer inspect-hierarchy [--scene NAME]` | Scene hierarchy with components |
-
-### Creation & Mutation
-| Command | Description |
-|---------|-------------|
-| `./bin/dreamer create-script --name NAME [--namespace NS] [--template TYPE] [--path FOLDER]` | Create a C# script. Templates: monobehaviour, scriptableobject, editor, plain |
-| `./bin/dreamer create-prefab --name NAME [--path FOLDER]` | Create an empty prefab |
-| `./bin/dreamer add-component --asset PATH --type TYPENAME` | Add a component to a prefab |
-| `./bin/dreamer remove-component --asset PATH --type TYPENAME` | Remove a component |
-| `./bin/dreamer set-property --asset PATH --component TYPE --property FIELD --value JSON` | Set any property (primitives, vectors, colors, object references) |
-| `./bin/dreamer set-property --scene-object PATH --component TYPE --property FIELD --value JSON` | Set property on a scene object instance |
-| `./bin/dreamer instantiate-prefab --asset PATH [--position JSON] [--name NAME]` | Add a prefab instance to the scene |
-| `./bin/dreamer create-gameobject --name NAME [--parent PATH]` | Create an empty GameObject in the scene |
-
-### Object References
-
-The `--value` for object reference fields uses special syntax:
-
-```bash
-# Asset reference (prefab, material, etc.)
---value '{"assetRef":"Assets/Prefabs/Enemy.prefab"}'
-
-# Scene object reference
---value '{"sceneRef":"Main Camera"}'
-
-# By GUID
---value '{"guid":"abc123..."}'
-
-# Clear a reference
---value "null"
-```
-
-Typed component references (e.g., `public Rigidbody rb`) auto-resolve — if you point to a prefab, Dreamer finds the matching component on it.
-
-### Status & Diagnostics
-| Command | Description |
-|---------|-------------|
-| `./bin/dreamer status` | Daemon + Unity connection status |
-| `./bin/dreamer compile-status` | Is Unity compiling? Any errors? |
-| `./bin/dreamer console [--count N]` | Recent Unity console entries |
-| `./bin/dreamer queue [--state STATE]` | View queued/running/completed commands |
-| `./bin/dreamer refresh-assets` | Force Unity to detect file changes on disk |
-| `./bin/dreamer save-assets` | Save all modified assets |
-
-### Daemon Management
-| Command | Description |
-|---------|-------------|
-| `./bin/dreamer daemon start` | Explicitly start the daemon |
-| `./bin/dreamer daemon stop` | Stop the daemon |
-| `./bin/dreamer daemon status` | Check if daemon is running |
-| `./bin/dreamer focus-unity` | Bring Unity window to foreground |
-
-### Flags
-
-All mutation commands support:
-- `--wait` — Block until the command completes (recommended for scripts)
-- `--wait-timeout MS` — Max wait time (default: 120000ms)
-- `--depends-on CMD_ID` — Don't execute until another command succeeds
-- `--no-focus` — Don't auto-focus Unity window
-
-## How the Scheduling Works
-
-When you submit a command, the daemon decides when it's safe to execute:
-
-1. **No requirements** (find-assets, inspect, create-prefab) → dispatched immediately
-2. **Requires compilation** (add-component, remove-component) → waits until Unity reports no compile errors
-3. **Has dependency** (--depends-on) → waits until the dependency succeeds
-4. **Unity disconnected** → waits until Unity reconnects
-
-Commands queue up and execute in order. The agent doesn't need to poll compilation status or manage timing.
-
-## Windows Focus Behavior
-
-Unity's editor loop pauses when the window is unfocused. Dreamer handles this:
-
-- The **background bridge** keeps the daemon informed of Unity's state even when unfocused (heartbeat, compilation status)
-- The CLI **auto-focuses Unity** when submitting commands so they execute immediately
-- Use `--no-focus` to submit without focusing (commands queue and execute next time Unity is focused)
-
-## Using with Claude Code
-
-Add the Dreamer skill to your project so Claude knows how to use the CLI. Copy the skill file from this repo:
-
-```bash
-# In your game project
-mkdir -p .claude/commands
-cp path/to/Dreamer/.claude/commands/dreamer.md .claude/commands/dreamer.md
-```
-
-Then Claude can use `/dreamer` or will automatically use the CLI when doing Unity work.
-
-## Agent Compatibility
-
-Dreamer is designed for AI agents that have **terminal access** and operate from the **project root directory**. This is how Claude Code works — it sits at the root, sees the full file system, and runs CLI commands.
-
-**Primary target:**
-- **Claude Code** (CLI, VS Code extension, desktop app) — full support, skill files included
-
-**Might work with effort:**
-- **GitHub Copilot (agent mode)**, **Cursor** — these can run terminal commands, but they typically open Unity projects from the `.sln`/`.csproj` context, not the project root. Their working directory, file context, and instruction systems are different. Someone could make it work, but it's not plug-and-play.
-
-**Won't work:**
-- Autocomplete-only assistants (Copilot tab completions, etc.) — no command execution capability
-
-The core requirement: the agent needs to run `dreamer <command>` in a terminal from (or near) the Unity project root. If it can do that, it can use Dreamer.
-
-## Port Configuration
-
-Default port: `18710`. Override with:
-
-```bash
-# Environment variable
-export DREAMER_PORT=19000
-
-# Or in Unity: EditorPrefs (set via the Agent Bridge Status window)
-```
+- [`INSTALL.md`](INSTALL.md) — full install sequence
+- [`.claude/commands/dreamer.md`](.claude/commands/dreamer.md) — CLI reference
+- [`CLAUDE.md`](CLAUDE.md) — architecture (contributors)
 
 ## License
 
