@@ -1,6 +1,8 @@
 'use strict';
 
 const { createCommand, isKnownKind } = require('../command');
+const schemas = require('../schemas');
+const { validate } = require('../validate');
 
 // Commands resolved daemon-side from cached Unity state (never dispatched to Unity)
 const DAEMON_SIDE_KINDS = new Set(['compile_status', 'console']);
@@ -28,6 +30,24 @@ function createCommandHandlers(queue, scheduler, unityState) {
           status: 400,
           body: { error: `Unknown command kind: '${body.kind}'` },
         };
+      }
+
+      // Schema validation (opt-in — only kinds with a schema file are checked).
+      // Migrating incrementally means no-schema kinds still flow through as before.
+      const schema = schemas.get(body.kind);
+      if (schema) {
+        const result = validate(schema, body.args || {});
+        if (!result.valid) {
+          return {
+            status: 400,
+            body: {
+              error: `Invalid args for '${body.kind}'`,
+              details: result.errors,
+              kind: body.kind,
+              schema: schema.args || {},
+            },
+          };
+        }
       }
 
       // Daemon-side instant commands — resolve from cached Unity state

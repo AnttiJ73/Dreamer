@@ -73,7 +73,15 @@ When you write .cs files directly to disk (not via `./bin/dreamer create-script`
 # Probe for a free port (useful when setting up a second Unity project on the same machine)
 ./bin/dreamer probe-port                    # returns first free port in [18710, 18719]
 ./bin/dreamer probe-port --start 19000 --count 20
+
+# Arg schema for a documented command kind (no-arg call lists documented kinds)
+./bin/dreamer help
+./bin/dreamer help add_component
 ```
+
+## Command Schemas
+
+Some command kinds have machine-readable arg schemas (type, required, enum, cross-field constraints). When present, the daemon validates args on submit and returns structured errors listing what was wrong. Run `./bin/dreamer help` to list which kinds are documented, and `./bin/dreamer help <kind>` to see the full arg spec and examples before constructing a call. Undocumented kinds still work — they just lack formal arg docs.
 
 ## Updating Dreamer
 

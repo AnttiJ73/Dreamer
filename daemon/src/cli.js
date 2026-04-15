@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const { ensureDaemon, isDaemonRunning, startDaemon, stopDaemon, httpRequest, focusUnity } = require('./daemon-manager');
 const configModule = require('./config');
+const schemas = require('./schemas');
 
 // ── Config ──────────────────────────────────────────────────────────────────
 
@@ -160,6 +161,7 @@ async function run(argv) {
         'update [--ref REF] [--dry-run]',
         'config get | config set key=value',
         'probe-port [--start PORT] [--count N]',
+        'help <kind>    (render arg schema for a command kind, if documented)',
       ],
       flags: [
         '--wait', '--wait-timeout MS', '--origin-task-id ID', '--label TEXT',
@@ -653,6 +655,23 @@ async function run(argv) {
             configPath: CONFIG_PATH,
           });
         }
+        break;
+      }
+
+      case 'help': {
+        const kind = positional[1];
+        if (!kind) {
+          out({
+            usage: 'dreamer help <kind>',
+            documented: schemas.list(),
+            note: 'Only kinds listed in "documented" have a schema so far. All other kinds still work; they just lack machine-readable arg docs. Run `dreamer --help` for the full CLI command list.',
+          });
+        }
+        const schema = schemas.get(kind);
+        if (!schema) {
+          fail(`No schema for '${kind}'. Documented kinds: ${schemas.list().join(', ')}`);
+        }
+        out(schema);
         break;
       }
 
