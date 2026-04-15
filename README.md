@@ -15,8 +15,7 @@ Unity 6 (6000.0+), Node.js 18+, `git` on PATH, and
 
 Open Claude Code in your Unity project root and paste:
 
-> Install Dreamer into this Unity project by cloning
-> `https://github.com/AnttiJ73/Dreamer.git` and following its `INSTALL.md`.
+> Install Dreamer into this Unity project by cloning `https://github.com/AnttiJ73/Dreamer.git` and following its `INSTALL.md`.
 
 Claude clones the repo, asks about config (port, auto-focus, wait
 timeout — probing for a free port if another project already uses
