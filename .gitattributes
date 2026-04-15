@@ -1,0 +1,3 @@
+# Force LF line endings on the POSIX shell wrapper so it runs correctly
+# when checked out on Windows (CRLF would break the #! shebang).
+dreamer text eol=lf

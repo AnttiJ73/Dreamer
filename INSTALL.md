@@ -1,6 +1,6 @@
 # Dreamer — Installation Instructions (for Claude)
 
-You are installing the Dreamer Unity automation bridge into the user's Unity project. This file is read from a fresh clone of the Dreamer git repo. Execute every step below in order. **Confirm with the user before each destructive step** (file moves, overwrites, `npm link`, writes to `CLAUDE.md`/`.gitignore`).
+You are installing the Dreamer Unity automation bridge into the user's Unity project. This file is read from a fresh clone of the Dreamer git repo. Execute every step below in order. **Confirm with the user before each destructive step** (file moves, overwrites, writes to `CLAUDE.md`/`.gitignore`).
 
 This document is self-contained. Do not ask the user for information that is covered here — derive it from the filesystem.
 
@@ -14,12 +14,14 @@ This document is self-contained. Do not ask the user for information that is cov
 2. Check prerequisites:
    - `node --version` — must be ≥ 18. If lower or missing, stop.
    - `npm --version` — must be present.
-   - `git --version` — must be present. Required for both install and future `dreamer update`.
+   - `git --version` — must be present. Required for both install and future `./dreamer update`.
    - Unity 6 (6000.0+) — user confirms verbally.
 3. Detect collisions at the project root:
    - `daemon/`
    - `Packages/com.dreamer.agent-bridge/`
    - `.claude/commands/dreamer.md`
+   - `dreamer` (POSIX wrapper)
+   - `dreamer.cmd` (Windows wrapper)
    - `CLAUDE.md`
    - `.gitignore`
 4. Summarize collisions to the user. For each, ask: overwrite, skip, or abort. Apply those decisions in later steps.
@@ -62,6 +64,8 @@ Verify these paths exist inside the clone. If any are missing, stop and report w
 - `daemon/package.json`
 - `Packages/com.dreamer.agent-bridge/`
 - `.claude/commands/dreamer.md`
+- `dreamer`
+- `dreamer.cmd`
 
 ---
 
@@ -93,15 +97,31 @@ Unity auto-detects embedded packages under `Packages/`, so no `manifest.json` ed
 
 ---
 
-## Step 6 — Link the CLI
+## Step 6 — Install the project-local CLI wrappers
 
-Run `npm link` inside `<project-root>/daemon/`. This makes the `dreamer` command globally available on the user's `PATH`.
+Dreamer is a **project-local tool**. There is no global install — the CLI runs from `<project-root>/daemon/` and operates on state that lives next to it (config, queue, PID). Each Unity project gets its own independent Dreamer.
 
-Windows caveats:
-- If it fails with EPERM / permission denied, retry from an elevated shell, or fall back to `npm install -g .` inside `daemon/`.
-- If global install is blocked entirely, tell the user to add `<project-root>/daemon/bin` to their `PATH` manually.
+Copy two wrapper scripts from the clone to the project root:
 
-Verify with `dreamer --version` (or `dreamer status`). If the shim is missing, fix before continuing.
+- `<tmp-dir>/dreamer` → `<project-root>/dreamer` (POSIX shell wrapper)
+- `<tmp-dir>/dreamer.cmd` → `<project-root>/dreamer.cmd` (Windows wrapper)
+
+After copying, make the POSIX wrapper executable:
+
+```bash
+chmod +x <project-root>/dreamer
+```
+
+Verify:
+
+```bash
+./dreamer --help    # POSIX / bash / git-bash on Windows
+.\dreamer --help    # Windows cmd / PowerShell
+```
+
+Both should print the JSON help output. If not, check that `<project-root>/daemon/bin/dreamer.js` exists and Node is on PATH.
+
+**Important:** from here on, every Dreamer command is invoked as `./dreamer <command>` (or `.\dreamer <command>` on Windows). Do not run `npm link` — this tool intentionally avoids global state so multiple Unity projects can each have their own Dreamer install without collisions.
 
 ---
 
@@ -128,7 +148,7 @@ If `port` is not the default (`18710`), tell the user they must also `export DRE
 }
 ```
 
-This file is required for `dreamer update` to work. If the user wants to pin to a tag instead of `main`, ask before writing and use their chosen ref.
+This file is required for `./dreamer update` to work. If the user wants to pin to a tag instead of `main`, ask before writing and use their chosen ref.
 
 ---
 
@@ -149,26 +169,27 @@ Do not add `daemon/.dreamer-config.json` or `daemon/.dreamer-source.json` — th
 ```markdown
 ## Dreamer — Unity Editor automation
 
-This project uses Dreamer to let Claude automate Unity Editor operations via the `dreamer` CLI. The daemon auto-starts on any `dreamer` command and talks to Unity over localhost:<PORT>.
+This project uses Dreamer to let Claude automate Unity Editor operations via a project-local CLI. Invoke every command as `./dreamer <command>` (POSIX/bash) or `.\dreamer <command>` (Windows cmd/PowerShell) from the project root. The daemon auto-starts on any invocation and talks to Unity over localhost:<PORT>.
 
 - Skill file: `.claude/commands/dreamer.md` (use `/dreamer` or just call the CLI)
+- CLI wrappers: `./dreamer` and `.\dreamer.cmd` at the project root
 - Daemon source: `daemon/`
 - Unity package: `Packages/com.dreamer.agent-bridge/`
 - Config: `daemon/.dreamer-config.json` (port, autoFocus, defaultWaitTimeout)
-- Source tracking: `daemon/.dreamer-source.json` (repo + ref for `dreamer update`)
-- Updates: run `dreamer update` to pull the latest from the recorded ref (default `main`). Config is preserved.
+- Source tracking: `daemon/.dreamer-source.json` (repo + ref for `./dreamer update`)
+- Updates: run `./dreamer update` to pull the latest from the recorded ref (default `main`). Config is preserved.
 - Always pass `--wait` to mutation commands so you see the result before proceeding.
-- If you write `.cs` files directly, run `dreamer refresh-assets --wait` afterward.
-- Check `dreamer status` to confirm Unity is connected before mutating.
+- If you write `.cs` files directly, run `./dreamer refresh-assets --wait` afterward.
+- Check `./dreamer status` to confirm Unity is connected before mutating.
 ```
 
 ---
 
 ## Step 9 — Verify
 
-Run `dreamer status`. Expected: JSON with `daemon.running: true`. `unity.connected` will be `false` until the user opens Unity with this project — that's fine. Report the full output and the commit SHA captured in Step 2 to the user.
+Run `./dreamer status`. Expected: JSON with `daemon.running: true`. `unity.connected` will be `false` until the user opens Unity with this project — that's fine. Report the full output and the commit SHA captured in Step 2 to the user.
 
-If the daemon fails to start because the port is in use, ask the user for a different port, rewrite `daemon/.dreamer-config.json`, kill any stale daemon (`dreamer daemon stop`), and retry.
+If the daemon fails to start because the port is in use, ask the user for a different port, rewrite `daemon/.dreamer-config.json`, kill any stale daemon (`./dreamer daemon stop`), and retry.
 
 ---
 
@@ -184,18 +205,18 @@ Tell the user these exact next steps:
 
 1. Open this project in Unity 6 — the Agent Bridge activates on load via `InitializeOnLoad`.
 2. Verify the menu `Tools > Dreamer > Toggle Agent Bridge` exists and open the Agent Bridge status window.
-3. Re-run `dreamer status` — `unity.connected` should now be `true`.
-4. Smoke test: `dreamer find-assets --type prefab --wait`.
-5. To update later, just say "update Dreamer" — Claude will run `dreamer update`, which pulls the latest from the recorded ref and preserves your config.
+3. Re-run `./dreamer status` — `unity.connected` should now be `true`.
+4. Smoke test: `./dreamer find-assets --type prefab --wait`.
+5. To update later, just say "update Dreamer" — Claude will run `./dreamer update`, which pulls the latest from the recorded ref and preserves your config.
 
 ---
 
 ## Failure modes reference
 
 - **Node < 18** — stop at Step 0; user must install Node 18+.
-- **git not on PATH** — stop at Step 0; user must install git. Both install and `dreamer update` require it.
+- **git not on PATH** — stop at Step 0; user must install git. Both install and `./dreamer update` require it.
 - **Clone fails (network / auth / wrong ref)** — report `git clone`'s stderr verbatim. Common causes: offline, repo went private (user needs git credentials), ref renamed.
-- **`npm link` permission denied** — retry with elevated shell; fall back to `npm install -g .` inside `daemon/`; or add `daemon/bin` to PATH manually.
+- **POSIX `dreamer` wrapper not executable** — run `chmod +x ./dreamer`. If that still fails (e.g. the filesystem doesn't preserve the exec bit), invoke explicitly as `sh ./dreamer <command>` or `node daemon/bin/dreamer.js <command>`.
 - **Port already in use** — ask for a different port, rewrite `.dreamer-config.json`, retry.
 - **Unity doesn't show `Tools > Dreamer` menu after opening the project** — the package wasn't detected. Verify `Packages/com.dreamer.agent-bridge/package.json` exists and has valid JSON. Have the user reimport via Unity's Package Manager window.
-- **`dreamer status` shows `unity.connected: false` after Unity is open** — compilation may still be running (check `dreamer compile-status`), or `InitializeOnLoad` hasn't fired yet. Wait, then retry.
+- **`./dreamer status` shows `unity.connected: false` after Unity is open** — compilation may still be running (check `./dreamer compile-status`), or `InitializeOnLoad` hasn't fired yet. Wait, then retry.

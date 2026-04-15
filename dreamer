@@ -1,0 +1,5 @@
+#!/usr/bin/env sh
+# Dreamer CLI wrapper — project-local. Runs the CLI from this project's
+# daemon/ directory. No global install required. Invoke as ./dreamer from
+# the project root.
+exec node "$(dirname "$0")/daemon/bin/dreamer.js" "$@"

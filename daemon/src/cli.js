@@ -584,6 +584,8 @@ async function run(argv) {
           { src: 'daemon/package.json', dst: 'daemon/package.json', type: 'file' },
           { src: 'Packages/com.dreamer.agent-bridge', dst: 'Packages/com.dreamer.agent-bridge', type: 'dir' },
           { src: '.claude/commands/dreamer.md', dst: '.claude/commands/dreamer.md', type: 'file' },
+          { src: 'dreamer', dst: 'dreamer', type: 'file', chmod: 0o755 },
+          { src: 'dreamer.cmd', dst: 'dreamer.cmd', type: 'file' },
         ];
 
         const missing = targets.filter((t) => !fs.existsSync(path.join(cloneDir, t.src)));
@@ -612,6 +614,9 @@ async function run(argv) {
           } else {
             fs.mkdirSync(path.dirname(dstAbs), { recursive: true });
             fs.copyFileSync(srcAbs, dstAbs);
+            if (t.chmod && process.platform !== 'win32') {
+              try { fs.chmodSync(dstAbs, t.chmod); } catch { /* ignore */ }
+            }
           }
           applied.push(t.dst);
         }
