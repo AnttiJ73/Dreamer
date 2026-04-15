@@ -75,6 +75,19 @@ const DEFAULT_FOCUS_STALL_MS = 5000;
 
 const TERMINAL_STATES = new Set(['succeeded', 'failed', 'blocked', 'cancelled']);
 
+/**
+ * Detect error messages that usually mean "Unity hasn't imported recent .cs
+ * changes" rather than "user typoed". These appear when an agent writes a
+ * script directly (bypassing `./bin/dreamer create-script`) and then tries to
+ * use the new type/property before Unity auto-imports or the CLI triggers
+ * `refresh-assets`. We enrich the error with a specific remediation hint.
+ */
+function isStaleAssetError(errorMsg) {
+  if (!errorMsg || typeof errorMsg !== 'string') return false;
+  return /^Type not found:/i.test(errorMsg)
+      || /^Property '.+' not found on/i.test(errorMsg);
+}
+
 async function submitCommand(kind, args, flags = {}) {
   await ensureDaemon();
 
@@ -126,6 +139,18 @@ async function submitCommand(kind, args, flags = {}) {
       }
       const current = check.data;
       if (TERMINAL_STATES.has(current.state)) {
+        // Enrich the most common confusing failure mode: "Type not found"
+        // / "Property not found" usually means the agent wrote .cs files
+        // directly and skipped refresh-assets, not that they typoed.
+        if (current.state === 'failed' && current.error && isStaleAssetError(current.error)) {
+          process.stderr.write(JSON.stringify({
+            error: current.error,
+            commandId: current.id,
+            kind: current.kind,
+            hint: 'This error usually means Unity has not imported recent .cs changes. If you wrote or edited a script directly (not via `./bin/dreamer create-script`), run `./bin/dreamer refresh-assets --wait` and then `./bin/dreamer compile-status` before re-running this command. Unity must be focused to compile, so you may also need `./bin/dreamer focus-unity`.',
+          }, null, 2) + '\n');
+          process.exit(1);
+        }
         out(current);
         return;
       }
@@ -143,7 +168,7 @@ async function submitCommand(kind, args, flags = {}) {
           kind: current.kind,
           waitingReason: current.waitingReason,
           compileErrors: errors,
-          hint: 'Fix the scripts causing compile errors, then re-run this command. Check `./bin/dreamer compile-status` for the current state.',
+          hint: 'Fix the scripts with compile errors. Unity needs to recompile before this command can proceed — it will do so automatically when focused, but if you see stale errors persist, run `./bin/dreamer focus-unity` then check `./bin/dreamer compile-status` until the errors clear, then re-run the original command.',
         }, null, 2) + '\n');
         process.exit(1);
       }

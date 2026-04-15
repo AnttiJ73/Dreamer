@@ -107,6 +107,32 @@ When the user asks to update Dreamer (e.g. "update Dreamer", "pull the latest Dr
 
 Typed fields (e.g., `public Rigidbody rb`, `public Camera cam`) auto-resolve: point to a prefab or scene object and Dreamer finds the matching component.
 
+## Workflows: writing / editing C# scripts
+
+Several paths exist, and some fail silently if you skip the refresh step:
+
+| Path | Needs explicit refresh? | Works if Unity unfocused? |
+|---|---|---|
+| `./bin/dreamer create-script` | no (the command handles it) | yes |
+| Direct write (any tool) + `./bin/dreamer refresh-assets --wait` | yes — required | yes |
+| Direct write, no refresh, Unity focused | no (Unity auto-imports in a few seconds) | n/a |
+| Direct write, no refresh, Unity unfocused | yes — Unity never sees it | ❌ command fails "Type not found" |
+| Edit existing `.cs` directly, no refresh | yes — Unity has stale compiled assembly | ❌ command fails "Property not found" |
+
+**Rule of thumb:** if you (or your native editor tools) wrote or edited a `.cs` file directly, always run `./bin/dreamer refresh-assets --wait` and confirm `./bin/dreamer compile-status` before using the new type/property. When in doubt, prefer `./bin/dreamer create-script` — it goes through Unity's asset pipeline end-to-end.
+
+## Failure Mode: Stale Asset DB (Type / Property not found)
+
+When a command fails with `"Type not found: X"` or `"Property 'X' not found on 'Y'"`, the CLI detects this pattern and appends a hint:
+
+```json
+{
+  "error": "Type not found: …",
+  "hint": "This error usually means Unity has not imported recent .cs changes. …"
+}
+```
+Exit code 1. Remediation: run `./bin/dreamer refresh-assets --wait`, then `./bin/dreamer compile-status` (to confirm no compile errors), then retry.
+
 ## Failure Mode: Unity Compile Errors
 
 When Unity has compile errors, commands that need compiled types (`add_component`, `remove_component`, `create_script`, etc.) can't proceed. The daemon gates them with `waitingReason: "Compile errors present"`. If you use `--wait`, the CLI detects this and short-circuits immediately — you don't have to wait out the timeout — returning:
