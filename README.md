@@ -34,5 +34,6 @@ pulls the latest, replaces files, preserves your config.
 - [`INSTALL.md`](INSTALL.md) — full install sequence
 - [`.claude/commands/dreamer.md`](.claude/commands/dreamer.md) — CLI reference
 - [`CLAUDE.md`](CLAUDE.md) — architecture for contributors
+- [`MAC.md`](MAC.md) — macOS compatibility notes (untested, likely works)
 
 ## License — MIT
