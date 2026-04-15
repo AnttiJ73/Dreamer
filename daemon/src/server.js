@@ -20,25 +20,10 @@ const PORT = getPort();
 const DAEMON_DIR = path.resolve(__dirname, '..');
 const QUEUE_FILE = path.join(DAEMON_DIR, '.dreamer-queue.json');
 const PID_FILE = path.join(DAEMON_DIR, '.dreamer-daemon.pid');
-const LOG_FILE = path.join(DAEMON_DIR, '.dreamer-daemon.log');
-const IS_DAEMON = process.argv.includes('--daemon');
 
-// ── Logging setup ────────────────────────────────────────────────────────────
-
-if (IS_DAEMON) {
-  // Redirect stdout/stderr to log file
-  const logStream = fs.createWriteStream(LOG_FILE, { flags: 'a' });
-  const origLog = console.log;
-  const origErr = console.error;
-  console.log = (...args) => {
-    const ts = new Date().toISOString();
-    logStream.write(`[${ts}] ${args.join(' ')}\n`);
-  };
-  console.error = (...args) => {
-    const ts = new Date().toISOString();
-    logStream.write(`[${ts}] ERROR: ${args.join(' ')}\n`);
-  };
-}
+// Logging: log.js auto-detects --daemon and emits JSON lines to
+// .dreamer-daemon.log. In foreground/TTY mode it emits colored human-readable
+// output to stdout. No console.log override needed.
 
 // ── Initialise core components ───────────────────────────────────────────────
 
