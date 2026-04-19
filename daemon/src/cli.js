@@ -232,6 +232,7 @@ async function submitCommand(kind, args, flags = {}) {
   if (flags['label']) options.humanLabel = flags['label'];
   if (flags['priority']) options.priority = parseInt(flags['priority'], 10) || 0;
   if (flags['depends-on']) options.dependsOn = flags['depends-on'];
+  if (flags['allow-playmode']) options.allowPlayMode = true;
 
   const resp = await httpRequest('POST', '/api/commands', { kind, args, options });
   if (resp.status >= 400) {
@@ -361,6 +362,12 @@ async function run(argv) {
         'create-gameobject --name NAME [--parent PATH] [--scene SCENE]',
         'save-assets',
         'reimport-script --path FILE_OR_FOLDER [--non-recursive]   (force re-import of .cs files Unity misclassified as unknown)',
+        'create-material --name NAME [--path FOLDER] [--shader "Shader/Name"]',
+        'inspect-material --asset PATH_OR_GUID',
+        'set-material-property --asset PATH_OR_GUID (--property NAME --value JSON | --keyword NAME [--enable true|false])',
+        'set-material-shader --asset PATH_OR_GUID --shader "Shader/Name"',
+        'shader-status [--asset PATH_OR_GUID]    (no arg = project-wide scan)',
+        'inspect-shader (--asset PATH_OR_GUID | --shader "Shader/Name")',
         'status [--id CMD_ID]',
         'queue [--state STATE] [--task TASK_ID]',
         'compile-status',
@@ -392,6 +399,7 @@ async function run(argv) {
         '--focus-after MS override stall threshold before focusing a --wait command that hasn\'t completed (default 5000, smart mode only)',
         '--no-refresh     skip the auto refresh-assets that runs before compile-gated commands when .cs files have changed',
         '--label TEXT    tag the command with a free-form label (recommended in multi-agent sessions: `--label "agent-A:player-setup"`). Appears in status, queue, activity.',
+        '--allow-playmode bypass the Play Mode scene-edit gate. Scene edits during Play Mode revert on exit; only set this for intentional runtime mutation.',
       ],
     });
     return;
@@ -618,6 +626,86 @@ async function run(argv) {
           recursive: flags['non-recursive'] ? false : true,
         };
         await submitCommand('reimport_scripts', rsArgs, flags);
+        break;
+      }
+
+      // ── Materials & shaders ───────────────────────────────────────────
+      case 'create-material': {
+        if (!flags.name) fail('--name is required for create-material');
+        const cmArgs = { name: flags.name };
+        if (flags.path) cmArgs.path = flags.path;
+        if (flags.shader) cmArgs.shader = flags.shader;
+        await submitCommand('create_material', cmArgs, flags);
+        break;
+      }
+
+      case 'inspect-material': {
+        if (!flags.asset) fail('--asset PATH_OR_GUID is required for inspect-material');
+        const isGuid = /^[0-9a-f]{32}$/i.test(flags.asset);
+        await submitCommand('inspect_material',
+          isGuid ? { guid: flags.asset } : { assetPath: flags.asset },
+          flags);
+        break;
+      }
+
+      case 'set-material-property': {
+        if (!flags.asset) fail('--asset PATH_OR_GUID is required for set-material-property');
+        if (!flags.property && !flags.keyword) fail('--property NAME or --keyword NAME is required');
+        const isGuid = /^[0-9a-f]{32}$/i.test(flags.asset);
+        const mpArgs = isGuid ? { guid: flags.asset } : { assetPath: flags.asset };
+
+        if (flags.keyword) {
+          mpArgs.keyword = flags.keyword;
+          // --enable true/false, default true
+          mpArgs.enable = flags.enable !== 'false' && flags.enable !== false;
+        } else {
+          mpArgs.property = flags.property;
+          if (flags.value === undefined) fail('--value is required when setting a material property');
+          // Value is JSON (or a bare primitive for Float/Int). Same convention as set-property.
+          try {
+            mpArgs.value = typeof flags.value === 'string' ? JSON.parse(flags.value) : flags.value;
+          } catch {
+            // Not valid JSON — pass through as-is (float/int via string, texture-as-path, etc.)
+            mpArgs.value = flags.value;
+          }
+        }
+        await submitCommand('set_material_property', mpArgs, flags);
+        break;
+      }
+
+      case 'set-material-shader': {
+        if (!flags.asset) fail('--asset PATH_OR_GUID is required for set-material-shader');
+        if (!flags.shader) fail('--shader "Shader/Name" is required');
+        const isGuid = /^[0-9a-f]{32}$/i.test(flags.asset);
+        const smArgs = isGuid ? { guid: flags.asset } : { assetPath: flags.asset };
+        smArgs.shader = flags.shader;
+        await submitCommand('set_material_shader', smArgs, flags);
+        break;
+      }
+
+      case 'shader-status': {
+        const ssArgs = {};
+        if (flags.asset) {
+          const isGuid = /^[0-9a-f]{32}$/i.test(flags.asset);
+          if (isGuid) ssArgs.guid = flags.asset;
+          else ssArgs.assetPath = flags.asset;
+        }
+        // No args = project-wide scan.
+        await submitCommand('shader_status', ssArgs, flags);
+        break;
+      }
+
+      case 'inspect-shader': {
+        const insArgs = {};
+        if (flags.shader) insArgs.shader = flags.shader;
+        else if (flags.asset) {
+          const isGuid = /^[0-9a-f]{32}$/i.test(flags.asset);
+          if (isGuid) insArgs.guid = flags.asset;
+          else insArgs.assetPath = flags.asset;
+        } else {
+          fail('--shader "Shader/Name" or --asset PATH_OR_GUID is required for inspect-shader');
+        }
+        await submitCommand('inspect_shader', insArgs, flags);
         break;
       }
 

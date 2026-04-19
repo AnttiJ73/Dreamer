@@ -10,6 +10,42 @@ tags, breaking changes bump the minor version (0.x.0), fixes bump patch.
 ## [Unreleased]
 
 ### Added
+- **Material + shader commands** — closes a gap where materials couldn't
+  be created or meaningfully edited via Dreamer (the generic set-property
+  path didn't reach Unity's `MaterialProperty` API). Six new commands:
+  - `create-material --name X [--path FOLDER] [--shader "Shader/Name"]` —
+    creates a new `.mat` asset, falls back to Standard/URP-Lit/HDRP-Lit
+    when `--shader` omitted (warning in result JSON).
+  - `inspect-material --asset X.mat` — returns shader + full property
+    list (name, display name, type, current value, range for Range props)
+    + active keywords + render queue.
+  - `set-material-property --asset X.mat --property _BaseColor --value
+    '{"r":1,...}'` — routes by shader-declared property type to the right
+    MaterialProperty setter. Color / Vector / Float / Int / Range / Texture
+    values supported. Keyword form: `--keyword _EMISSION --enable true`.
+  - `set-material-shader --asset X.mat --shader "Name"` — reassigns shader
+    (Unity preserves compatible property values).
+  - `shader-status [--asset X.shader]` — wraps `ShaderUtil.GetShaderMessages`.
+    No-arg form scans every user shader under Assets/. Returns
+    `status: ok|warnings|errors` plus per-message severity/text/file/line.
+  - `inspect-shader (--asset X.shader | --shader "Name")` — declared
+    property list + keywords + render queue + maximum LOD + any existing
+    compile messages.
+  Writing shader source is the same as writing .cs: direct file write +
+  `refresh-assets`. There is no `create-shader` command — templates vary
+  too much per render pipeline to be useful from Dreamer.
+- **Play Mode gate for scene-edit commands.** Scene mutations made during
+  Play Mode silently revert on exit (Unity's design — only EditMode edits
+  persist). Dreamer now holds such commands in `waiting` with reason
+  *"Play Mode active — scene edits would be lost on exit. Stop Play Mode
+  in Unity (or submit with --allow-playmode to override)."* Gated kinds:
+  `create_gameobject`, `instantiate_prefab`, `create_hierarchy` (scene
+  mode, no `savePath`), and any `add_component` / `remove_component` /
+  `set_property` / `delete_gameobject` / `rename_gameobject` /
+  `duplicate` / `remove_missing_scripts` targeting a scene object. Asset
+  targets, script writes, and read-only commands are not gated. Override
+  flag: `--allow-playmode` on the CLI (serialized as
+  `options.allowPlayMode` in the API).
 - **`./bin/dreamer activity`** — newest-first view of recent commands across
   the queue, with per-entry label / kind / state / age / duration. Built for
   multi-agent visibility: when several Claude sessions drive the same

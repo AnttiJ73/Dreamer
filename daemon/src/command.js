@@ -33,6 +33,14 @@ const KIND_DEFS = {
   save_scene:          { label: 'Save Scene',          requirements: null },
   create_scriptable_object: { label: 'Create ScriptableObject', requirements: { compilation: true } },
   create_hierarchy:    { label: 'Create Hierarchy',    requirements: null },
+
+  // Material + shader operations
+  create_material:       { label: 'Create Material',       requirements: null },
+  inspect_material:      { label: 'Inspect Material',      requirements: null },
+  set_material_property: { label: 'Set Material Property', requirements: null },
+  set_material_shader:   { label: 'Set Material Shader',   requirements: null },
+  shader_status:         { label: 'Shader Status',         requirements: null },
+  inspect_shader:        { label: 'Inspect Shader',        requirements: null },
 };
 
 // ── Valid states and allowed transitions ─────────────────────────────────────
@@ -60,12 +68,62 @@ const COMPILE_SAFE_KINDS = new Set([
   'find_assets',
   'inspect_asset',
   'inspect_hierarchy',
+  'inspect_material',
+  'inspect_shader',
+  'shader_status',
   'create_scene',
   'open_scene',
 ]);
 
 function isCompileSafe(kind) {
   return COMPILE_SAFE_KINDS.has(kind);
+}
+
+/**
+ * Decide whether a command (kind + args) mutates scene state that would be
+ * lost when Unity exits Play Mode. The scheduler gates such commands when
+ * `unityState.playMode` is true — a scene-edit made during Play Mode looks
+ * successful in the agent's result JSON but silently reverts the moment
+ * Play Mode ends, which is a miserable debugging experience.
+ *
+ * Persistent edits (prefab assets, scene save-asset files, materials,
+ * scripts) are fine in Play Mode — only live-scene mutations need gating.
+ *
+ * Most ambiguous kinds (add_component, set_property, etc.) branch on
+ * whether `sceneObjectPath` is present in args — that's the daemon's
+ * signal that the target is a live scene object vs. an on-disk prefab.
+ *
+ * @param {string} kind
+ * @param {object} [args]
+ * @returns {boolean}
+ */
+function mutatesScene(kind, args) {
+  const a = args || {};
+  switch (kind) {
+    // Always scene-resident — no asset-mode alternative.
+    case 'create_gameobject':
+    case 'instantiate_prefab':
+      return true;
+
+    // Scene mode unless `savePath` was given (then it saves straight to a
+    // prefab asset — the temp scene GO is destroyed immediately).
+    case 'create_hierarchy':
+      return !a.savePath;
+
+    // Ambiguous kinds: scene-edit only when targeting a scene object.
+    case 'delete_gameobject':
+    case 'rename_gameobject':
+    case 'duplicate':
+    case 'set_property':
+    case 'add_component':
+    case 'remove_component':
+    case 'remove_missing_scripts':
+      return !!a.sceneObjectPath;
+
+    // Read-only or asset-only kinds.
+    default:
+      return false;
+  }
 }
 
 /**
@@ -109,6 +167,10 @@ function validateTransition(from, to) {
  * @param {number} [options.priority]
  * @param {string} [options.dependsOn]
  * @param {object} [options.requirements] - Override auto-detected requirements
+ * @param {boolean} [options.allowPlayMode] - Bypass the Play Mode scene-edit
+ *   gate for this command. Use sparingly — scene edits made during Play Mode
+ *   revert on exit, so setting this flag is a claim that the caller knows
+ *   the effect is intentional (e.g. runtime debugging).
  * @returns {object} Command object
  */
 function createCommand(kind, args, options = {}) {
@@ -134,6 +196,7 @@ function createCommand(kind, args, options = {}) {
     requirements: reqs,
     dependsOn: options.dependsOn || null,
     priority: options.priority || 0,
+    allowPlayMode: !!options.allowPlayMode,
     createdAt: now,
     updatedAt: now,
     dispatchedAt: null,
@@ -168,6 +231,7 @@ module.exports = {
   isKnownKind,
   isTerminalState,
   isCompileSafe,
+  mutatesScene,
   STATES,
   TERMINAL_STATES,
   COMPILE_SAFE_KINDS,

@@ -1,6 +1,6 @@
 'use strict';
 
-const { validateTransition, isCompileSafe } = require('./command');
+const { validateTransition, isCompileSafe, mutatesScene } = require('./command');
 const log = require('./log').create('scheduler');
 
 const SCHEDULER_INTERVAL_MS = 200;
@@ -155,6 +155,22 @@ class Scheduler {
           this._tryTransition(cmd.id, 'waiting', { waitingReason: 'Waiting for Play Mode' });
           continue;
         }
+      }
+
+      // ── Play Mode scene-edit gate ─────────────────────────────────────
+      // Scene mutations made during Play Mode look successful but revert
+      // silently when Play Mode exits (Unity's design — only EditMode
+      // edits persist). Holding such commands in `waiting` rather than
+      // letting them run-and-vanish matches the "no silent data loss"
+      // principle. Override with `options.allowPlayMode: true` on submit
+      // for the rare legitimate runtime-scene-mutation case.
+      if (this.unityState.playMode
+          && mutatesScene(cmd.kind, cmd.args)
+          && !cmd.allowPlayMode) {
+        this._tryTransition(cmd.id, 'waiting', {
+          waitingReason: 'Play Mode active — scene edits would be lost on exit. Stop Play Mode in Unity (or submit with --allow-playmode to override).'
+        });
+        continue;
       }
 
       // ── Sequential dispatch gate ──────────────────────────────────────

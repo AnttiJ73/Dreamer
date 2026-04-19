@@ -64,6 +64,16 @@ namespace Dreamer.AgentBridge
 
             // ScriptableObject operations
             _handlers["create_scriptable_object"] = AssetOps.CreateScriptableObject;
+
+            // Material operations
+            _handlers["create_material"]         = MaterialOps.CreateMaterial;
+            _handlers["inspect_material"]        = MaterialOps.InspectMaterial;
+            _handlers["set_material_property"]   = MaterialOps.SetMaterialProperty;
+            _handlers["set_material_shader"]     = MaterialOps.SetMaterialShader;
+
+            // Shader operations
+            _handlers["shader_status"]           = ShaderOps.ShaderStatus;
+            _handlers["inspect_shader"]          = ShaderOps.InspectShader;
         }
 
         /// <summary>Dispatch a command and return the result.</summary>
@@ -119,6 +129,9 @@ namespace Dreamer.AgentBridge
             return kind == "find_assets"
                 || kind == "inspect_asset"
                 || kind == "inspect_hierarchy"
+                || kind == "inspect_material"
+                || kind == "inspect_shader"
+                || kind == "shader_status"
                 || kind == "create_scene"
                 || kind == "open_scene";
         }
