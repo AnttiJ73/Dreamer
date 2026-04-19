@@ -81,9 +81,9 @@ namespace Dreamer.AgentBridge
 
         static CommandResult SetPropertyOnSceneObject(string objectPath, string componentTypeName, string propertyPath, object value)
         {
-            var go = FindSceneObject(objectPath);
+            var go = FindSceneObject(objectPath, out string findError);
             if (go == null)
-                return CommandResult.Fail($"Scene object not found at path: {objectPath}");
+                return CommandResult.Fail(findError ?? $"Scene object not found at path: {objectPath}");
 
             Component target = FindComponent(go, componentTypeName);
             if (target == null)
@@ -93,9 +93,9 @@ namespace Dreamer.AgentBridge
                         : $"Component '{componentTypeName}' not found on scene object: {objectPath}");
 
             var so = new SerializedObject(target);
-            var sp = so.FindProperty(propertyPath);
+            var sp = FindPropertyWithAlias(so, propertyPath, out string resolvedPath);
             if (sp == null)
-                return CommandResult.Fail($"Property '{propertyPath}' not found on '{target.GetType().Name}'.");
+                return CommandResult.Fail(PropertyNotFoundMessage(target.GetType().Name, propertyPath));
 
             string error = ApplyValue(sp, value, target);
             if (error != null)
@@ -107,6 +107,7 @@ namespace Dreamer.AgentBridge
             var json = SimpleJson.Object()
                 .Put("set", true)
                 .Put("propertyPath", propertyPath)
+                .Put("resolvedPath", resolvedPath)
                 .Put("componentType", target.GetType().FullName)
                 .Put("sceneObjectPath", objectPath)
                 .ToString();
@@ -123,9 +124,9 @@ namespace Dreamer.AgentBridge
                 return CommandResult.Fail($"Failed to load asset: {assetPath}");
 
             var so = new SerializedObject(asset);
-            var sp = so.FindProperty(propertyPath);
+            var sp = FindPropertyWithAlias(so, propertyPath, out string resolvedPath);
             if (sp == null)
-                return CommandResult.Fail($"Property '{propertyPath}' not found on '{asset.GetType().Name}'.");
+                return CommandResult.Fail(PropertyNotFoundMessage(asset.GetType().Name, propertyPath));
 
             string error = ApplyValue(sp, value, null);
             if (error != null) return CommandResult.Fail(error);
@@ -137,6 +138,7 @@ namespace Dreamer.AgentBridge
             var json = SimpleJson.Object()
                 .Put("set", true)
                 .Put("propertyPath", propertyPath)
+                .Put("resolvedPath", resolvedPath)
                 .Put("componentType", asset.GetType().FullName)
                 .Put("assetPath", assetPath)
                 .ToString();
@@ -149,9 +151,9 @@ namespace Dreamer.AgentBridge
         static CommandResult ApplyPropertyAndSave(Component target, string propertyPath, object value, string assetPath, GameObject dirtyTarget)
         {
             var so = new SerializedObject(target);
-            var sp = so.FindProperty(propertyPath);
+            var sp = FindPropertyWithAlias(so, propertyPath, out string resolvedPath);
             if (sp == null)
-                return CommandResult.Fail($"Property '{propertyPath}' not found on '{target.GetType().Name}'.");
+                return CommandResult.Fail(PropertyNotFoundMessage(target.GetType().Name, propertyPath));
 
             string error = ApplyValue(sp, value, target);
             if (error != null)
@@ -164,11 +166,90 @@ namespace Dreamer.AgentBridge
             var json = SimpleJson.Object()
                 .Put("set", true)
                 .Put("propertyPath", propertyPath)
+                .Put("resolvedPath", resolvedPath)
                 .Put("componentType", target.GetType().FullName)
                 .Put("assetPath", assetPath)
                 .ToString();
 
             return CommandResult.Ok(json);
+        }
+
+        /// <summary>
+        /// Resolve a property path with a tolerance for Unity's built-in component
+        /// naming convention. Built-in components (Transform, SpriteRenderer, Collider,
+        /// Behaviour subclasses, etc.) expose serialized fields as "m_Pascal" even
+        /// though the public C# property is "camelCase" — so a user writing
+        /// <c>--property sprite</c> hits "Property not found" unless they know
+        /// to spell it as <c>m_Sprite</c>. User-defined [SerializeField] fields keep
+        /// their declared name and resolve via the primary lookup unchanged.
+        ///
+        /// Resolution order:
+        ///   1. The path as given (works for user fields + already-prefixed paths).
+        ///   2. m_&lt;UpperFirst(firstSegment)&gt;&lt;rest&gt; for single-identifier paths
+        ///      that don't already look prefixed. Multi-segment paths (those with '.'
+        ///      or '[') only get the prefix applied to the first segment so that
+        ///      sub-paths like "localPosition.x" still reach "m_LocalPosition.x".
+        /// </summary>
+        static SerializedProperty FindPropertyWithAlias(SerializedObject so, string propertyPath, out string resolvedPath)
+        {
+            resolvedPath = propertyPath;
+            if (so == null || string.IsNullOrEmpty(propertyPath)) return null;
+
+            // 1. Exact match (user-defined [SerializeField] fields + already-prefixed paths).
+            var sp = so.FindProperty(propertyPath);
+            if (sp != null) return sp;
+
+            // 2. Unity built-in convention: public "sprite" → serialized "m_Sprite".
+            string firstSeg;
+            string rest;
+            int boundary = IndexOfPathBoundary(propertyPath);
+            if (boundary < 0) { firstSeg = propertyPath; rest = ""; }
+            else { firstSeg = propertyPath.Substring(0, boundary); rest = propertyPath.Substring(boundary); }
+
+            if (!firstSeg.StartsWith("m_", StringComparison.Ordinal) && firstSeg.Length > 0 && char.IsLower(firstSeg[0]))
+            {
+                string aliased = "m_" + char.ToUpperInvariant(firstSeg[0]) + firstSeg.Substring(1) + rest;
+                var aliasedSp = so.FindProperty(aliased);
+                if (aliasedSp != null)
+                {
+                    resolvedPath = aliased;
+                    return aliasedSp;
+                }
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Find the first path boundary char ('.' or '[') or -1 if the path is a single identifier.
+        /// </summary>
+        static int IndexOfPathBoundary(string path)
+        {
+            for (int i = 0; i < path.Length; i++)
+            {
+                char c = path[i];
+                if (c == '.' || c == '[') return i;
+            }
+            return -1;
+        }
+
+        /// <summary>
+        /// Build a helpful "property not found" error. Hints at the m_-prefix alias
+        /// convention when the user likely tried a bare C# property name on a built-in
+        /// Unity component.
+        /// </summary>
+        static string PropertyNotFoundMessage(string typeName, string propertyPath)
+        {
+            int boundary = IndexOfPathBoundary(propertyPath);
+            string firstSeg = boundary < 0 ? propertyPath : propertyPath.Substring(0, boundary);
+
+            bool looksCamelCase = firstSeg.Length > 0 && char.IsLower(firstSeg[0])
+                && !firstSeg.StartsWith("m_", StringComparison.Ordinal);
+
+            string hint = looksCamelCase
+                ? $" (Unity built-in components use 'm_<Pascal>' names — tried 'm_{char.ToUpperInvariant(firstSeg[0]) + firstSeg.Substring(1)}' automatically, that also failed. Verify the field exists via `./bin/dreamer inspect --component {typeName}`.)"
+                : "";
+            return $"Property '{propertyPath}' not found on '{typeName}'.{hint}";
         }
 
         static Component FindComponent(GameObject go, string componentTypeName)
@@ -188,6 +269,14 @@ namespace Dreamer.AgentBridge
         {
             try
             {
+                // Arrays and Lists (including struct arrays) — handle before the type switch,
+                // since Unity reports propertyType=Generic for array/list roots. IMPORTANT:
+                // SerializedProperty.isArray also returns true for strings (char arrays in
+                // Unity's serialization model), so exclude String explicitly — we want it
+                // handled as a leaf value via the switch below.
+                if (sp.isArray && sp.propertyType != SerializedPropertyType.String)
+                    return ApplyArray(sp, value, context);
+
                 switch (sp.propertyType)
                 {
                     case SerializedPropertyType.Integer:
@@ -241,8 +330,12 @@ namespace Dreamer.AgentBridge
                     case SerializedPropertyType.ObjectReference:
                         return SetObjectReference(sp, value, context);
 
+                    case SerializedPropertyType.Generic:
+                        // Non-array struct (e.g. a nested [Serializable] class or value type).
+                        return ApplyStruct(sp, value, context);
+
                     default:
-                        return $"Unsupported property type: {sp.propertyType}. Supported: int, float, bool, string, enum, Vector2/3/4, Color, ObjectReference.";
+                        return $"Unsupported property type: {sp.propertyType}. Supported: int, float, bool, string, enum, Vector2/3/4, Color, LayerMask, ObjectReference, arrays/lists, nested structs.";
                 }
             }
             catch (Exception ex)
@@ -251,15 +344,101 @@ namespace Dreamer.AgentBridge
             }
         }
 
+        /// <summary>
+        /// Apply a JSON array to an array/list SerializedProperty.
+        /// Value formats:
+        ///   null or missing          → clear (arraySize = 0)
+        ///   [v1, v2, ...]            → resize and assign each element (recursive ApplyValue)
+        ///   { "_size": N }           → resize only, leave existing element values
+        ///   { "_size": N, "0": v, "3": v } → resize + sparse index assignment (useful for large arrays)
+        /// </summary>
+        static string ApplyArray(SerializedProperty sp, object value, Component context)
+        {
+            if (value == null)
+            {
+                sp.arraySize = 0;
+                return null;
+            }
+
+            if (value is List<object> list)
+            {
+                sp.arraySize = list.Count;
+                for (int i = 0; i < list.Count; i++)
+                {
+                    var elemSp = sp.GetArrayElementAtIndex(i);
+                    if (elemSp == null)
+                        return $"Failed to access array element [{i}] of '{sp.propertyPath}'.";
+                    string err = ApplyValue(elemSp, list[i], context);
+                    if (err != null) return $"[{i}] {err}";
+                }
+                return null;
+            }
+
+            if (value is Dictionary<string, object> dict)
+            {
+                // Sparse/size-only form
+                if (dict.TryGetValue("_size", out object sizeVal))
+                    sp.arraySize = ToInt(sizeVal);
+
+                foreach (var kv in dict)
+                {
+                    if (kv.Key == "_size") continue;
+                    if (!int.TryParse(kv.Key, out int idx))
+                        return $"Array key '{kv.Key}' is not a valid index (expected integer or '_size').";
+                    if (idx < 0 || idx >= sp.arraySize)
+                        return $"Array index [{idx}] out of range (size={sp.arraySize}). Provide '_size' or use a full array value.";
+                    var elemSp = sp.GetArrayElementAtIndex(idx);
+                    string err = ApplyValue(elemSp, kv.Value, context);
+                    if (err != null) return $"[{idx}] {err}";
+                }
+                return null;
+            }
+
+            return $"Array property '{sp.propertyPath}' expects a JSON array or {{\"_size\":N, ...}} object (got {value.GetType().Name}).";
+        }
+
+        /// <summary>
+        /// Apply a JSON object to a struct/nested-serializable SerializedProperty.
+        /// Each key names a field on the struct; values recurse through ApplyValue.
+        /// An empty object {} leaves the struct unchanged.
+        /// </summary>
+        static string ApplyStruct(SerializedProperty sp, object value, Component context)
+        {
+            if (value == null)
+                return $"Struct property '{sp.propertyPath}' cannot be set to null. Use {{}} to leave unchanged, or set individual fields.";
+
+            var dict = value as Dictionary<string, object>;
+            if (dict == null)
+                return $"Struct property '{sp.propertyPath}' expects a JSON object with field names (got {value.GetType().Name}).";
+
+            foreach (var kv in dict)
+            {
+                var childSp = sp.FindPropertyRelative(kv.Key);
+                if (childSp == null)
+                    return $"Field '{kv.Key}' not found in struct at '{sp.propertyPath}'.";
+                string err = ApplyValue(childSp, kv.Value, context);
+                if (err != null) return $".{kv.Key}: {err}";
+            }
+            return null;
+        }
+
         // ── ObjectReference handling ──
 
         /// <summary>
         /// Set an ObjectReference property.
         /// Value can be:
-        ///   { "assetRef": "Assets/Prefabs/X.prefab" }  — load asset, auto-resolve typed component refs
-        ///   { "sceneRef": "/Main Camera" }              — find scene object
         ///   null                                        — clear the reference
         ///   "Assets/..."                                — shorthand for assetRef
+        ///   { "assetRef": "Assets/Prefabs/X.prefab" }   — load asset; auto-resolves Component refs by field type
+        ///   { "sceneRef": "/Main Camera" }              — find scene object (supports recursive search)
+        ///   { "self": true }                            — same GameObject as the component being edited
+        ///   { "selfChild": "Child/Grandchild" }         — navigate within the current prefab/scene object
+        ///   { "guid": "abc..." }                        — resolve asset by GUID
+        ///
+        /// Optional modifiers (combinable with any source):
+        ///   "component": "TypeName"   — pick a specific component (needed for base-class fields like
+        ///                                Behaviour[], Component[], or when multiple components match)
+        ///   "childPath": "Child"      — (assetRef only) navigate into the prefab after loading
         /// </summary>
         static string SetObjectReference(SerializedProperty sp, object value, Component context)
         {
@@ -270,7 +449,7 @@ namespace Dreamer.AgentBridge
                 return null;
             }
 
-            // Determine the expected field type via reflection
+            // Determine the expected field type via reflection (unwraps array/list element types).
             Type fieldType = GetFieldType(sp, context);
 
             // String shorthand
@@ -281,34 +460,48 @@ namespace Dreamer.AgentBridge
                     sp.objectReferenceValue = null;
                     return null;
                 }
-                // Try as asset path
-                return SetObjectReferenceFromAsset(sp, strVal, fieldType);
+                return SetObjectReferenceFromAsset(sp, strVal, fieldType, null, null);
             }
 
-            // Dict with assetRef or sceneRef
             var dict = value as Dictionary<string, object>;
             if (dict == null)
-                return "ObjectReference value must be null, a string (asset path), or {\"assetRef\":\"path\"} / {\"sceneRef\":\"path\"}.";
+                return "ObjectReference value must be null, a string (asset path), or an object with one of: assetRef/sceneRef/self/selfChild/guid.";
 
-            // Optional childPath — navigate to a child within a prefab or scene object
+            // Optional component-type override — essential for base-class fields (Behaviour[], Component[], etc.)
+            Type componentHint = null;
+            string componentOverride = SimpleJson.GetString(dict, "component");
+            if (!string.IsNullOrEmpty(componentOverride))
+            {
+                componentHint = ComponentOps.ResolveType(componentOverride);
+                if (componentHint == null)
+                    return $"Component type '{componentOverride}' not found. Use the full type name (e.g. 'Namespace.TypeName').";
+                if (!typeof(Component).IsAssignableFrom(componentHint))
+                    return $"Type '{componentOverride}' is not a Component.";
+            }
+
             string childPath = SimpleJson.GetString(dict, "childPath");
 
             string assetRef = SimpleJson.GetString(dict, "assetRef");
             if (!string.IsNullOrEmpty(assetRef))
-                return SetObjectReferenceFromAsset(sp, assetRef, fieldType, childPath);
+                return SetObjectReferenceFromAsset(sp, assetRef, fieldType, childPath, componentHint);
 
             string sceneRef = SimpleJson.GetString(dict, "sceneRef");
             if (!string.IsNullOrEmpty(sceneRef))
-                return SetObjectReferenceFromScene(sp, sceneRef, fieldType);
+                return SetObjectReferenceFromScene(sp, sceneRef, fieldType, componentHint);
 
-            // "self" — reference a child within the same prefab/object being edited
+            // "self": true — reference the same GameObject as the component being edited.
+            // Combined with "component", picks a sibling component by type.
+            if (SimpleJson.GetBool(dict, "self") && context != null)
+                return ResolveAndAssign(sp, context.gameObject, fieldType, componentHint);
+
+            // "selfChild" — navigate to a descendant of the current prefab/object being edited.
             string selfChild = SimpleJson.GetString(dict, "selfChild");
             if (!string.IsNullOrEmpty(selfChild) && context != null)
             {
                 Transform child = context.transform.Find(selfChild);
                 if (child == null)
                     return $"Child '{selfChild}' not found under '{context.gameObject.name}'.";
-                return ResolveAndAssign(sp, child.gameObject, fieldType);
+                return ResolveAndAssign(sp, child.gameObject, fieldType, componentHint);
             }
 
             string guidRef = SimpleJson.GetString(dict, "guid");
@@ -317,13 +510,13 @@ namespace Dreamer.AgentBridge
                 string path = AssetDatabase.GUIDToAssetPath(guidRef);
                 if (string.IsNullOrEmpty(path))
                     return $"No asset found for GUID: {guidRef}";
-                return SetObjectReferenceFromAsset(sp, path, fieldType, null);
+                return SetObjectReferenceFromAsset(sp, path, fieldType, childPath, componentHint);
             }
 
-            return "ObjectReference dict must contain 'assetRef', 'sceneRef', 'selfChild', or 'guid'.";
+            return "ObjectReference dict must contain one of: 'assetRef', 'sceneRef', 'self', 'selfChild', 'guid'. Optional: 'component' (type override), 'childPath' (with assetRef/guid).";
         }
 
-        static string SetObjectReferenceFromAsset(SerializedProperty sp, string assetPath, Type fieldType, string childPath = null)
+        static string SetObjectReferenceFromAsset(SerializedProperty sp, string assetPath, Type fieldType, string childPath, Type componentHint)
         {
             var asset = AssetDatabase.LoadMainAssetAtPath(assetPath);
             if (asset == null)
@@ -340,15 +533,17 @@ namespace Dreamer.AgentBridge
                 if (child == null)
                     return $"Child '{childPath}' not found in prefab '{assetPath}'.";
 
-                return ResolveAndAssign(sp, child.gameObject, fieldType);
+                return ResolveAndAssign(sp, child.gameObject, fieldType, componentHint);
             }
 
             // No childPath — resolve from root
             if (asset is GameObject rootGo)
-                return ResolveAndAssign(sp, rootGo, fieldType);
+                return ResolveAndAssign(sp, rootGo, fieldType, componentHint);
 
-            // Non-GameObject asset (Material, Texture, ScriptableObject, etc.)
-            if (fieldType == null || fieldType.IsAssignableFrom(asset.GetType()))
+            // Non-GameObject asset (Material, Texture, ScriptableObject, etc.). Component hint not
+            // applicable here — only relevant when resolving against a GameObject.
+            Type expected = componentHint ?? fieldType;
+            if (expected == null || expected.IsAssignableFrom(asset.GetType()))
             {
                 sp.objectReferenceValue = asset;
                 return null;
@@ -358,82 +553,72 @@ namespace Dreamer.AgentBridge
             var subAssets = AssetDatabase.LoadAllAssetsAtPath(assetPath);
             foreach (var sub in subAssets)
             {
-                if (sub != null && fieldType.IsAssignableFrom(sub.GetType()))
+                if (sub != null && expected.IsAssignableFrom(sub.GetType()))
                 {
                     sp.objectReferenceValue = sub;
                     return null;
                 }
             }
 
-            return $"Asset at '{assetPath}' (type: {asset.GetType().Name}) cannot be assigned to field of type '{fieldType?.Name ?? "unknown"}'.";
-        }
-
-        /// <summary>Resolve and assign a GameObject (or one of its components) to a SerializedProperty.</summary>
-        static string ResolveAndAssign(SerializedProperty sp, GameObject go, Type fieldType)
-        {
-            // If field expects a Component type, get it from the GameObject
-            if (fieldType != null && typeof(Component).IsAssignableFrom(fieldType))
-            {
-                var comp = go.GetComponent(fieldType);
-                if (comp == null)
-                    return $"'{go.name}' does not have a '{fieldType.Name}' component.";
-                sp.objectReferenceValue = comp;
-                return null;
-            }
-
-            // If field expects GameObject or base Object
-            if (fieldType == null || fieldType == typeof(GameObject) || fieldType == typeof(UnityEngine.Object))
-            {
-                sp.objectReferenceValue = go;
-                return null;
-            }
-
-            // If field expects Transform
-            if (fieldType == typeof(Transform) || fieldType == typeof(RectTransform))
-            {
-                sp.objectReferenceValue = go.transform;
-                return null;
-            }
-
-            return $"'{go.name}' cannot be assigned to field of type '{fieldType?.Name ?? "unknown"}'.";
-        }
-
-        static string SetObjectReferenceFromScene(SerializedProperty sp, string objectPath, Type fieldType)
-        {
-            var go = FindSceneObject(objectPath);
-            if (go == null)
-                return $"Scene object not found at path: {objectPath}";
-
-            // If field expects a Component type, get it from the scene object
-            if (fieldType != null && typeof(Component).IsAssignableFrom(fieldType))
-            {
-                var comp = go.GetComponent(fieldType);
-                if (comp == null)
-                    return $"Scene object '{objectPath}' does not have a '{fieldType.Name}' component.";
-
-                sp.objectReferenceValue = comp;
-                return null;
-            }
-
-            // If field expects GameObject or UnityEngine.Object
-            if (fieldType == null || fieldType == typeof(GameObject) || fieldType == typeof(UnityEngine.Object))
-            {
-                sp.objectReferenceValue = go;
-                return null;
-            }
-
-            // If field expects Transform
-            if (fieldType == typeof(Transform))
-            {
-                sp.objectReferenceValue = go.transform;
-                return null;
-            }
-
-            return $"Scene object '{objectPath}' cannot be assigned to field of type '{fieldType?.Name ?? "unknown"}'.";
+            return $"Asset at '{assetPath}' (type: {asset.GetType().Name}) cannot be assigned to field of type '{expected?.Name ?? "unknown"}'.";
         }
 
         /// <summary>
-        /// Determine the C# Type of the field backing a SerializedProperty, using reflection.
+        /// Resolve a GameObject (or one of its components) and assign to the SerializedProperty.
+        /// <paramref name="componentHint"/> overrides auto-resolution by <paramref name="fieldType"/> —
+        /// needed when the field type is a base class (Behaviour, Component) and multiple subtypes exist,
+        /// or when the field stores a GameObject but the caller wants a specific component reference.
+        /// </summary>
+        static string ResolveAndAssign(SerializedProperty sp, GameObject go, Type fieldType, Type componentHint = null)
+        {
+            // Prefer explicit component hint; fall back to the field type.
+            Type target = componentHint ?? fieldType;
+
+            // Component/Behaviour field — look up by type.
+            if (target != null && typeof(Component).IsAssignableFrom(target))
+            {
+                var comp = go.GetComponent(target);
+                if (comp == null)
+                    return $"'{go.name}' does not have a '{target.Name}' component.";
+
+                // Guard: if the user passed a component hint, the resolved component must still fit
+                // the actual field type (e.g., field is PlayerController, hint is GameObject → error).
+                if (fieldType != null && fieldType != target && !fieldType.IsAssignableFrom(comp.GetType()))
+                    return $"Component '{comp.GetType().Name}' is not assignable to field of type '{fieldType.Name}'.";
+
+                sp.objectReferenceValue = comp;
+                return null;
+            }
+
+            // GameObject / UnityEngine.Object field.
+            if (target == null || target == typeof(GameObject) || target == typeof(UnityEngine.Object))
+            {
+                sp.objectReferenceValue = go;
+                return null;
+            }
+
+            // Transform / RectTransform field.
+            if (target == typeof(Transform) || target == typeof(RectTransform))
+            {
+                sp.objectReferenceValue = go.transform;
+                return null;
+            }
+
+            return $"'{go.name}' cannot be assigned to field of type '{target?.Name ?? "unknown"}'.";
+        }
+
+        static string SetObjectReferenceFromScene(SerializedProperty sp, string objectPath, Type fieldType, Type componentHint = null)
+        {
+            var go = FindSceneObject(objectPath, out string findError);
+            if (go == null)
+                return findError ?? $"Scene object not found at path: {objectPath}";
+            return ResolveAndAssign(sp, go, fieldType, componentHint);
+        }
+
+        /// <summary>
+        /// Determine the C# Type of the field backing a SerializedProperty via reflection.
+        /// Walks the property path, unwrapping array/List&lt;T&gt; element types at "Array.data[N]"
+        /// segments so array-element paths resolve to their element type (not the array type).
         /// </summary>
         static Type GetFieldType(SerializedProperty sp, Component context)
         {
@@ -442,21 +627,34 @@ namespace Dreamer.AgentBridge
             try
             {
                 Type type = context.GetType();
-                string[] pathParts = sp.propertyPath.Split('.');
-                FieldInfo field = null;
+                string[] parts = sp.propertyPath.Split('.');
 
-                foreach (string part in pathParts)
+                for (int i = 0; i < parts.Length; i++)
                 {
-                    // Skip array element accessors like "Array" and "data[0]"
-                    if (part == "Array" || part.StartsWith("data[")) continue;
+                    string part = parts[i];
 
-                    field = type.GetField(part,
+                    if (part == "Array")
+                    {
+                        // Expect "Array" to be followed by "data[N]"; unwrap to the element type.
+                        if (i + 1 < parts.Length && parts[i + 1].StartsWith("data["))
+                            i++;
+                        if (type != null)
+                        {
+                            if (type.IsArray)
+                                type = type.GetElementType();
+                            else if (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(List<>))
+                                type = type.GetGenericArguments()[0];
+                        }
+                        continue;
+                    }
+
+                    var field = type?.GetField(part,
                         BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
                     if (field == null) return null;
                     type = field.FieldType;
                 }
 
-                return field?.FieldType;
+                return type;
             }
             catch
             {
@@ -466,32 +664,139 @@ namespace Dreamer.AgentBridge
 
         // ── Scene object finder (shared) ──
 
+        /// <summary>
+        /// Resolve a scene object by path across all loaded scenes. Returns null on failure;
+        /// use the overload with <paramref name="error"/> for diagnostic messages.
+        /// </summary>
         public static GameObject FindSceneObject(string path)
         {
-            if (string.IsNullOrEmpty(path)) return null;
-            if (path.StartsWith("/")) path = path.Substring(1);
+            return FindSceneObject(path, out _);
+        }
 
-            string[] parts = path.Split('/');
-            if (parts.Length == 0) return null;
-
-            var scene = SceneManager.GetActiveScene();
-            var roots = scene.GetRootGameObjects();
-            GameObject current = null;
-
-            foreach (var root in roots)
+        /// <summary>
+        /// Resolve a scene object by path, with diagnostic error reporting.
+        /// Accepts:
+        ///   "/Root/Child/Grandchild"  — absolute: first segment must be a root-level object.
+        ///   "Root/Child"              — same as absolute (first segment is a root name).
+        ///   "Grandchild"              — bare name: recursive search across all loaded scenes.
+        ///   "Parent/Grandchild"       — bare prefix: recursive search anywhere the chain matches.
+        /// On ambiguous matches, returns null with a descriptive <paramref name="error"/>.
+        /// Searches every loaded scene (active + additive).
+        /// </summary>
+        public static GameObject FindSceneObject(string path, out string error)
+        {
+            error = null;
+            if (string.IsNullOrEmpty(path))
             {
-                if (root.name == parts[0]) { current = root; break; }
+                error = "Scene path is empty.";
+                return null;
             }
-            if (current == null) return null;
 
+            bool rooted = path.StartsWith("/");
+            string stripped = rooted ? path.Substring(1) : path;
+
+            string[] parts = stripped.Split('/');
+            if (parts.Length == 0 || string.IsNullOrEmpty(parts[0]))
+            {
+                error = "Scene path is empty.";
+                return null;
+            }
+
+            // Gather roots from every loaded scene (supports additive loading).
+            var allRoots = new List<GameObject>();
+            for (int s = 0; s < SceneManager.sceneCount; s++)
+            {
+                var scene = SceneManager.GetSceneAt(s);
+                if (!scene.IsValid() || !scene.isLoaded) continue;
+                allRoots.AddRange(scene.GetRootGameObjects());
+            }
+
+            // Pass 1: treat parts[0] as a root name.
+            var rootAnchored = new List<GameObject>();
+            foreach (var root in allRoots)
+            {
+                if (root.name != parts[0]) continue;
+                var leaf = TraverseFromRoot(root.transform, parts);
+                if (leaf != null) rootAnchored.Add(leaf);
+            }
+
+            if (rootAnchored.Count == 1) return rootAnchored[0];
+            if (rootAnchored.Count > 1)
+            {
+                error = $"Ambiguous scene path '{(rooted ? "/" : "")}{stripped}' matches {rootAnchored.Count} root-anchored objects: {DescribeMatches(rootAnchored)}. Disambiguate by using a deeper path.";
+                return null;
+            }
+
+            // Absolute path with no root match — do not fall back to deep search.
+            if (rooted)
+            {
+                error = $"Scene object not found at absolute path: /{stripped}. (Leading '/' requires a root-level object; drop the slash to search all descendants.)";
+                return null;
+            }
+
+            // Pass 2: recursive descendant search across all scenes.
+            var deep = new List<GameObject>();
+            foreach (var root in allRoots)
+                SearchRecursive(root.transform, parts, deep);
+
+            if (deep.Count == 1) return deep[0];
+            if (deep.Count > 1)
+            {
+                error = $"Ambiguous scene path '{stripped}' matches {deep.Count} objects: {DescribeMatches(deep)}. Qualify with parent segments or use a leading '/' for root-anchored lookup.";
+                return null;
+            }
+
+            error = $"Scene object not found at path: {path}.";
+            return null;
+        }
+
+        static GameObject TraverseFromRoot(Transform anchor, string[] parts)
+        {
+            // parts[0] has already matched anchor.name; walk remaining segments.
+            Transform cur = anchor;
             for (int i = 1; i < parts.Length; i++)
             {
-                Transform child = current.transform.Find(parts[i]);
+                Transform child = cur.Find(parts[i]);
                 if (child == null) return null;
-                current = child.gameObject;
+                cur = child;
             }
+            return cur.gameObject;
+        }
 
-            return current;
+        static void SearchRecursive(Transform t, string[] parts, List<GameObject> matches)
+        {
+            if (t.name == parts[0])
+            {
+                var leaf = TraverseFromRoot(t, parts);
+                if (leaf != null) matches.Add(leaf);
+            }
+            for (int i = 0; i < t.childCount; i++)
+                SearchRecursive(t.GetChild(i), parts, matches);
+        }
+
+        static string DescribeMatches(List<GameObject> matches)
+        {
+            const int MaxShown = 5;
+            int shown = Math.Min(matches.Count, MaxShown);
+            var paths = new string[shown];
+            for (int i = 0; i < shown; i++) paths[i] = GetScenePath(matches[i]);
+            string joined = string.Join(", ", paths);
+            if (matches.Count > MaxShown) joined += $", +{matches.Count - MaxShown} more";
+            return joined;
+        }
+
+        /// <summary>Return the full hierarchy path of a scene GameObject (leading '/').</summary>
+        public static string GetScenePath(GameObject go)
+        {
+            if (go == null) return null;
+            string p = go.name;
+            var parent = go.transform.parent;
+            while (parent != null)
+            {
+                p = parent.name + "/" + p;
+                parent = parent.parent;
+            }
+            return "/" + p;
         }
 
         // ── Vector / Color helpers ──

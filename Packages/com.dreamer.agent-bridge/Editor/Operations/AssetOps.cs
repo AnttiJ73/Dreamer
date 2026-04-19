@@ -219,9 +219,9 @@ namespace Dreamer.AgentBridge
 
         static CommandResult InspectSceneObject(string objectPath)
         {
-            var go = PropertyOps.FindSceneObject(objectPath);
+            var go = PropertyOps.FindSceneObject(objectPath, out string findError);
             if (go == null)
-                return CommandResult.Fail($"Scene object not found at path: {objectPath}");
+                return CommandResult.Fail(findError ?? $"Scene object not found at path: {objectPath}");
 
             var result = SimpleJson.Object()
                 .Put("name", go.name)

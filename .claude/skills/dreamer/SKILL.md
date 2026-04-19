@@ -1,3 +1,8 @@
+---
+name: dreamer
+description: Drive the ./bin/dreamer CLI to automate Unity Editor operations in this project — create scripts, prefabs, components, scene objects; set serialized properties (including struct arrays and self-references); inspect assets and hierarchies; manage compile gating and focus. Use whenever the task involves modifying the Unity project in this repo.
+---
+
 # Dreamer — Unity Editor Automation
 
 Use the project-local `dreamer` CLI to automate Unity Editor operations. Invoke every command as `./bin/dreamer <command>` from the Unity project root (POSIX/bash). On Windows cmd/PowerShell, use `.\bin\dreamer <command>`. Do not call a global `dreamer` — this tool is intentionally project-local; each Unity project has its own independent install.
@@ -87,7 +92,7 @@ Some command kinds have machine-readable arg schemas (type, required, enum, cros
 
 When the user asks to update Dreamer (e.g. "update Dreamer", "pull the latest Dreamer"):
 
-1. Run `./bin/dreamer update`. It clones the recorded repo shallowly, stops the daemon, and replaces `daemon/src`, `daemon/bin`, `daemon/package.json`, `Packages/com.dreamer.agent-bridge/`, `.claude/commands/dreamer.md`, and the `bin/dreamer` / `bin/dreamer.cmd` wrappers. `daemon/.dreamer-config.json`, `daemon/.dreamer-source.json`, and queue state are preserved.
+1. Run `./bin/dreamer update`. It clones the recorded repo shallowly, stops the daemon, and replaces `daemon/src`, `daemon/bin`, `daemon/package.json`, `Packages/com.dreamer.agent-bridge/`, `.claude/skills/dreamer/SKILL.md`, and the `bin/dreamer` / `bin/dreamer.cmd` wrappers. `daemon/.dreamer-config.json`, `daemon/.dreamer-source.json`, and queue state are preserved. A one-time migration also removes the legacy `.claude/commands/dreamer.md` if present.
 2. Report the new commit SHA from the output.
 3. Tell the user Unity may reimport the package briefly. Run `./bin/dreamer status` to confirm the daemon restarted and Unity is still connected.
 4. If the CLI fails with "No daemon/.dreamer-source.json", the install pre-dates self-update — tell the user to rerun the installer.
@@ -106,6 +111,45 @@ When the user asks to update Dreamer (e.g. "update Dreamer", "pull the latest Dr
 ```
 
 Typed fields (e.g., `public Rigidbody rb`, `public Camera cam`) auto-resolve: point to a prefab or scene object and Dreamer finds the matching component.
+
+## Property Names for Built-in Unity Components
+
+Unity's built-in components (`Transform`, `SpriteRenderer`, `Collider`, `Camera`, etc.) serialize fields as `m_Pascal` (e.g. `m_Sprite`, `m_LocalPosition`). Dreamer automatically accepts the C#-style camelCase form — `sprite`, `localPosition`, `color`, `isTrigger` — and falls back to `m_Sprite` etc. on lookup failure. User-defined `[SerializeField]` fields keep their declared name as-is. The result JSON includes `resolvedPath` so you can see which form Unity actually used.
+
+## Array / Struct / Self-Reference Property Values
+
+`set-property` handles composite values beyond primitives and object refs:
+
+```bash
+# Array / list — resize + assign all elements
+--value '[1, 2, 3]'
+--value '[{"field":1,"other":"x"}, {"field":2,"other":"y"}]'   # struct array
+
+# Sparse / size-only array updates
+--value '{"_size":4,"0":{"field":1},"3":{"field":9}}'          # resize + two indices
+
+# Nested struct (leaves unmentioned fields untouched)
+--value '{"field":42,"nested":{"inner":"ok"}}'
+
+# Sibling component on the same GameObject (for self-references in a prefab/scene object)
+--value '{"self":true,"component":"PlayerController"}'
+
+# Descendant of the currently-edited prefab/scene object
+--value '{"selfChild":"Visuals/Hand","component":"SpriteRenderer"}'
+```
+
+## Scene Object Path Rules (`--scene-object`, `sceneRef`)
+
+- `"/Root/Child/Grandchild"` — absolute: first segment MUST be a root-level object. No fallback.
+- `"Root/Child"` — same as absolute (first segment is a root name). One match required.
+- `"Grandchild"` — bare name: recursive search across **all loaded scenes** (active + additive). Returns an error if the name is ambiguous, listing every matching path so you can qualify it.
+- `"Parent/Grandchild"` — bare prefix: recursive search anywhere that chain matches.
+
+Ambiguity is an error, not a silent misroute. On collision, the CLI fails with matching paths so you can pick one.
+
+## `create-hierarchy` Result Warnings
+
+When `create-hierarchy --json ...` can't add a requested component (unknown type, not-a-component, duplicate), it records the reason into a `warnings` array in the result JSON rather than dropping silently. The most common cause: the user type was declared in a script that has a current compile error, so `ResolveType` returned null. Check `./bin/dreamer compile-status` before calling `create-hierarchy` with custom types, and inspect `warnings[]` in the response afterward.
 
 ## Workflows: writing / editing C# scripts
 

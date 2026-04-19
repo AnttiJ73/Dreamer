@@ -17,8 +17,10 @@ namespace Dreamer.AgentBridge
     {
         const string PrefEnabled = "AgentBridge_Enabled";
         const double StateSnapshotIntervalSec = 2.0;
+        const double PortRecheckIntervalSec = 3.0;
 
         static double _lastStateSnapshot;
+        static double _lastPortRecheck;
         static bool _running;
 
         public static bool IsEnabled
@@ -70,7 +72,21 @@ namespace Dreamer.AgentBridge
 
             _lastStateSnapshot = EditorApplication.timeSinceStartup;
 
-            DreamerLog.Info($"Started. Daemon URL: {DaemonClient.BaseUrl}");
+            if (DaemonClient.HasRegistryEntry)
+            {
+                DreamerLog.Info($"Started. Daemon URL: {DaemonClient.BaseUrl} (from projects registry).");
+            }
+            else
+            {
+                // Bridge still starts so it can connect if a daemon happens to be on
+                // the fallback port, but warn loudly: without a registry entry the
+                // project relies on EditorPrefs/default 18710, which conflicts with
+                // any other Unity editor also defaulting to 18710.
+                string projectRoot = ProjectRegistry.GetCurrentProjectRoot();
+                DreamerLog.Warn(
+                    $"Started on fallback port {DaemonClient.Port} for {projectRoot} — this project is NOT registered. " +
+                    $"Run `./bin/dreamer status` from the project root to register. Registry file: {DaemonClient.RegistryPath}");
+            }
         }
 
         public static void Stop()
@@ -125,6 +141,16 @@ namespace Dreamer.AgentBridge
             {
                 _lastStateSnapshot = now;
                 PushStateSnapshot();
+            }
+
+            // Periodically re-check the registered port so `./bin/dreamer registry
+            // reassign` takes effect on a running editor without needing a full
+            // Unity restart. DaemonClient.Port itself handles mtime-based cache
+            // invalidation; we just poke it and forward any change to the bridge.
+            if (now - _lastPortRecheck >= PortRecheckIntervalSec)
+            {
+                _lastPortRecheck = now;
+                BackgroundBridge.UpdateBaseUrl(DaemonClient.BaseUrl);
             }
         }
 

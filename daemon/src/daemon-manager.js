@@ -4,18 +4,24 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
-const { getPort } = require('./config');
+const { getPort, ensureRegisteredPort } = require('./config');
 
 const DAEMON_DIR = path.resolve(__dirname, '..');
+const DAEMON_PROJECT_ROOT = path.resolve(DAEMON_DIR, '..');
 const PID_FILE = path.join(DAEMON_DIR, '.dreamer-daemon.pid');
 const SERVER_JS = path.join(__dirname, 'server.js');
 
 /**
- * Get the daemon base URL. Port precedence: DREAMER_PORT env > config > 18710.
+ * Get the daemon base URL. Resolves the port from the projects registry for
+ * this daemon's Unity project root.
+ *
+ * Precedence (see config.getPort): DREAMER_PORT env > registry entry >
+ * legacy .dreamer-config.json > 18710.
+ *
  * @returns {string}
  */
 function getDaemonUrl() {
-  return `http://127.0.0.1:${getPort()}`;
+  return `http://127.0.0.1:${getPort(DAEMON_PROJECT_ROOT)}`;
 }
 
 /**
@@ -97,11 +103,24 @@ async function isDaemonRunning() {
 
 /**
  * Start the daemon as a detached background process.
+ *
+ * Ensures this project has a port registered first so both the CLI and the
+ * spawned daemon agree on which port to use. Without this, the CLI's cached
+ * getDaemonUrl() could resolve to the fallback default while the daemon's
+ * own startup allocates a different port, leaving the CLI unable to reach it.
+ *
  * @returns {Promise<void>}
  */
 async function startDaemon() {
   const already = await isDaemonRunning();
   if (already) return;
+
+  // Register/resolve port before spawn so the CLI agrees with the daemon.
+  try {
+    await ensureRegisteredPort(DAEMON_PROJECT_ROOT, { daemonRoot: DAEMON_DIR });
+  } catch (err) {
+    throw new Error(`Cannot start daemon: failed to register project port — ${err.message}`);
+  }
 
   // Spawn detached
   const child = spawn(process.execPath, [SERVER_JS, '--daemon'], {

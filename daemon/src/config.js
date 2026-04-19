@@ -26,15 +26,61 @@ function save(cfg) {
 }
 
 /**
- * Resolve the daemon port with precedence:
- *   DREAMER_PORT env var > config file `port` > 18710
+ * Synchronous port resolution. Precedence:
+ *   DREAMER_PORT env var > per-project registry entry > legacy .dreamer-config.json > 18710
+ *
+ * This is the fast path used by every CLI HTTP call and by the daemon's own
+ * startup — it does no port allocation, no file writes, no probing. If no
+ * registry entry exists for this project, callers that need to *create* one
+ * should use ensureRegisteredPort() (async) instead.
+ *
+ * @param {string} [projectRoot] - the Unity project root; defaults to the
+ *   daemon's own project (daemon folder's parent).
  */
-function getPort() {
+function getPort(projectRoot) {
   const env = parseInt(process.env.DREAMER_PORT, 10);
   if (Number.isInteger(env) && env > 0) return env;
+
+  try {
+    // Lazy require to avoid a cycle with project-registry.js at module load.
+    const registry = require('./project-registry');
+    const root = projectRoot || path.resolve(__dirname, '..', '..');
+    const port = registry.getPortForProject(root);
+    if (Number.isInteger(port) && port > 0) return port;
+  } catch { /* fall through to legacy */ }
+
   const cfg = load();
   if (Number.isInteger(cfg.port) && cfg.port > 0) return cfg.port;
   return DEFAULT_PORT;
+}
+
+/**
+ * Asynchronous variant used by the daemon at startup and by the CLI's
+ * `ensureDaemon()` path: resolves a port for `projectRoot`, registering a new
+ * entry in the projects registry if one doesn't exist yet.
+ *
+ * @param {string} projectRoot - absolute path to the Unity project root
+ * @param {object} [opts]
+ * @param {string} [opts.daemonRoot]
+ * @returns {Promise<{port:number, entry:object|null, source:string}>}
+ */
+async function ensureRegisteredPort(projectRoot, opts = {}) {
+  const env = parseInt(process.env.DREAMER_PORT, 10);
+  if (Number.isInteger(env) && env > 0) {
+    return { port: env, entry: null, source: 'env' };
+  }
+
+  const registry = require('./project-registry');
+  // If the legacy per-project config has a port, honour it as a migration hint
+  // the first time we register — keeps existing setups on their chosen port.
+  const legacy = load();
+  const preferredPort = Number.isInteger(legacy.port) && legacy.port > 0 ? legacy.port : undefined;
+
+  const entry = await registry.ensureEntry(projectRoot, {
+    daemonRoot: opts.daemonRoot,
+    preferredPort,
+  });
+  return { port: entry.port, entry, source: 'registry' };
 }
 
 /**
@@ -87,6 +133,7 @@ module.exports = {
   load,
   save,
   getPort,
+  ensureRegisteredPort,
   isPortFree,
   findFreePort,
 };

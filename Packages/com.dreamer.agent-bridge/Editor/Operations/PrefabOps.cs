@@ -137,9 +137,9 @@ namespace Dreamer.AgentBridge
             if (string.IsNullOrEmpty(sceneObjectPath))
                 return CommandResult.Fail("'sceneObjectPath' is required.");
 
-            var go = PropertyOps.FindSceneObject(sceneObjectPath);
+            var go = PropertyOps.FindSceneObject(sceneObjectPath, out string findError);
             if (go == null)
-                return CommandResult.Fail($"Scene object not found at path: {sceneObjectPath}");
+                return CommandResult.Fail(findError ?? $"Scene object not found at path: {sceneObjectPath}");
 
             string folder = SimpleJson.GetString(args, "savePath", "Assets/Prefabs");
             string name = SimpleJson.GetString(args, "name");

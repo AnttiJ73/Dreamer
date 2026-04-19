@@ -33,9 +33,18 @@ namespace Dreamer.AgentBridge
 
         /// <summary>
         /// Daemon port. Precedence:
-        ///   DREAMER_PORT env var > daemon/.dreamer-config.json > EditorPrefs > 18710.
-        /// Reading from the per-project config file keeps multiple Unity projects
-        /// on distinct ports without relying on the (machine-global) EditorPrefs.
+        ///   DREAMER_PORT env var
+        ///     > shared projects registry (%APPDATA%/Dreamer/projects.json on Windows,
+        ///       $HOME/.dreamer/projects.json on Unix) — owned by the CLI/daemon
+        ///     > legacy daemon/.dreamer-config.json (per-project override)
+        ///     > EditorPrefs (machine-global; last resort)
+        ///     > 18710.
+        ///
+        /// The registry is the preferred source — it stores a {projectPath → port}
+        /// map so multiple Unity editors on the same machine route to distinct
+        /// daemons automatically. If no registry entry exists, HasRegistryEntry
+        /// returns false and the AgentBridge UI hints to run
+        /// `./bin/dreamer status` from the project root to register.
         /// </summary>
         public static int Port
         {
@@ -44,12 +53,61 @@ namespace Dreamer.AgentBridge
                 string envPort = Environment.GetEnvironmentVariable("DREAMER_PORT");
                 if (!string.IsNullOrEmpty(envPort) && int.TryParse(envPort, out int p)) return p;
 
+                int registryPort = ReadRegistryPort();
+                if (registryPort > 0) return registryPort;
+
                 int configPort = ReadConfigPort();
                 if (configPort > 0) return configPort;
 
                 return EditorPrefs.GetInt(PrefPort, DefaultPort);
             }
             set => EditorPrefs.SetInt(PrefPort, value);
+        }
+
+        /// <summary>True when the projects registry has an entry for this project.</summary>
+        public static bool HasRegistryEntry => ReadRegistryPort() > 0;
+
+        /// <summary>
+        /// Path to the shared registry file (useful for surfacing in the bridge UI
+        /// when the current project isn't registered).
+        /// </summary>
+        public static string RegistryPath => ProjectRegistry.GetRegistryPath();
+
+        static int? _cachedRegistryPort;
+        static long _cachedRegistryMtime = -1;
+        static double _nextRegistryStatCheck;
+        const double RegistryStatIntervalSec = 3.0;
+
+        static int ReadRegistryPort()
+        {
+            // File.GetLastWriteTime is cheap but not free; stat at most every
+            // few seconds. If the registry file's mtime changed since the last
+            // read, drop the cache so the next call re-reads — this is how a
+            // `./bin/dreamer registry reassign` takes effect without requiring
+            // a Unity restart.
+            try
+            {
+                double now = UnityEditor.EditorApplication.timeSinceStartup;
+                if (now >= _nextRegistryStatCheck)
+                {
+                    _nextRegistryStatCheck = now + RegistryStatIntervalSec;
+                    string path = ProjectRegistry.GetRegistryPath();
+                    long mtime = System.IO.File.Exists(path)
+                        ? System.IO.File.GetLastWriteTimeUtc(path).Ticks
+                        : 0;
+                    if (mtime != _cachedRegistryMtime)
+                    {
+                        _cachedRegistryMtime = mtime;
+                        _cachedRegistryPort = null;
+                    }
+                }
+            }
+            catch { /* if stat fails, keep whatever we cached last */ }
+
+            if (_cachedRegistryPort.HasValue) return _cachedRegistryPort.Value;
+            int result = ProjectRegistry.GetPortForCurrentProject();
+            _cachedRegistryPort = result;
+            return result;
         }
 
         static int ReadConfigPort()
@@ -77,8 +135,12 @@ namespace Dreamer.AgentBridge
             return result;
         }
 
-        /// <summary>Force a re-read of the config port on next access (call after editing config).</summary>
-        public static void InvalidatePortCache() => _cachedConfigPort = null;
+        /// <summary>Force a re-read of the config + registry ports on next access.</summary>
+        public static void InvalidatePortCache()
+        {
+            _cachedConfigPort = null;
+            _cachedRegistryPort = null;
+        }
 
         public static string BaseUrl => $"http://localhost:{Port}";
 

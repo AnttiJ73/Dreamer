@@ -31,9 +31,9 @@ namespace Dreamer.AgentBridge
             string sceneObjectPath = SimpleJson.GetString(args, "sceneObjectPath");
             if (!string.IsNullOrEmpty(sceneObjectPath))
             {
-                var go = PropertyOps.FindSceneObject(sceneObjectPath);
+                var go = PropertyOps.FindSceneObject(sceneObjectPath, out string findError);
                 if (go == null)
-                    return CommandResult.Fail($"Scene object not found at path: {sceneObjectPath}");
+                    return CommandResult.Fail(findError ?? $"Scene object not found at path: {sceneObjectPath}");
 
                 if (go.GetComponent(componentType) != null)
                     return CommandResult.Fail($"Component '{componentType.Name}' already exists on scene object.");
@@ -124,9 +124,9 @@ namespace Dreamer.AgentBridge
             string sceneObjectPath = SimpleJson.GetString(args, "sceneObjectPath");
             if (!string.IsNullOrEmpty(sceneObjectPath))
             {
-                var go = PropertyOps.FindSceneObject(sceneObjectPath);
+                var go = PropertyOps.FindSceneObject(sceneObjectPath, out string findError);
                 if (go == null)
-                    return CommandResult.Fail($"Scene object not found at path: {sceneObjectPath}");
+                    return CommandResult.Fail(findError ?? $"Scene object not found at path: {sceneObjectPath}");
 
                 var comp = go.GetComponent(componentType);
                 if (comp == null)
@@ -194,6 +194,188 @@ namespace Dreamer.AgentBridge
                 .ToString();
 
             return CommandResult.Ok(prefabJson);
+        }
+
+        /// <summary>
+        /// Remove "Missing (Mono Script)" components left behind after a script is deleted.
+        /// These orphans are invisible to GetComponent&lt;T&gt; and cannot be targeted by remove_component —
+        /// they can only be scrubbed via GameObjectUtility.RemoveMonoBehavioursWithMissingScript.
+        /// Operates on a single prefab, a single scene object, or every prefab under a folder.
+        ///
+        /// Args:
+        ///   Prefab:       { assetPath?: "path", guid?: "guid" }
+        ///   Scene object: { sceneObjectPath: "/Path" }
+        ///   Folder scan:  { path: "Assets/Prefabs" }
+        ///   Modifiers:    { recursive?: true (default), dryRun?: false }
+        ///
+        /// Dry-run uses GetMonoBehavioursWithMissingScriptCount and does not mutate anything.
+        /// </summary>
+        public static CommandResult RemoveMissingScripts(Dictionary<string, object> args)
+        {
+            bool recursive = !args.ContainsKey("recursive") || SimpleJson.GetBool(args, "recursive", true);
+            bool dryRun = SimpleJson.GetBool(args, "dryRun", false);
+
+            // ── Scene object target ──
+            string sceneObjectPath = SimpleJson.GetString(args, "sceneObjectPath");
+            if (!string.IsNullOrEmpty(sceneObjectPath))
+            {
+                var go = PropertyOps.FindSceneObject(sceneObjectPath, out string findError);
+                if (go == null)
+                    return CommandResult.Fail(findError ?? $"Scene object not found at path: {sceneObjectPath}");
+
+                var affected = new List<ScrubEntry>();
+                int total = WalkAndScrub(go, recursive, dryRun, affected);
+
+                if (!dryRun && total > 0) EditorUtility.SetDirty(go);
+
+                return CommandResult.Ok(SimpleJson.Object()
+                    .Put("target", "sceneObject")
+                    .Put("sceneObjectPath", sceneObjectPath)
+                    .Put("totalRemoved", total)
+                    .Put("dryRun", dryRun)
+                    .PutRaw("affected", SerializeAffected(affected))
+                    .ToString());
+            }
+
+            // ── Prefab target (assetPath or guid) ──
+            if (!string.IsNullOrEmpty(SimpleJson.GetString(args, "assetPath"))
+                || !string.IsNullOrEmpty(SimpleJson.GetString(args, "guid")))
+            {
+                string assetPath = AssetOps.ResolveAssetPath(args);
+                if (assetPath == null)
+                    return CommandResult.Fail("Asset not found — check 'assetPath' or 'guid'.");
+                if (!assetPath.EndsWith(".prefab", StringComparison.OrdinalIgnoreCase))
+                    return CommandResult.Fail($"Asset is not a prefab: {assetPath}");
+
+                return ScrubPrefab(assetPath, recursive, dryRun);
+            }
+
+            // ── Folder target ──
+            string folder = SimpleJson.GetString(args, "path");
+            if (!string.IsNullOrEmpty(folder))
+                return ScrubFolder(folder, recursive, dryRun);
+
+            return CommandResult.Fail("Provide one of: 'assetPath'/'guid' (prefab), 'sceneObjectPath' (scene), or 'path' (folder scan).");
+        }
+
+        static CommandResult ScrubPrefab(string assetPath, bool recursive, bool dryRun)
+        {
+            var prefabRoot = PrefabUtility.LoadPrefabContents(assetPath);
+            if (prefabRoot == null)
+                return CommandResult.Fail($"Failed to load prefab contents: {assetPath}");
+
+            try
+            {
+                var affected = new List<ScrubEntry>();
+                int total = WalkAndScrub(prefabRoot, recursive, dryRun, affected);
+
+                if (!dryRun && total > 0)
+                    PrefabUtility.SaveAsPrefabAsset(prefabRoot, assetPath);
+
+                return CommandResult.Ok(SimpleJson.Object()
+                    .Put("target", "prefab")
+                    .Put("assetPath", assetPath)
+                    .Put("totalRemoved", total)
+                    .Put("dryRun", dryRun)
+                    .PutRaw("affected", SerializeAffected(affected))
+                    .ToString());
+            }
+            finally
+            {
+                PrefabUtility.UnloadPrefabContents(prefabRoot);
+            }
+        }
+
+        static CommandResult ScrubFolder(string folder, bool recursive, bool dryRun)
+        {
+            // Normalize folder; AssetDatabase.FindAssets needs an existing asset folder.
+            if (!AssetDatabase.IsValidFolder(folder))
+                return CommandResult.Fail($"Not a valid asset folder: {folder}");
+
+            string[] guids = AssetDatabase.FindAssets("t:Prefab", new[] { folder });
+            var prefabSummaries = SimpleJson.Array();
+            int grandTotal = 0;
+            int cleanedPrefabs = 0;
+
+            foreach (var guid in guids)
+            {
+                string path = AssetDatabase.GUIDToAssetPath(guid);
+                var prefabRoot = PrefabUtility.LoadPrefabContents(path);
+                if (prefabRoot == null) continue;
+
+                try
+                {
+                    var affected = new List<ScrubEntry>();
+                    int total = WalkAndScrub(prefabRoot, recursive, dryRun, affected);
+                    if (total <= 0) continue;
+
+                    grandTotal += total;
+                    cleanedPrefabs++;
+                    if (!dryRun)
+                        PrefabUtility.SaveAsPrefabAsset(prefabRoot, path);
+
+                    prefabSummaries.AddRaw(SimpleJson.Object()
+                        .Put("assetPath", path)
+                        .Put("removed", total)
+                        .PutRaw("affected", SerializeAffected(affected))
+                        .ToString());
+                }
+                finally
+                {
+                    PrefabUtility.UnloadPrefabContents(prefabRoot);
+                }
+            }
+
+            return CommandResult.Ok(SimpleJson.Object()
+                .Put("target", "folder")
+                .Put("path", folder)
+                .Put("scanned", guids.Length)
+                .Put("cleanedPrefabs", cleanedPrefabs)
+                .Put("totalRemoved", grandTotal)
+                .Put("dryRun", dryRun)
+                .PutRaw("prefabs", prefabSummaries.ToString())
+                .ToString());
+        }
+
+        /// <summary>Walk a GameObject tree and remove (or count) missing-script components.</summary>
+        static int WalkAndScrub(GameObject go, bool recursive, bool dryRun, List<ScrubEntry> affected)
+        {
+            int count = dryRun
+                ? GameObjectUtility.GetMonoBehavioursWithMissingScriptCount(go)
+                : GameObjectUtility.RemoveMonoBehavioursWithMissingScript(go);
+
+            int total = count;
+            if (count > 0)
+                affected.Add(new ScrubEntry { Path = PropertyOps.GetScenePath(go), Count = count });
+
+            if (recursive)
+            {
+                // Snapshot child count; removal never mutates children, but index-based iteration is safer.
+                int childCount = go.transform.childCount;
+                for (int i = 0; i < childCount; i++)
+                    total += WalkAndScrub(go.transform.GetChild(i).gameObject, true, dryRun, affected);
+            }
+
+            return total;
+        }
+
+        static string SerializeAffected(List<ScrubEntry> affected)
+        {
+            var arr = SimpleJson.Array();
+            foreach (var a in affected)
+            {
+                arr.AddRaw(SimpleJson.Object()
+                    .Put("path", a.Path)
+                    .Put("removed", a.Count)
+                    .ToString());
+            }
+            return arr.ToString();
+        }
+
+        struct ScrubEntry
+        {
+            public string Path;
+            public int Count;
         }
 
         /// <summary>

@@ -89,6 +89,20 @@ namespace Dreamer.AgentBridge
             _pendingStateJson = json;
         }
 
+        /// <summary>
+        /// Update the base URL used for subsequent HTTP calls. Called from main
+        /// thread when the resolved daemon port changes (e.g. after the user
+        /// runs `./bin/dreamer registry reassign`). Without this, the bridge
+        /// keeps hammering the old port until Unity restarts.
+        /// </summary>
+        public static void UpdateBaseUrl(string baseUrl)
+        {
+            if (string.IsNullOrEmpty(baseUrl) || baseUrl == _baseUrl) return;
+            DreamerLog.Info($"Daemon URL changed: {_baseUrl} → {baseUrl}");
+            _baseUrl = baseUrl;
+            _consecutiveErrors = 0;
+        }
+
         /// <summary>Report a command result to the daemon. Thread-safe — runs on thread pool.</summary>
         public static void ReportResult(string commandId, bool success, string resultJson, string error)
         {
@@ -123,6 +137,27 @@ namespace Dreamer.AgentBridge
                 {
                     body.Put("projectPath", _projectPath);
                 }
+
+                // Piggyback a minimal state snapshot on every heartbeat so the daemon's
+                // `hasReceivedState` flag flips even when Unity's main thread isn't
+                // ticking (Windows + unfocused editor, e.g.). Without this, a fresh
+                // daemon would deadlock all compile-gated commands until the user
+                // focuses Unity, which is exactly the failure we want to avoid.
+                // These fields are safe to read from background threads — the
+                // static flag is a plain bool, error snapshot is copy-on-read.
+                body.Put("compiling", CompilationMonitor.IsCompiling);
+                body.Put("compileErrors", CompilationMonitor.GetErrorArray());
+
+                // Also report Unity's memory of the last compile outcome. When
+                // the daemon restarts after Unity has been running for a while,
+                // this lets it restore `lastCompileSuccess` instead of showing
+                // `idle` until the next compile cycle fires.
+                if (CompilationMonitor.LastCompileTime.HasValue)
+                {
+                    body.Put("lastCompileTime", CompilationMonitor.LastCompileTime.Value.ToString("o"));
+                    body.Put("lastCompileSucceeded", CompilationMonitor.LastCompileSucceeded);
+                }
+
                 HttpPost($"{_baseUrl}/api/unity/heartbeat", body.ToString());
                 OnSuccess();
             }
@@ -220,9 +255,34 @@ namespace Dreamer.AgentBridge
                 stream.Write(data, 0, data.Length);
             }
 
-            using (var response = (HttpWebResponse)request.GetResponse())
+            try
             {
-                // Just consume the response
+                using (var response = (HttpWebResponse)request.GetResponse())
+                {
+                    // Just consume the response
+                }
+            }
+            catch (WebException wex) when (wex.Response is HttpWebResponse resp && (int)resp.StatusCode == 409)
+            {
+                // Daemon says "wrong project" — we're pointed at the wrong
+                // port. Log once (consecutive-errors suppression handles
+                // spam) and invalidate the port cache so the next stat
+                // check picks up the registry change. Then rethrow so the
+                // caller's OnError accounting kicks in.
+                string body = "";
+                try
+                {
+                    using (var s = resp.GetResponseStream())
+                    using (var r = new StreamReader(s, Encoding.UTF8))
+                        body = r.ReadToEnd();
+                }
+                catch { /* best-effort */ }
+                if (_consecutiveErrors < ErrorLogThreshold)
+                {
+                    DreamerLog.Warn($"Daemon at {url} rejected our project (409). Body: {body}");
+                }
+                DaemonClient.InvalidatePortCache();
+                throw;
             }
         }
 

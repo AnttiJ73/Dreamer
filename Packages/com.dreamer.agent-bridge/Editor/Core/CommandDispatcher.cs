@@ -33,8 +33,9 @@ namespace Dreamer.AgentBridge
             _handlers["create_script"]     = ScriptOps.CreateScript;
 
             // Component operations
-            _handlers["add_component"]     = ComponentOps.AddComponent;
-            _handlers["remove_component"]  = ComponentOps.RemoveComponent;
+            _handlers["add_component"]           = ComponentOps.AddComponent;
+            _handlers["remove_component"]        = ComponentOps.RemoveComponent;
+            _handlers["remove_missing_scripts"]  = ComponentOps.RemoveMissingScripts;
 
             // Property operations
             _handlers["set_property"]      = PropertyOps.SetProperty;

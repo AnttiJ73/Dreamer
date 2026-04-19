@@ -32,6 +32,10 @@ class UnityState {
     this.compileErrors = [];
     this.playMode = false;
     this.lastCompileSuccess = null;
+    /** True when `lastCompileSuccess` was restored from the bridge's memory on
+     *  reconnect rather than witnessed by this daemon. Useful for the UI to
+     *  distinguish "saw it happen" from "Unity says it happened earlier". */
+    this.lastCompileSourceIsBridge = false;
     /** True once Unity has reported full state at least once. Compilation-gated
      *  commands must wait until this is true, otherwise a fresh daemon with an
      *  empty state snapshot will dispatch them before the first state tick and
@@ -68,11 +72,24 @@ class UnityState {
     this.connected = true;
     this.lastHeartbeat = Date.now();
 
+    // Restore lastCompileSuccess from Unity's own memory when the daemon has
+    // no record of its own — happens after a daemon restart while Unity has
+    // been running healthily. Without this, `compile-status` stays in the
+    // unhelpful `idle` state until the next actual compile cycle completes,
+    // even though Unity is perfectly fine.
+    if (!this.lastCompileSuccess
+        && state.lastCompileTime
+        && state.lastCompileSucceeded === true) {
+      this.lastCompileSuccess = state.lastCompileTime;
+      this.lastCompileSourceIsBridge = true;
+    }
+
     const compilationJustSucceeded =
       wasCompiling && !this.compiling && this.compileErrors.length === 0;
 
     if (compilationJustSucceeded) {
       this.lastCompileSuccess = new Date().toISOString();
+      this.lastCompileSourceIsBridge = false;
     }
 
     return { compilationJustSucceeded };
@@ -183,6 +200,7 @@ class UnityState {
       compileErrors: this.compileErrors,
       playMode: this.playMode,
       lastCompileSuccess: this.lastCompileSuccess,
+      lastCompileSourceIsBridge: this.lastCompileSourceIsBridge,
       projectPath: this.connectedProjectPath,
       projectMatch: this.isProjectMatch(),
     };

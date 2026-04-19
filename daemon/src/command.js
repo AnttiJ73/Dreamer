@@ -10,6 +10,7 @@ const KIND_DEFS = {
   create_script:    { label: 'Create Script',      requirements: { compilation: true } },
   add_component:    { label: 'Add Component',      requirements: { compilation: true } },
   remove_component: { label: 'Remove Component',   requirements: { compilation: true } },
+  remove_missing_scripts: { label: 'Remove Missing Scripts', requirements: null },
   set_property:     { label: 'Set Property',       requirements: null },
   create_prefab:    { label: 'Create Prefab',      requirements: null },
   create_gameobject:{ label: 'Create GameObject',  requirements: null },

@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "./bin/dreamer update --check 2>/dev/null || true"
+          }
+        ]
+      }
+    ]
+  }
+}

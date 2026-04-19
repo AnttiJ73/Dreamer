@@ -29,6 +29,64 @@ function fail(message) {
 }
 
 /**
+ * One-line (occasionally two-line) humanized summary of /api/status. Used as
+ * the default `dreamer status` output — the raw JSON is still available via
+ * `--json`. Priority: bad news (disconnected / stuck / compile errors) first,
+ * healthy state last.
+ */
+function summarizeStatus(data) {
+  if (!data || typeof data !== 'object') return 'PROBLEM: malformed status response';
+  const d = data.daemon || {};
+  const u = data.unity || {};
+  const q = data.queue || {};
+  const s = data.scheduler || {};
+
+  const parts = [];
+  let verdict = 'OK';
+
+  // Connection check
+  if (!u.connected) {
+    verdict = 'PROBLEM';
+    const age = u.lastHeartbeatAge && u.lastHeartbeatAge.ageHuman;
+    parts.push(u.lastHeartbeat ? `Unity disconnected (last heartbeat ${age})` : 'Unity bridge has not connected');
+  } else {
+    parts.push(`Unity connected (${(u.projectPath || '').split(/[\\/]/).pop() || 'unknown project'})`);
+    if (u.compiling) parts.push('compiling');
+    else if ((u.compileErrors || []).length > 0) { verdict = 'PROBLEM'; parts.push(`${u.compileErrors.length} compile error${u.compileErrors.length === 1 ? '' : 's'}`); }
+    else if (u.lastCompileSuccess) parts.push(`last compile ${u.lastCompileSuccessAge.ageHuman}`);
+  }
+
+  // Queue health
+  const nonTerminal = (q.queued || 0) + (q.waiting || 0) + (q.running || 0) + (q.dispatched || 0);
+  if (nonTerminal === 0) {
+    parts.push(`${q.total || 0} total / 0 in flight`);
+  } else {
+    const stuck = (q.active || []).filter(a => a.sinceUpdateMs && a.sinceUpdateMs > 60000);
+    if (stuck.length > 0) verdict = 'PROBLEM';
+    parts.push(`${nonTerminal} in flight${stuck.length ? ` (${stuck.length} stuck > 1m)` : ''}`);
+  }
+
+  // Scheduler liveness
+  if (s && s.lastTickAge && s.lastTickAge.ageMs > (s.tickIntervalMs || 200) * 10) {
+    verdict = 'PROBLEM';
+    parts.push(`scheduler frozen ${s.lastTickAge.ageHuman}`);
+  } else if (s && s.totalDispatched != null) {
+    parts.push(`${s.totalDispatched} dispatched in ${d.uptimeHuman || '?'}`);
+  }
+
+  let line = `${verdict}: ${parts.join(', ')}.`;
+
+  // Append stuck-command detail (worst offender) when applicable.
+  if (verdict === 'PROBLEM' && q.active && q.active.length) {
+    const worst = q.active.slice().sort((a, b) => (b.sinceUpdateMs || 0) - (a.sinceUpdateMs || 0))[0];
+    if (worst) {
+      line += `\n  Stuck: ${worst.kind} (${worst.state}) for ${worst.sinceUpdateHuman}${worst.waitingReason ? ` — ${worst.waitingReason}` : ''}`;
+    }
+  }
+  return line;
+}
+
+/**
  * Parse CLI flags from argv into a simple map.
  * Handles: --flag value, --flag=value, --bool-flag (no value → true)
  * @param {string[]} argv
@@ -43,11 +101,11 @@ function parseArgs(argv) {
     if (arg.startsWith('--')) {
       const eqIdx = arg.indexOf('=');
       if (eqIdx !== -1) {
-        flags[arg.slice(2, eqIdx)] = arg.slice(eqIdx + 1);
+        flags[arg.slice(2, eqIdx)] = maybeDetectGitBashPath(arg.slice(2, eqIdx), arg.slice(eqIdx + 1));
       } else {
         const next = argv[i + 1];
         if (next && !next.startsWith('--')) {
-          flags[arg.slice(2)] = next;
+          flags[arg.slice(2)] = maybeDetectGitBashPath(arg.slice(2), next);
           i++;
         } else {
           flags[arg.slice(2)] = true;
@@ -59,6 +117,34 @@ function parseArgs(argv) {
     i++;
   }
   return { positional, flags };
+}
+
+/**
+ * Git-Bash on Windows silently rewrites absolute paths: `/Foo` becomes
+ * `C:/Program Files/Git/Foo` (MSYS MSYS2_ARG_CONV_EXCL). This bites
+ * scene-object paths constantly — `--scene-object /MainMenuCanvas` turns
+ * into `--scene-object C:/Program Files/Git/MainMenuCanvas`, which the
+ * daemon then can't find and reports as a mysterious "not found".
+ *
+ * We detect the translated form for flags that conventionally carry scene
+ * paths and warn the user with a concrete remedy. We don't auto-fix because
+ * there's a legitimate (rare) case where the user really does want to
+ * reference something under `C:/Program Files/Git/…`.
+ */
+const SCENE_PATH_FLAGS = new Set(['scene-object', 'parent', 'parent-path']);
+function maybeDetectGitBashPath(flagName, value) {
+  if (typeof value !== 'string') return value;
+  if (!SCENE_PATH_FLAGS.has(flagName)) return value;
+  const translated = /^[A-Za-z]:[\\/]Program Files[\\/]Git[\\/]/i;
+  if (translated.test(value)) {
+    process.stderr.write(
+      `warn: --${flagName}='${value}' looks like a Git-Bash path-translated value.\n` +
+      `      Git-Bash rewrites leading '/X' to 'C:/Program Files/Git/X'. To pass a\n` +
+      `      scene path, drop the leading slash (e.g. 'MainMenuCanvas/Child') or\n` +
+      `      use a double slash ('//MainMenuCanvas/Child').\n`
+    );
+  }
+  return value;
 }
 
 /**
@@ -179,6 +265,26 @@ async function submitCommand(kind, args, flags = {}) {
       }
 
       const check = await httpRequest('GET', `/api/commands/${cmd.id}`);
+      if (check.status === 404) {
+        // Command vanished — most commonly, the daemon restarted since we
+        // submitted. Compare daemon uptime against command age to confirm
+        // and give the user an actionable error instead of a raw 404.
+        const stat = await httpRequest('GET', '/api/status').catch(() => null);
+        const uptimeMs = stat && stat.data && stat.data.daemon && (stat.data.daemon.uptime * 1000);
+        const cmdAgeMs = Date.now() - Date.parse(cmd.createdAt);
+        if (Number.isFinite(uptimeMs) && Number.isFinite(cmdAgeMs) && uptimeMs < cmdAgeMs) {
+          process.stderr.write(JSON.stringify({
+            error: 'Command lost: the daemon restarted since this command was submitted',
+            commandId: cmd.id,
+            kind: cmd.kind,
+            daemonUptimeMs: Math.round(uptimeMs),
+            commandAgeMs: Math.round(cmdAgeMs),
+            hint: 'The in-memory queue is discarded on daemon restart. Re-submit the command.',
+          }, null, 2) + '\n');
+          process.exit(1);
+        }
+        fail(`Failed to poll command: ${check.data.error || check.status}`);
+      }
       if (check.status !== 200) {
         fail(`Failed to poll command: ${check.data.error || check.status}`);
       }
@@ -248,6 +354,7 @@ async function run(argv) {
         'create-script --name NAME [--namespace NS] [--template TYPE] [--path FOLDER]',
         'add-component (--asset PATH | --scene-object NAME) --type TYPENAME',
         'remove-component (--asset PATH | --scene-object NAME) --type TYPENAME',
+        'remove-missing-scripts (--asset PATH | --scene-object PATH | --path FOLDER) [--dry-run] [--non-recursive]',
         'set-property (--asset PATH | --scene-object NAME) [--component TYPE] --property PATH --value JSON',
         'create-prefab --name NAME [--path FOLDER]',
         'instantiate-prefab --asset PATH [--name NAME] [--parent /PATH] [--position {x,y,z}]',
@@ -267,9 +374,11 @@ async function run(argv) {
         'create-scriptable-object --type TYPENAME --name NAME [--path FOLDER]',
         'create-hierarchy --json JSON',
         'daemon start|stop|status',
-        'update [--ref REF] [--dry-run]',
+        'registry list|remove [path]|prune|reassign --port N [--project PATH]',
+        'update [--ref REF] [--dry-run] [--check]',
         'config get | config set key=value',
         'probe-port [--start PORT] [--count N]',
+        'log tail [--n N] | log path',
         'help <kind>    (render arg schema for a command kind, if documented)',
       ],
       flags: [
@@ -351,6 +460,25 @@ async function run(argv) {
         break;
       }
 
+      case 'remove-missing-scripts': {
+        if (!flags.asset && !flags['scene-object'] && !flags.path) {
+          fail('remove-missing-scripts requires one of --asset PATH, --scene-object PATH, or --path FOLDER');
+        }
+        const rmsArgs = {};
+        if (flags['scene-object']) {
+          rmsArgs.sceneObjectPath = flags['scene-object'];
+        } else if (flags.asset) {
+          const isGuidRMS = /^[0-9a-f]{32}$/i.test(flags.asset);
+          Object.assign(rmsArgs, isGuidRMS ? { guid: flags.asset } : { assetPath: flags.asset });
+        } else {
+          rmsArgs.path = flags.path;
+        }
+        if (flags['dry-run']) rmsArgs.dryRun = true;
+        if (flags['non-recursive']) rmsArgs.recursive = false;
+        await submitCommand('remove_missing_scripts', rmsArgs, flags);
+        break;
+      }
+
       case 'set-property': {
         if (!flags.asset && !flags['scene-object']) fail('--asset or --scene-object is required for set-property');
         if (!flags.property) fail('--property is required for set-property');
@@ -391,7 +519,7 @@ async function run(argv) {
         if (!flags.name) fail('--name is required for create-gameobject');
         await submitCommand('create_gameobject', {
           name: flags.name,
-          parent: flags.parent || null,
+          parentPath: flags.parent || flags['parent-path'] || null,
           scene: flags.scene || null,
         }, flags);
         break;
@@ -485,7 +613,21 @@ async function run(argv) {
         } else {
           const resp = await httpRequest('GET', '/api/status');
           if (resp.status >= 400) fail(resp.data.error || `HTTP ${resp.status}`);
-          out(resp.data);
+          // Default output is a one-line humanized summary because the raw
+          // JSON is ~100 lines for a healthy state and the user's primary
+          // question is usually "is anything wrong?". Use --json for the
+          // raw payload, --verbose for both summary + JSON.
+          if (flags.json) {
+            out(resp.data);
+          } else {
+            const summary = summarizeStatus(resp.data);
+            if (flags.verbose) {
+              process.stdout.write(summary + '\n');
+              out(resp.data);
+            } else {
+              process.stdout.write(summary + '\n');
+            }
+          }
         }
         break;
       }
@@ -499,7 +641,32 @@ async function run(argv) {
         const qs = params.toString();
         const resp = await httpRequest('GET', `/api/commands${qs ? '?' + qs : ''}`);
         if (resp.status >= 400) fail(resp.data.error || `HTTP ${resp.status}`);
-        out(resp.data);
+
+        // Default view: non-terminal commands + the 5 most recent terminal
+        // ones. This matches what the user asks 90% of the time ("what's
+        // stuck, what just finished?") without drowning them in history.
+        // --all forces the full list; --state/--task already narrow by themselves.
+        const explicitFilter = flags.state || flags.task || flags.all || flags.limit;
+        if (explicitFilter || flags.json) {
+          out(resp.data);
+          break;
+        }
+        const NON_TERMINAL = new Set(['queued', 'waiting', 'dispatched', 'running']);
+        const all = resp.data.commands || [];
+        const active = all.filter(c => NON_TERMINAL.has(c.state));
+        const recentTerminal = all
+          .filter(c => !NON_TERMINAL.has(c.state))
+          .sort((a, b) => Date.parse(b.updatedAt || b.createdAt) - Date.parse(a.updatedAt || a.createdAt))
+          .slice(0, 5);
+        out({
+          totalInQueue: resp.data.count || all.length,
+          activeCount: active.length,
+          active,
+          recentTerminal,
+          hint: active.length === 0 && recentTerminal.length === 0
+            ? 'Queue empty. Submit a command to populate.'
+            : 'Pass --all for the full history, --json for raw output, or --state STATE / --task TASKID to filter.',
+        });
         break;
       }
 
@@ -544,6 +711,87 @@ async function run(argv) {
           }
           default:
             fail(`Unknown daemon subcommand: '${sub}'. Use: start, stop, status`);
+        }
+        break;
+      }
+
+      case 'registry': {
+        const registry = require('./project-registry');
+        const fsMod = require('fs');
+        const sub = positional[1];
+        const thisProjectRoot = path.resolve(__dirname, '..', '..');
+
+        switch (sub) {
+          case 'list': {
+            const entries = registry.listEntries();
+            out({
+              registryPath: registry.getRegistryPath(),
+              thisProject: thisProjectRoot,
+              thisProjectPort: registry.getPortForProject(thisProjectRoot),
+              entries,
+            });
+            break;
+          }
+
+          case 'remove': {
+            const target = positional[2] || thisProjectRoot;
+            const removed = registry.removeEntry(target);
+            out({ removed, target });
+            break;
+          }
+
+          case 'prune': {
+            // Drop entries whose projectPath no longer exists on disk. The
+            // registry holds absolute paths; a missing directory strongly
+            // implies the Unity project was deleted or renamed, and the port
+            // allocation is effectively garbage.
+            const before = registry.listEntries();
+            const dropped = [];
+            for (const e of before) {
+              if (!e.projectPath) continue;
+              if (!fsMod.existsSync(e.projectPath)) {
+                registry.removeEntry(e.projectPath);
+                dropped.push({ projectPath: e.projectPath, port: e.port });
+              }
+            }
+            out({ pruned: dropped.length, dropped });
+            break;
+          }
+
+          case 'reassign': {
+            if (!flags.port) fail('--port N is required for registry reassign');
+            const newPort = parseInt(flags.port, 10);
+            if (!Number.isInteger(newPort) || newPort <= 0 || newPort > 65535) {
+              fail('--port must be a valid TCP port number');
+            }
+            const target = flags.project || thisProjectRoot;
+            const reg = registry.load();
+            const key = registry.normalizeProjectPath(target);
+            if (!reg.projects[key]) {
+              fail(`No registry entry for '${target}'. Run ./bin/dreamer status there first.`);
+            }
+            // Detect collisions with other registered projects.
+            for (const otherKey of Object.keys(reg.projects)) {
+              if (otherKey === key) continue;
+              if (reg.projects[otherKey].port === newPort) {
+                fail(`Port ${newPort} is already assigned to '${reg.projects[otherKey].projectPath}'.`);
+              }
+            }
+            reg.projects[key].port = newPort;
+            reg.projects[key].lastStartedAt = null;
+            reg.projects[key].daemonPid = null;
+            registry.save(reg);
+            out({
+              reassigned: true,
+              projectPath: reg.projects[key].projectPath,
+              port: newPort,
+              note: 'Restart the daemon for this project (./bin/dreamer daemon stop && ./bin/dreamer status) and restart Unity (or reimport the bridge package) so both reread the new port.',
+            });
+            break;
+          }
+
+          default:
+            fail(`Unknown registry subcommand: '${sub}'. Use: list, remove [path], prune, reassign --port N [--project PATH]`);
         }
         break;
       }
@@ -661,12 +909,43 @@ async function run(argv) {
 
         const ref = flags.ref || source.ref || 'main';
         const dryRun = flags['dry-run'] === true;
+        const checkOnly = flags.check === true;
         const projectRoot = path.resolve(__dirname, '..', '..');
 
         // Verify git available
         const gitCheck = spawnSync('git', ['--version'], { stdio: 'ignore' });
         if (gitCheck.error || gitCheck.status !== 0) {
           fail('git not found on PATH. Install git and retry.');
+        }
+
+        // --check: just compare the installed SHA to the remote HEAD of `ref`.
+        // No clone, no filesystem changes. Used by the SessionStart hook so
+        // every Claude session begins with a quick freshness ping.
+        if (checkOnly) {
+          const remoteHead = spawnSync('git', ['ls-remote', source.repo, ref], {
+            stdio: ['ignore', 'pipe', 'pipe'],
+          });
+          if (remoteHead.status !== 0) {
+            const err = (remoteHead.stderr && remoteHead.stderr.toString().trim()) || 'unknown error';
+            fail(`git ls-remote failed for ${source.repo}@${ref}: ${err}`);
+          }
+          const remoteSha = remoteHead.stdout.toString().split(/\s+/)[0] || null;
+          const installedSha = source.sha || null;
+          const behind = installedSha && remoteSha && installedSha !== remoteSha;
+          out({
+            repo: source.repo,
+            ref,
+            installedSha,
+            remoteSha,
+            behind: !!behind,
+            unknown: !installedSha,
+            hint: behind
+              ? `Dreamer is out of date on '${ref}'. Run './bin/dreamer update' to apply.`
+              : installedSha
+                ? 'Dreamer is up to date.'
+                : 'No installed SHA recorded (this install predates sha-tracking). Run ./bin/dreamer update to stamp it.',
+          });
+          break;
         }
 
         // Clone shallow to temp dir
@@ -691,7 +970,7 @@ async function run(argv) {
           { src: 'daemon/bin', dst: 'daemon/bin', type: 'dir' },
           { src: 'daemon/package.json', dst: 'daemon/package.json', type: 'file' },
           { src: 'Packages/com.dreamer.agent-bridge', dst: 'Packages/com.dreamer.agent-bridge', type: 'dir' },
-          { src: '.claude/commands/dreamer.md', dst: '.claude/commands/dreamer.md', type: 'file' },
+          { src: '.claude/skills/dreamer/SKILL.md', dst: '.claude/skills/dreamer/SKILL.md', type: 'file' },
           { src: 'bin/dreamer', dst: 'bin/dreamer', type: 'file', chmod: 0o755 },
           { src: 'bin/dreamer.cmd', dst: 'bin/dreamer.cmd', type: 'file' },
         ];
@@ -732,12 +1011,38 @@ async function run(argv) {
         // Cleanup
         try { fs.rmSync(tmpBase, { recursive: true, force: true }); } catch { /* ignore */ }
 
+        // One-time migration: the dreamer CLI reference was relocated from
+        // `.claude/commands/dreamer.md` (slash-command, user-invoked only) to
+        // `.claude/skills/dreamer/SKILL.md` (skill, auto-loaded by Claude when
+        // Unity work appears). Remove the legacy file if it's still there so
+        // both forms don't coexist in installs that pre-date the move.
+        const legacyCommandPath = path.join(projectRoot, '.claude/commands/dreamer.md');
+        const migrated = [];
+        try {
+          if (fs.existsSync(legacyCommandPath)) {
+            fs.rmSync(legacyCommandPath, { force: true });
+            migrated.push('.claude/commands/dreamer.md (removed — superseded by .claude/skills/dreamer/SKILL.md)');
+            // Also try to remove the now-empty commands dir. Safe because rmdir
+            // only succeeds if empty; if the user keeps other commands there,
+            // this silently no-ops.
+            try { fs.rmdirSync(path.join(projectRoot, '.claude/commands')); } catch { /* keep dir if non-empty */ }
+          }
+        } catch { /* non-fatal */ }
+
+        // Stamp the installed SHA into .dreamer-source.json so `update --check`
+        // can detect drift cheaply via ls-remote on subsequent runs.
+        try {
+          const updatedSource = { ...source, ref, sha: newSha, lastUpdatedAt: new Date().toISOString() };
+          fs.writeFileSync(SOURCE_PATH, JSON.stringify(updatedSource, null, 2) + '\n', 'utf8');
+        } catch { /* non-fatal: next update will re-stamp */ }
+
         out({
           updated: true,
           repo: source.repo,
           ref,
           sha: newSha,
           replaced: applied,
+          migrated,
           preserved: ['daemon/.dreamer-config.json', 'daemon/.dreamer-source.json', 'daemon/.dreamer-queue.json'],
           note: 'Daemon stopped; it will auto-restart on the next dreamer command. Unity may need a moment to reimport the updated package.',
         });
@@ -789,16 +1094,58 @@ async function run(argv) {
       }
 
       case 'probe-port': {
-        // Find the first free TCP port in [start, start+count). For multi-
-        // project installs: run this during install to pick a non-conflicting
-        // port. Does not start the daemon.
+        // Largely superseded by the projects registry's automatic port
+        // allocation, but still useful as a "what would be picked next"
+        // diagnostic — e.g., during install for a bespoke port override.
         const start = parseInt(flags.start, 10) || configModule.DEFAULT_PORT;
         const count = parseInt(flags.count, 10) || 10;
         const free = await configModule.findFreePort(start, count);
         if (free === null) {
           fail(`No free port in [${start}, ${start + count}). Pass --start / --count to widen the range.`);
         }
-        out({ port: free, probedRange: [start, start + count - 1] });
+        const reg = require('./project-registry');
+        const entry = reg.findEntry(reg.load(), path.resolve(__dirname, '..', '..'));
+        out({
+          nextFreePort: free,
+          probedRange: [start, start + count - 1],
+          thisProjectAlreadyRegistered: !!entry,
+          thisProjectPort: entry ? entry.port : null,
+          note: entry
+            ? 'This project already has a registry entry; the daemon will use the registered port, not nextFreePort.'
+            : 'Next `./bin/dreamer status` from this project root will register this port (or another free one if this is taken by then).',
+        });
+        break;
+      }
+
+      case 'log': {
+        const sub = positional[1] || 'tail';
+        const DAEMON_LOG = path.join(path.resolve(__dirname, '..'), '.dreamer-daemon.log');
+        if (!fs.existsSync(DAEMON_LOG)) {
+          fail(`No daemon log at ${DAEMON_LOG}. The daemon may not have been started yet.`);
+        }
+        if (sub === 'path') {
+          out({ path: DAEMON_LOG });
+          break;
+        }
+        if (sub === 'tail') {
+          const n = parseInt(flags.n, 10) || 30;
+          const raw = fs.readFileSync(DAEMON_LOG, 'utf8');
+          const lines = raw.split(/\r?\n/).filter(Boolean);
+          const tail = lines.slice(-n);
+          // Pretty-print each JSON line to `ISO LEVEL module — msg`; fall
+          // back to raw if a line isn't JSON (startup banner, etc.).
+          const pretty = tail.map((l) => {
+            try {
+              const e = JSON.parse(l);
+              return `${e.ts || '?'}  ${(e.level || 'info').padEnd(5)} ${(e.module || '-').padEnd(16)} ${e.msg || ''}`;
+            } catch {
+              return l;
+            }
+          }).join('\n');
+          process.stdout.write(pretty + '\n');
+          process.exit(0);
+        }
+        fail(`Unknown log subcommand: '${sub}'. Use: tail [--n N], path.`);
         break;
       }
 

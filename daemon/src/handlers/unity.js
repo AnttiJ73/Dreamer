@@ -1,6 +1,44 @@
 'use strict';
 
 const log = require('../log').create('unity');
+const registry = require('../project-registry');
+
+/** Case/slash-insensitive path equality — reuses the registry's normaliser. */
+function _pathsMatch(a, b) {
+  if (!a || !b) return false;
+  const na = registry.normalizeProjectPath(a);
+  const nb = registry.normalizeProjectPath(b);
+  return na != null && nb != null && na === nb;
+}
+
+/**
+ * If the caller reports a `projectPath` that doesn't match the daemon's project,
+ * this daemon is NOT the one that should be answering. Return a 409 so the
+ * bridge can fail loudly instead of accidentally taking commands meant for
+ * another project's daemon.
+ *
+ * The bridge uses the hint to look up the correct port from the registry and
+ * reattach there.
+ */
+function projectMismatchResponse(unityState, reportedPath) {
+  const expected = unityState.getDaemonProjectPath();
+  const suggestedPort = reportedPath ? registry.getPortForProject(reportedPath) : null;
+  return {
+    status: 409,
+    body: {
+      error: 'wrong-project',
+      message:
+        `This daemon serves ${expected}, but the caller is ${reportedPath || '<unknown>'}. ` +
+        (suggestedPort
+          ? `The registry says port ${suggestedPort} is bound to that project — connect there instead.`
+          : 'That project is not registered yet — run `./bin/dreamer status` from its root.'),
+      expectedProjectPath: expected,
+      reportedProjectPath: reportedPath || null,
+      suggestedPort,
+      registryPath: registry.getRegistryPath(),
+    },
+  };
+}
 
 /**
  * Build handlers for /api/unity routes (Unity editor polling).
@@ -81,11 +119,18 @@ function createUnityHandlers(queue, unityState, scheduler, assetWatcher) {
 
     /**
      * POST /api/unity/state — Unity reports editor state.
-     * Body: { compiling?, compileErrors?, playMode? }
+     * Body: { compiling?, compileErrors?, playMode?, projectPath? }
      */
     async state(body) {
       if (!body || typeof body !== 'object') {
         return { status: 400, body: { error: 'Invalid state payload' } };
+      }
+
+      // Hard project-match enforcement: refuse state from a different project.
+      // Without this, two Unity editors on the same port silently thrash
+      // unityState.connectedProjectPath and steal each other's commands.
+      if (body.projectPath && !_pathsMatch(body.projectPath, unityState.getDaemonProjectPath())) {
+        return projectMismatchResponse(unityState, body.projectPath);
       }
 
       const { compilationJustSucceeded } = unityState.update(body);
@@ -108,6 +153,13 @@ function createUnityHandlers(queue, unityState, scheduler, assetWatcher) {
      * Body can optionally include state fields.
      */
     async heartbeat(body) {
+      // Hard project-match enforcement — reject before mutating state. Without
+      // this, two Unity editors hitting the same port would clobber each
+      // other's connected-project tracking.
+      if (body && body.projectPath && !_pathsMatch(body.projectPath, unityState.getDaemonProjectPath())) {
+        return projectMismatchResponse(unityState, body.projectPath);
+      }
+
       if (body && typeof body === 'object') {
         // Accept state updates bundled with heartbeat
         const hasState = body.compiling !== undefined ||
@@ -126,20 +178,12 @@ function createUnityHandlers(queue, unityState, scheduler, assetWatcher) {
         unityState.heartbeat();
       }
 
-      // Log once when a mismatched Unity connects, to surface the issue in the daemon log.
-      const match = unityState.isProjectMatch();
-      if (match === false && !unityState._warnedMismatch) {
-        unityState._warnedMismatch = true;
-        log.warn(`Unity connected from a different project: ${unityState.connectedProjectPath} (daemon is for ${unityState.getDaemonProjectPath()})`);
-      } else if (match === true) {
-        unityState._warnedMismatch = false;
-      }
-
       return {
         status: 200,
         body: {
           ok: true,
-          projectMatch: match,
+          projectMatch: true,
+          expectedProjectPath: unityState.getDaemonProjectPath(),
         },
       };
     },

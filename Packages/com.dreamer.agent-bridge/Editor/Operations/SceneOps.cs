@@ -24,11 +24,11 @@ namespace Dreamer.AgentBridge
 
             if (!string.IsNullOrEmpty(parentPath))
             {
-                var parent = FindByPath(parentPath);
+                var parent = PropertyOps.FindSceneObject(parentPath, out string parentError);
                 if (parent == null)
                 {
                     UnityEngine.Object.DestroyImmediate(go);
-                    return CommandResult.Fail($"Parent not found at path: {parentPath}");
+                    return CommandResult.Fail(parentError ?? $"Parent not found at path: {parentPath}");
                 }
                 go.transform.SetParent(parent.transform, false);
             }
@@ -57,9 +57,9 @@ namespace Dreamer.AgentBridge
             string sceneObjectPath = SimpleJson.GetString(args, "sceneObjectPath");
             if (!string.IsNullOrEmpty(sceneObjectPath))
             {
-                var go = FindByPath(sceneObjectPath);
+                var go = PropertyOps.FindSceneObject(sceneObjectPath, out string findError);
                 if (go == null)
-                    return CommandResult.Fail($"Scene object not found: {sceneObjectPath}");
+                    return CommandResult.Fail(findError ?? $"Scene object not found: {sceneObjectPath}");
 
                 string oldName = go.name;
                 Undo.RecordObject(go, $"Rename {oldName} to {newName}");
@@ -139,9 +139,9 @@ namespace Dreamer.AgentBridge
             string sceneObjectPath = SimpleJson.GetString(args, "sceneObjectPath");
             if (!string.IsNullOrEmpty(sceneObjectPath))
             {
-                var go = FindByPath(sceneObjectPath);
+                var go = PropertyOps.FindSceneObject(sceneObjectPath, out string findError);
                 if (go == null)
-                    return CommandResult.Fail($"Scene object not found: {sceneObjectPath}");
+                    return CommandResult.Fail(findError ?? $"Scene object not found: {sceneObjectPath}");
 
                 var clone = UnityEngine.Object.Instantiate(go, go.transform.parent);
                 clone.name = !string.IsNullOrEmpty(newName) ? newName : go.name + " (Copy)";
@@ -226,9 +226,9 @@ namespace Dreamer.AgentBridge
             string sceneObjectPath = SimpleJson.GetString(args, "sceneObjectPath");
             if (!string.IsNullOrEmpty(sceneObjectPath))
             {
-                var go = FindByPath(sceneObjectPath);
+                var go = PropertyOps.FindSceneObject(sceneObjectPath, out string findError);
                 if (go == null)
-                    return CommandResult.Fail($"Scene object not found at path: {sceneObjectPath}");
+                    return CommandResult.Fail(findError ?? $"Scene object not found at path: {sceneObjectPath}");
 
                 string name = go.name;
                 int childCount = go.transform.childCount;
@@ -364,11 +364,11 @@ namespace Dreamer.AgentBridge
             string parentPath = SimpleJson.GetString(args, "parentPath");
             if (!string.IsNullOrEmpty(parentPath))
             {
-                var parent = FindByPath(parentPath);
+                var parent = PropertyOps.FindSceneObject(parentPath, out string parentError);
                 if (parent != null)
                     instance.transform.SetParent(parent.transform, false);
                 else
-                    DreamerLog.Warn($"Parent not found: {parentPath}, placing at root.");
+                    DreamerLog.Warn($"Parent not found: {parentPath} ({parentError}), placing at root.");
             }
 
             // Optional position
@@ -530,13 +530,14 @@ namespace Dreamer.AgentBridge
             Transform parent = null;
             if (!string.IsNullOrEmpty(parentPath))
             {
-                var parentGo = FindByPath(parentPath);
+                var parentGo = PropertyOps.FindSceneObject(parentPath, out string parentError);
                 if (parentGo == null)
-                    return CommandResult.Fail($"Parent not found at path: {parentPath}");
+                    return CommandResult.Fail(parentError ?? $"Parent not found at path: {parentPath}");
                 parent = parentGo.transform;
             }
 
-            var go = CreateNode(args, parent);
+            var warnings = new List<string>();
+            var go = CreateNode(args, parent, warnings);
             if (go == null)
                 return CommandResult.Fail("Failed to create root GameObject.");
 
@@ -571,6 +572,7 @@ namespace Dreamer.AgentBridge
                     .Put("guid", guid)
                     .Put("created", true)
                     .Put("isPrefab", true)
+                    .PutRaw("warnings", SerializeWarnings(warnings))
                     .ToString();
                 return CommandResult.Ok(prefabJson);
             }
@@ -578,14 +580,42 @@ namespace Dreamer.AgentBridge
             // Scene mode: keep in scene
             Undo.RegisterCreatedObjectUndo(go, $"Create hierarchy {name}");
 
-            var json = BuildHierarchyResult(go);
-            return CommandResult.Ok(json);
+            // Build the standard result, then splice warnings in before returning.
+            string resultJson = BuildHierarchyResult(go);
+            // Quick-and-safe: re-parse-and-extend is overkill. Instead, wrap by
+            // string-replacing the final '}' with ",warnings":[...]"}" only when
+            // we have something to report. Keeps the happy-path output identical.
+            if (warnings.Count > 0)
+            {
+                int lastBrace = resultJson.LastIndexOf('}');
+                if (lastBrace > 0)
+                {
+                    resultJson = resultJson.Substring(0, lastBrace)
+                        + ",\"warnings\":" + SerializeWarnings(warnings)
+                        + "}";
+                }
+            }
+            return CommandResult.Ok(resultJson);
         }
 
-        static GameObject CreateNode(Dictionary<string, object> nodeArgs, Transform parent)
+        static string SerializeWarnings(List<string> warnings)
+        {
+            var arr = SimpleJson.Array();
+            foreach (var w in warnings) arr.Add(w);
+            return arr.ToString();
+        }
+
+        /// <summary>
+        /// Build a GameObject + its components and recurse children. Component failures
+        /// are RECORDED into <paramref name="warnings"/> instead of being silently
+        /// dropped — the old behavior let one unresolved type mask the entire gap in
+        /// the hierarchy, which was especially bad during script compile errors.
+        /// </summary>
+        static GameObject CreateNode(Dictionary<string, object> nodeArgs, Transform parent, List<string> warnings)
         {
             string name = SimpleJson.GetString(nodeArgs, "name", "GameObject");
             var go = new GameObject(name);
+            string pathHint = parent == null ? "/" + name : parent.name + "/" + name;
 
             if (parent != null)
                 go.transform.SetParent(parent, false);
@@ -596,16 +626,34 @@ namespace Dreamer.AgentBridge
                 foreach (var compEntry in compList)
                 {
                     string typeName = compEntry as string;
-                    if (string.IsNullOrEmpty(typeName)) continue;
+                    if (string.IsNullOrEmpty(typeName))
+                    {
+                        warnings.Add($"[{pathHint}] Component entry missing/empty type name — skipped.");
+                        continue;
+                    }
 
                     Type compType = ComponentOps.ResolveType(typeName);
-                    if (compType == null || !typeof(Component).IsAssignableFrom(compType)) continue;
+                    if (compType == null)
+                    {
+                        warnings.Add($"[{pathHint}] Component '{typeName}' NOT ADDED — type not found. Check compile status (`./bin/dreamer compile-status`); a compile error can hide user types.");
+                        continue;
+                    }
+                    if (!typeof(Component).IsAssignableFrom(compType))
+                    {
+                        warnings.Add($"[{pathHint}] Component '{typeName}' NOT ADDED — '{compType.FullName}' is not a Component.");
+                        continue;
+                    }
 
-                    // Skip Transform — already present
+                    // Skip Transform — already present (expected, not a warning)
                     if (compType == typeof(Transform) || compType == typeof(RectTransform)) continue;
 
-                    if (go.GetComponent(compType) == null)
-                        go.AddComponent(compType);
+                    if (go.GetComponent(compType) != null)
+                    {
+                        warnings.Add($"[{pathHint}] Component '{typeName}' already present — skipped duplicate.");
+                        continue;
+                    }
+
+                    go.AddComponent(compType);
                 }
             }
 
@@ -615,7 +663,7 @@ namespace Dreamer.AgentBridge
                 foreach (var childEntry in childList)
                 {
                     if (childEntry is Dictionary<string, object> childArgs)
-                        CreateNode(childArgs, go.transform);
+                        CreateNode(childArgs, go.transform, warnings);
                 }
             }
 
@@ -716,58 +764,9 @@ namespace Dreamer.AgentBridge
             return true;
         }
 
-        /// <summary>
-        /// Find a GameObject by hierarchy path (e.g. "/Canvas/Panel/Button").
-        /// Leading "/" is optional.
-        /// </summary>
-        static GameObject FindByPath(string path)
-        {
-            if (string.IsNullOrEmpty(path)) return null;
+        // Note: scene-object path resolution is shared via PropertyOps.FindSceneObject,
+        // which supports multi-scene, recursive descendant search, and ambiguity detection.
 
-            // Strip leading /
-            if (path.StartsWith("/"))
-                path = path.Substring(1);
-
-            string[] parts = path.Split('/');
-            if (parts.Length == 0) return null;
-
-            // Find root object
-            var scene = SceneManager.GetActiveScene();
-            var roots = scene.GetRootGameObjects();
-            GameObject current = null;
-
-            foreach (var root in roots)
-            {
-                if (root.name == parts[0])
-                {
-                    current = root;
-                    break;
-                }
-            }
-
-            if (current == null) return null;
-
-            // Traverse children
-            for (int i = 1; i < parts.Length; i++)
-            {
-                Transform child = current.transform.Find(parts[i]);
-                if (child == null) return null;
-                current = child.gameObject;
-            }
-
-            return current;
-        }
-
-        static string GetGameObjectPath(GameObject go)
-        {
-            string path = go.name;
-            Transform parent = go.transform.parent;
-            while (parent != null)
-            {
-                path = parent.name + "/" + path;
-                parent = parent.parent;
-            }
-            return "/" + path;
-        }
+        static string GetGameObjectPath(GameObject go) => PropertyOps.GetScenePath(go);
     }
 }

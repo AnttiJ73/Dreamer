@@ -9,7 +9,8 @@ const CommandQueue = require('./queue');
 const UnityState = require('./unity-state');
 const Scheduler = require('./scheduler');
 const AssetWatcher = require('./asset-watcher');
-const { getPort } = require('./config');
+const { ensureRegisteredPort } = require('./config');
+const projectRegistry = require('./project-registry');
 const log = require('./log').create('server');
 const createCommandHandlers = require('./handlers/commands');
 const createUnityHandlers = require('./handlers/unity');
@@ -17,8 +18,8 @@ const createStatusHandlers = require('./handlers/status');
 
 // ── Configuration ────────────────────────────────────────────────────────────
 
-const PORT = getPort();
 const DAEMON_DIR = path.resolve(__dirname, '..');
+const DAEMON_PROJECT_ROOT = path.resolve(DAEMON_DIR, '..');
 const QUEUE_FILE = path.join(DAEMON_DIR, '.dreamer-queue.json');
 const PID_FILE = path.join(DAEMON_DIR, '.dreamer-daemon.pid');
 
@@ -37,7 +38,7 @@ const assetWatcher = new AssetWatcher(path.resolve(DAEMON_DIR, '..'));
 assetWatcher.start();
 const commandHandlers = createCommandHandlers(queue, scheduler, unityState);
 const unityHandlers = createUnityHandlers(queue, unityState, scheduler, assetWatcher);
-const statusHandlers = createStatusHandlers(queue, unityState, assetWatcher);
+const statusHandlers = createStatusHandlers(queue, unityState, assetWatcher, scheduler);
 
 // ── HTTP helpers ─────────────────────────────────────────────────────────────
 
@@ -205,6 +206,11 @@ function shutdown() {
   scheduler.stop();
   queue.shutdown();
 
+  // Clear daemonPid from registry so the next CLI invocation sees a clean slate.
+  try {
+    projectRegistry.updateEntry(DAEMON_PROJECT_ROOT, { daemonPid: null });
+  } catch { /* ignore */ }
+
   // Remove PID file
   try {
     if (fs.existsSync(PID_FILE)) fs.unlinkSync(PID_FILE);
@@ -222,25 +228,54 @@ function shutdown() {
 process.on('SIGTERM', shutdown);
 process.on('SIGINT', shutdown);
 
-server.listen(PORT, '0.0.0.0', () => {
-  log.info(`Listening on 0.0.0.0:${PORT}`);
-
-  // Write PID file
+// Resolve port from the per-project registry (auto-allocates on first run),
+// then bind. Registry entry is updated with this process's PID on success so
+// other CLI/UI surfaces can correlate the running daemon with its project.
+(async () => {
+  let port;
+  let registryEntry = null;
   try {
-    fs.writeFileSync(PID_FILE, String(process.pid), 'utf8');
+    const resolved = await ensureRegisteredPort(DAEMON_PROJECT_ROOT, { daemonRoot: DAEMON_DIR });
+    port = resolved.port;
+    registryEntry = resolved.entry;
+    log.info(`Using port ${port} for project ${DAEMON_PROJECT_ROOT} (source: ${resolved.source})`);
   } catch (err) {
-    log.error(`Failed to write PID file: ${err.message}`);
-  }
-
-  // Start the scheduler
-  scheduler.start();
-  log.info('Scheduler started');
-});
-
-server.on('error', (err) => {
-  if (err.code === 'EADDRINUSE') {
-    log.error(`Port ${PORT} already in use. Is the daemon already running?`);
+    log.error(`Failed to resolve port from registry: ${err.message}`);
     process.exit(1);
   }
-  log.error(`Server error: ${err.message}`);
-});
+
+  server.on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+      log.error(`Port ${port} already in use. Another process is holding it — ` +
+        `check the project registry (${projectRegistry.getRegistryPath()}) ` +
+        'or stop the conflicting process.');
+      process.exit(1);
+    }
+    log.error(`Server error: ${err.message}`);
+  });
+
+  server.listen(port, '0.0.0.0', () => {
+    log.info(`Listening on 0.0.0.0:${port}`);
+
+    // Update registry with our PID + start time so CLIs can sanity-check liveness.
+    try {
+      projectRegistry.updateEntry(DAEMON_PROJECT_ROOT, {
+        daemonPid: process.pid,
+        lastStartedAt: new Date().toISOString(),
+      });
+    } catch (err) {
+      log.warn(`Failed to update registry: ${err.message}`);
+    }
+
+    // Write local PID file (legacy, still used by daemon-manager liveness checks).
+    try {
+      fs.writeFileSync(PID_FILE, String(process.pid), 'utf8');
+    } catch (err) {
+      log.error(`Failed to write PID file: ${err.message}`);
+    }
+
+    // Start the scheduler
+    scheduler.start();
+    log.info('Scheduler started');
+  });
+})();
