@@ -130,12 +130,16 @@ namespace Dreamer.AgentBridge
                         break;
                     case ShaderUtil.ShaderPropertyType.TexEnv:
                         var tex = mat.GetTexture(pname);
-                        p.Put("value", tex != null ? AssetDatabase.GetAssetPath(tex) : null);
+                        // Explicit path-or-null, then emit. Bare `null` in a Put call is
+                        // ambiguous between the `string` and `string[]` overloads (CS0121).
+                        string texPath = tex != null ? AssetDatabase.GetAssetPath(tex) : null;
+                        if (texPath != null) p.Put("value", texPath);
+                        else p.PutNull("value");
                         p.PutRaw("scale", Vector2Json(mat.GetTextureScale(pname)));
                         p.PutRaw("offset", Vector2Json(mat.GetTextureOffset(pname)));
                         break;
                     default:
-                        p.Put("value", null);
+                        p.PutNull("value");
                         break;
                 }
 
