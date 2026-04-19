@@ -439,6 +439,10 @@ namespace Dreamer.AgentBridge
         ///   "component": "TypeName"   — pick a specific component (needed for base-class fields like
         ///                                Behaviour[], Component[], or when multiple components match)
         ///   "childPath": "Child"      — (assetRef only) navigate into the prefab after loading
+        ///   "subAsset": "Name"        — (assetRef/guid only) select a specific sub-asset by name
+        ///                                (e.g. a Sprite inside a Texture2D imported as Multiple).
+        ///                                Without this hint, Dreamer auto-probes sub-assets when
+        ///                                the main asset type doesn't match the field.
         /// </summary>
         static string SetObjectReference(SerializedProperty sp, object value, Component context)
         {
@@ -460,7 +464,7 @@ namespace Dreamer.AgentBridge
                     sp.objectReferenceValue = null;
                     return null;
                 }
-                return SetObjectReferenceFromAsset(sp, strVal, fieldType, null, null);
+                return SetObjectReferenceFromAsset(sp, strVal, fieldType, null, null, null);
             }
 
             var dict = value as Dictionary<string, object>;
@@ -480,10 +484,11 @@ namespace Dreamer.AgentBridge
             }
 
             string childPath = SimpleJson.GetString(dict, "childPath");
+            string subAssetName = SimpleJson.GetString(dict, "subAsset");
 
             string assetRef = SimpleJson.GetString(dict, "assetRef");
             if (!string.IsNullOrEmpty(assetRef))
-                return SetObjectReferenceFromAsset(sp, assetRef, fieldType, childPath, componentHint);
+                return SetObjectReferenceFromAsset(sp, assetRef, fieldType, childPath, componentHint, subAssetName);
 
             string sceneRef = SimpleJson.GetString(dict, "sceneRef");
             if (!string.IsNullOrEmpty(sceneRef))
@@ -510,13 +515,21 @@ namespace Dreamer.AgentBridge
                 string path = AssetDatabase.GUIDToAssetPath(guidRef);
                 if (string.IsNullOrEmpty(path))
                     return $"No asset found for GUID: {guidRef}";
-                return SetObjectReferenceFromAsset(sp, path, fieldType, childPath, componentHint);
+                return SetObjectReferenceFromAsset(sp, path, fieldType, childPath, componentHint, subAssetName);
             }
 
-            return "ObjectReference dict must contain one of: 'assetRef', 'sceneRef', 'self', 'selfChild', 'guid'. Optional: 'component' (type override), 'childPath' (with assetRef/guid).";
+            return "ObjectReference dict must contain one of: 'assetRef', 'sceneRef', 'self', 'selfChild', 'guid'. Optional: 'component' (type override), 'childPath' (with assetRef/guid), 'subAsset' (pick a named sub-asset like a Sprite inside a Texture2D).";
         }
 
-        static string SetObjectReferenceFromAsset(SerializedProperty sp, string assetPath, Type fieldType, string childPath, Type componentHint)
+        /// <summary>
+        /// Resolve an ObjectReference from an asset path. Handles the common
+        /// "main asset is a Texture2D but the field wants the Sprite sub-asset"
+        /// pattern (SpriteRenderer.m_Sprite) — reflection can't determine the
+        /// expected field type for Unity built-in components since the C#
+        /// classes are mostly marshaling wrappers with no declared managed
+        /// fields, so we need a probe-and-verify fallback.
+        /// </summary>
+        static string SetObjectReferenceFromAsset(SerializedProperty sp, string assetPath, Type fieldType, string childPath, Type componentHint, string subAssetName)
         {
             var asset = AssetDatabase.LoadMainAssetAtPath(assetPath);
             if (asset == null)
@@ -540,27 +553,109 @@ namespace Dreamer.AgentBridge
             if (asset is GameObject rootGo)
                 return ResolveAndAssign(sp, rootGo, fieldType, componentHint);
 
-            // Non-GameObject asset (Material, Texture, ScriptableObject, etc.). Component hint not
-            // applicable here — only relevant when resolving against a GameObject.
-            Type expected = componentHint ?? fieldType;
-            if (expected == null || expected.IsAssignableFrom(asset.GetType()))
+            // Explicit sub-asset name — authoritative path for Multiple-mode sprite atlases etc.
+            if (!string.IsNullOrEmpty(subAssetName))
             {
-                sp.objectReferenceValue = asset;
+                var subs = AssetDatabase.LoadAllAssetsAtPath(assetPath);
+                var named = System.Array.Find(subs, s => s != null && s.name == subAssetName);
+                if (named == null)
+                {
+                    var available = string.Join(", ",
+                        System.Array.ConvertAll(
+                            System.Array.FindAll(subs, s => s != null),
+                            s => $"{s.name}({s.GetType().Name})"));
+                    return $"Sub-asset '{subAssetName}' not found at '{assetPath}'. Available: {(string.IsNullOrEmpty(available) ? "(none)" : available)}.";
+                }
+                if (!TryAssignAndVerify(sp, named))
+                    return $"Unity rejected '{named.name}' ({named.GetType().Name}) for '{sp.propertyPath}' — type mismatch.";
                 return null;
             }
 
-            // Try sub-assets
-            var subAssets = AssetDatabase.LoadAllAssetsAtPath(assetPath);
-            foreach (var sub in subAssets)
+            // Non-GameObject asset (Material, Texture, ScriptableObject, etc.). Component hint not
+            // applicable here — only relevant when resolving against a GameObject.
+            Type expected = componentHint ?? fieldType;
+
+            // Known expected type — assign directly if compatible, otherwise scan sub-assets.
+            if (expected != null)
             {
-                if (sub != null && expected.IsAssignableFrom(sub.GetType()))
+                if (expected.IsAssignableFrom(asset.GetType()))
                 {
-                    sp.objectReferenceValue = sub;
+                    sp.objectReferenceValue = asset;
                     return null;
+                }
+
+                var subAssets = AssetDatabase.LoadAllAssetsAtPath(assetPath);
+                foreach (var sub in subAssets)
+                {
+                    if (sub != null && expected.IsAssignableFrom(sub.GetType()))
+                    {
+                        sp.objectReferenceValue = sub;
+                        return null;
+                    }
+                }
+                return $"Asset at '{assetPath}' (type: {asset.GetType().Name}) cannot be assigned to field of type '{expected.Name}'. No matching sub-asset found.";
+            }
+
+            // Expected type UNKNOWN. This happens for Unity built-in component fields like
+            // SpriteRenderer.m_Sprite — reflection returns null because the managed class
+            // has no declared field. Probe Unity directly: try the main asset, verify the
+            // assign stuck (Unity silently drops wrong-type assignments to null). If that
+            // fails, scan sub-assets and try each one. Auto-pick when exactly one accepts.
+            if (TryAssignAndVerify(sp, asset))
+                return null;
+
+            var allSubs = AssetDatabase.LoadAllAssetsAtPath(assetPath);
+            UnityEngine.Object accepted = null;
+            int acceptedCount = 0;
+            foreach (var sub in allSubs)
+            {
+                if (sub == null || ReferenceEquals(sub, asset)) continue;
+                if (TryAssignAndVerify(sp, sub))
+                {
+                    accepted = sub;
+                    acceptedCount++;
                 }
             }
 
-            return $"Asset at '{assetPath}' (type: {asset.GetType().Name}) cannot be assigned to field of type '{expected?.Name ?? "unknown"}'.";
+            if (acceptedCount == 1)
+            {
+                sp.objectReferenceValue = accepted;
+                return null;
+            }
+
+            // Reset to avoid leaving a probe value in place.
+            sp.objectReferenceValue = null;
+
+            if (acceptedCount == 0)
+            {
+                var allNames = string.Join(", ",
+                    System.Array.ConvertAll(
+                        System.Array.FindAll(allSubs, s => s != null),
+                        s => $"{s.name}({s.GetType().Name})"));
+                return $"No asset or sub-asset at '{assetPath}' was accepted by '{sp.propertyPath}'. Main: {asset.GetType().Name}. Candidates: {(string.IsNullOrEmpty(allNames) ? "(none)" : allNames)}. Specify 'subAsset':'name' to force a choice.";
+            }
+
+            // Ambiguous — multiple candidates matched. Make the caller disambiguate.
+            var matchingNames = new List<string>();
+            foreach (var sub in allSubs)
+            {
+                if (sub == null || ReferenceEquals(sub, asset)) continue;
+                if (TryAssignAndVerify(sp, sub)) matchingNames.Add($"{sub.name}({sub.GetType().Name})");
+            }
+            sp.objectReferenceValue = null;
+            return $"Ambiguous — multiple sub-assets at '{assetPath}' are compatible with '{sp.propertyPath}'. Specify 'subAsset':'name'. Candidates: {string.Join(", ", matchingNames)}.";
+        }
+
+        /// <summary>
+        /// Assign to the property and verify the assignment stuck. Unity silently
+        /// drops object-reference assignments when the target type doesn't match
+        /// the serialized field's expected type — reading back tells us whether
+        /// Unity accepted it.
+        /// </summary>
+        static bool TryAssignAndVerify(SerializedProperty sp, UnityEngine.Object candidate)
+        {
+            sp.objectReferenceValue = candidate;
+            return ReferenceEquals(sp.objectReferenceValue, candidate);
         }
 
         /// <summary>

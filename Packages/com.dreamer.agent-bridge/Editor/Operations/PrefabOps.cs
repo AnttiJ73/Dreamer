@@ -9,6 +9,36 @@ namespace Dreamer.AgentBridge
     public static class PrefabOps
     {
         /// <summary>
+        /// Unload a prefab-contents temporary scene without letting a failure
+        /// here override the caller's actual outcome. After
+        /// <c>PrefabUtility.SaveAsPrefabAsset</c>, Unity may have already torn
+        /// down the internal scene backing <paramref name="prefabRoot"/>, so
+        /// calling <c>UnloadPrefabContents</c> throws
+        /// "Specified object is not part of Prefab contents" — despite the
+        /// save having succeeded. The mutation has already landed, the cleanup
+        /// is a no-op anyway, so swallow the error and log a diagnostic.
+        /// Every prefab-editing op should use this helper in its finally
+        /// block instead of calling <c>PrefabUtility.UnloadPrefabContents</c>
+        /// directly.
+        /// </summary>
+        public static void SafeUnloadPrefabContents(GameObject prefabRoot)
+        {
+            if (prefabRoot == null) return;
+            try
+            {
+                PrefabUtility.UnloadPrefabContents(prefabRoot);
+            }
+            catch (Exception ex)
+            {
+                // Not fatal — the prefab asset on disk is already correct if
+                // the caller reached this point. Emit a diagnostic in case
+                // something else is going wrong, but don't propagate.
+                DreamerLog.Warn($"SafeUnloadPrefabContents: ignored cleanup error ({ex.GetType().Name}: {ex.Message}). The prefab mutation itself was not affected.");
+            }
+        }
+
+
+        /// <summary>
         /// Create a new empty prefab.
         /// Args: { name: "MyPrefab", path?: "Assets/Prefabs" }
         /// </summary>
@@ -99,7 +129,7 @@ namespace Dreamer.AgentBridge
                     Transform found = prefabRoot.transform.Find(searchPath);
                     if (found == null)
                     {
-                        PrefabUtility.UnloadPrefabContents(prefabRoot);
+                        SafeUnloadPrefabContents(prefabRoot);
                         return CommandResult.Fail($"Parent path not found within prefab: {parentPath}");
                     }
                     parent = found;
@@ -114,7 +144,7 @@ namespace Dreamer.AgentBridge
             }
             finally
             {
-                PrefabUtility.UnloadPrefabContents(prefabRoot);
+                SafeUnloadPrefabContents(prefabRoot);
             }
 
             var json = SimpleJson.Object()

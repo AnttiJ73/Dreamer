@@ -89,6 +89,30 @@ tags, breaking changes bump the minor version (0.x.0), fixes bump patch.
   `Last observed clean compile: 2026-04-19T14:22:11Z (3m 14s ago).`
 
 ### Fixed
+- **`set-property` on sprite sub-asset references** (SpriteRenderer.m_Sprite
+  and similar) no longer silently no-ops. Previously, `assetRef` pointing at
+  a Texture2D resolved to the main Texture asset and Unity silently dropped
+  the cross-type assignment, leaving `m_Sprite: {fileID: 0}`. The object-ref
+  resolver now:
+  - Accepts an explicit `"subAsset": "name"` modifier to pick a named
+    sub-asset (required for Multiple-mode sprite atlases).
+  - When the field type can't be resolved via reflection (common for Unity
+    built-in component fields), probes the main asset + each sub-asset
+    against the SerializedProperty and auto-picks the one Unity accepts.
+  - When multiple sub-assets match, returns an error listing candidates
+    so the caller can disambiguate with `subAsset` — no more silent wrong
+    assignment.
+- **Prefab-editing commands no longer overwrite a successful outcome with
+  a UnloadPrefabContents cleanup error.** `PrefabUtility.SaveAsPrefabAsset`
+  sometimes disposes the internal scene backing the prefabRoot, so the
+  subsequent `PrefabUtility.UnloadPrefabContents` throws "Specified object
+  is not part of Prefab contents" — despite the save having already
+  landed. Previously this threw the command into `failed` state even
+  though the prefab asset was correct on disk. Now every Op that loads
+  prefab contents uses `PrefabOps.SafeUnloadPrefabContents`, which
+  swallows the cleanup error (the mutation is already persisted) and logs
+  a diagnostic. Fixes the reported `add-component --asset` "error but
+  component was actually applied" pattern.
 - **`lastCompileSuccess` now updates on every compile**, not just the first
   one after daemon startup. The previous logic had two guards that both
   missed the common case: the bridge-restore path only ran when the value

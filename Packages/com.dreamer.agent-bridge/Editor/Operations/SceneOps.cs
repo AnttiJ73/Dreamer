@@ -108,7 +108,7 @@ namespace Dreamer.AgentBridge
                 Transform child = prefabRoot.transform.Find(childPath);
                 if (child == null)
                 {
-                    PrefabUtility.UnloadPrefabContents(prefabRoot);
+                    PrefabOps.SafeUnloadPrefabContents(prefabRoot);
                     return CommandResult.Fail($"Child '{childPath}' not found in prefab.");
                 }
 
@@ -122,7 +122,7 @@ namespace Dreamer.AgentBridge
             }
             finally
             {
-                PrefabUtility.UnloadPrefabContents(prefabRoot);
+                PrefabOps.SafeUnloadPrefabContents(prefabRoot);
             }
         }
 
@@ -176,7 +176,7 @@ namespace Dreamer.AgentBridge
                     Transform child = prefabRoot.transform.Find(childPath);
                     if (child == null)
                     {
-                        PrefabUtility.UnloadPrefabContents(prefabRoot);
+                        PrefabOps.SafeUnloadPrefabContents(prefabRoot);
                         return CommandResult.Fail($"Child '{childPath}' not found in prefab.");
                     }
 
@@ -192,7 +192,7 @@ namespace Dreamer.AgentBridge
                 }
                 finally
                 {
-                    PrefabUtility.UnloadPrefabContents(prefabRoot);
+                    PrefabOps.SafeUnloadPrefabContents(prefabRoot);
                 }
             }
 
@@ -265,7 +265,7 @@ namespace Dreamer.AgentBridge
                 Transform child = prefabRoot.transform.Find(childPath);
                 if (child == null)
                 {
-                    PrefabUtility.UnloadPrefabContents(prefabRoot);
+                    PrefabOps.SafeUnloadPrefabContents(prefabRoot);
                     return CommandResult.Fail($"Child '{childPath}' not found in prefab '{assetPath}'.");
                 }
 
@@ -286,7 +286,7 @@ namespace Dreamer.AgentBridge
             }
             finally
             {
-                PrefabUtility.UnloadPrefabContents(prefabRoot);
+                PrefabOps.SafeUnloadPrefabContents(prefabRoot);
             }
         }
 

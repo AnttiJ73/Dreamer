@@ -73,7 +73,7 @@ namespace Dreamer.AgentBridge
                     Transform child = prefabRoot.transform.Find(childPath);
                     if (child == null)
                     {
-                        PrefabUtility.UnloadPrefabContents(prefabRoot);
+                        PrefabOps.SafeUnloadPrefabContents(prefabRoot);
                         return CommandResult.Fail($"Child '{childPath}' not found in prefab '{assetPath}'.");
                     }
                     target = child.gameObject;
@@ -81,7 +81,7 @@ namespace Dreamer.AgentBridge
 
                 if (target.GetComponent(componentType) != null)
                 {
-                    PrefabUtility.UnloadPrefabContents(prefabRoot);
+                    PrefabOps.SafeUnloadPrefabContents(prefabRoot);
                     return CommandResult.Fail($"Component '{componentType.Name}' already exists on '{target.name}'.");
                 }
 
@@ -90,7 +90,7 @@ namespace Dreamer.AgentBridge
             }
             finally
             {
-                PrefabUtility.UnloadPrefabContents(prefabRoot);
+                PrefabOps.SafeUnloadPrefabContents(prefabRoot);
             }
 
             var prefabJson = SimpleJson.Object()
@@ -166,7 +166,7 @@ namespace Dreamer.AgentBridge
                     Transform child = prefabRoot.transform.Find(childPath);
                     if (child == null)
                     {
-                        PrefabUtility.UnloadPrefabContents(prefabRoot);
+                        PrefabOps.SafeUnloadPrefabContents(prefabRoot);
                         return CommandResult.Fail($"Child '{childPath}' not found in prefab '{assetPath}'.");
                     }
                     target = child.gameObject;
@@ -175,7 +175,7 @@ namespace Dreamer.AgentBridge
                 var prefabComp = target.GetComponent(componentType);
                 if (prefabComp == null)
                 {
-                    PrefabUtility.UnloadPrefabContents(prefabRoot);
+                    PrefabOps.SafeUnloadPrefabContents(prefabRoot);
                     return CommandResult.Fail($"Component '{componentType.Name}' not found on '{target.name}'.");
                 }
 
@@ -184,7 +184,7 @@ namespace Dreamer.AgentBridge
             }
             finally
             {
-                PrefabUtility.UnloadPrefabContents(prefabRoot);
+                PrefabOps.SafeUnloadPrefabContents(prefabRoot);
             }
 
             var prefabJson = SimpleJson.Object()
@@ -282,7 +282,7 @@ namespace Dreamer.AgentBridge
             }
             finally
             {
-                PrefabUtility.UnloadPrefabContents(prefabRoot);
+                PrefabOps.SafeUnloadPrefabContents(prefabRoot);
             }
         }
 
@@ -322,7 +322,7 @@ namespace Dreamer.AgentBridge
                 }
                 finally
                 {
-                    PrefabUtility.UnloadPrefabContents(prefabRoot);
+                    PrefabOps.SafeUnloadPrefabContents(prefabRoot);
                 }
             }
 

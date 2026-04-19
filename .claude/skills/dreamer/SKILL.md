@@ -112,6 +112,20 @@ When the user asks to update Dreamer (e.g. "update Dreamer", "pull the latest Dr
 
 Typed fields (e.g., `public Rigidbody rb`, `public Camera cam`) auto-resolve: point to a prefab or scene object and Dreamer finds the matching component.
 
+### Sub-asset references (Sprites inside a Texture2D, etc.)
+
+Assets like sprite sheets have a Texture2D main asset plus Sprite sub-assets. Assigning a Sprite-typed field (e.g. `SpriteRenderer.m_Sprite`) needs the sub-asset, not the Texture:
+
+```bash
+# Explicit sub-asset by name (required for Multiple-mode sprite atlases)
+--value '{"assetRef":"Assets/Sprites/Characters.png","subAsset":"PlayerIdle_0"}'
+
+# Single-sprite mode — Dreamer auto-picks the only Sprite sub-asset
+--value '{"assetRef":"Assets/Sprites/Square.png"}'
+```
+
+If the field type can't be resolved via reflection (common for Unity built-in components like SpriteRenderer), Dreamer probes each sub-asset and picks the one Unity accepts. When multiple sub-assets are compatible, Dreamer errors with a list of candidates — specify `subAsset` to disambiguate.
+
 ## Property Names for Built-in Unity Components
 
 Unity's built-in components (`Transform`, `SpriteRenderer`, `Collider`, `Camera`, etc.) serialize fields as `m_Pascal` (e.g. `m_Sprite`, `m_LocalPosition`). Dreamer automatically accepts the C#-style camelCase form — `sprite`, `localPosition`, `color`, `isTrigger` — and falls back to `m_Sprite` etc. on lookup failure. User-defined `[SerializeField]` fields keep their declared name as-is. The result JSON includes `resolvedPath` so you can see which form Unity actually used.
