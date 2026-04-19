@@ -15,21 +15,30 @@ const net = require('node:net');
 
 let tmpDir;
 let tmpConfigPath;
+let tmpRegistryPath;
 
 function loadConfigModule() {
   delete require.cache[require.resolve('../src/config')];
+  // project-registry also caches path in module state, so reload it too.
+  delete require.cache[require.resolve('../src/project-registry')];
   return require('../src/config');
 }
 
 beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dreamer-cfg-'));
   tmpConfigPath = path.join(tmpDir, 'test-config.json');
+  tmpRegistryPath = path.join(tmpDir, 'projects.json');
   process.env.DREAMER_CONFIG_PATH = tmpConfigPath;
+  // Isolate getPort() from the real user's ~/.dreamer or %APPDATA% registry.
+  // Without this, tests that rely on getPort falling back to config or default
+  // will instead pick up the active dev machine's registered port and fail.
+  process.env.DREAMER_REGISTRY_PATH = tmpRegistryPath;
   delete process.env.DREAMER_PORT;
 });
 
 afterEach(() => {
   delete process.env.DREAMER_CONFIG_PATH;
+  delete process.env.DREAMER_REGISTRY_PATH;
   delete process.env.DREAMER_PORT;
   try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
 });

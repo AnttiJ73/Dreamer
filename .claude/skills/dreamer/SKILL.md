@@ -168,6 +168,42 @@ Opt-outs if needed:
 
 Check watcher state any time: `./bin/dreamer status` includes an `assets: { active, dirty, lastChangedFile }` block.
 
+## CRITICAL: Reading `compile-status` correctly
+
+The `/api/compile-status` response has a **synthesized `status` field**. Read that. Trust its `summary`. Do NOT compute your own verdict from `errors` / `lastSuccess` / `compiling` — that's exactly how agents end up in a "force-compile, check timestamp, retry" loop for minutes.
+
+`status` values and what they mean:
+
+| status | ready | what to do |
+|---|---|---|
+| `ok` | true | Compile is clean. Proceed. |
+| `idle` | true | Connected, no errors, but no compile observed yet this daemon session. If you just wrote `.cs`, run `refresh-assets --wait`. Otherwise proceed. |
+| `stale` | false | You edited assets AFTER the last clean compile. `errors:[]` is lying. Run `refresh-assets --wait` + `focus-unity` on Windows. |
+| `errors` | false | Real compile errors. `summary` lists the first three. Fix the code. |
+| `compiling` | false | Unity is compiling right now. Wait. |
+| `unknown` | false | Bridge connected but hasn't reported compile state yet. Wait briefly. |
+| `disconnected` | false | Unity bridge isn't connected. Start/focus Unity. |
+
+**Stopping rule**: if you've called `refresh-assets --wait` + `focus-unity` twice in a row and `status` hasn't changed, STOP retrying. Something is structurally wrong (Unity Auto Refresh disabled in Preferences, a file stuck with the wrong importer, a syntax error preventing parse). Ask the user — don't loop.
+
+## Failure Mode: Script stuck as "unknown type" (can't be assigned to prefabs)
+
+**Symptom**: you wrote `Assets/Foo.cs` directly to disk, `refresh-assets` ran, `compile-status` shows `ok` — but the class isn't in `Assembly-CSharp.dll`, `add-component` fails with "Type not found", and in Unity you can't drag the script onto a GameObject because the MonoScript subasset doesn't exist.
+
+**Root cause**: Unity imported the file via `DefaultImporter` (unknown asset type) instead of `MonoImporter`. Happens when a `.cs` write lands while the Editor is unfocused on Windows. Subsequent refreshes compare hashes, see no change, and skip re-import — the file stays stuck.
+
+**Auto-heal**: `refresh-assets` now checks every `.cs` file the watcher flagged as changed, and force-reimports any that Unity didn't classify as `MonoScript`. Result JSON includes:
+- `reimported: [...]` — paths that were healed
+- `misclassified: [...]` — paths still stuck after force-reimport (needs manual look — usually a syntax error preventing parse, or a filename/classname mismatch)
+
+**Manual rescue** (use when auto-heal didn't catch it, or the file wasn't in the watcher):
+```bash
+./bin/dreamer reimport-script --path Assets/Foo.cs --wait
+./bin/dreamer reimport-script --path Assets/Scripts --wait    # whole folder, recursive
+./bin/dreamer reimport-script --path Assets/Scripts --non-recursive --wait
+```
+Force-reimports every `.cs` under the path regardless of current classification, then kicks `CompilationPipeline.RequestScriptCompilation()`. Response includes `healed`, `reimported`, `misclassified` lists.
+
 ## Failure Mode: Stale Asset DB (Type / Property not found)
 
 The auto-refresh usually prevents this, but it can still appear if the watcher missed an event, you passed `--no-refresh`, or Unity's import silently failed. When a command fails with `"Type not found: X"` or `"Property 'X' not found on 'Y'"`, the CLI detects this pattern and appends a hint:

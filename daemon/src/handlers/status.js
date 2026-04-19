@@ -200,10 +200,12 @@ function createStatusHandlers(queue, unityState, assetWatcher, scheduler) {
       } else {
         status = 'ok';
         ready = true;
-        const source = unityState.lastCompileSourceIsBridge
-          ? `Unity reports last clean compile at ${lastSuccess}${fmtAgo(lastSuccessAge.ageHuman)} (restored from bridge memory after daemon restart — daemon didn't witness it directly).`
-          : `Last observed clean compile: ${lastSuccess}${fmtAgo(lastSuccessAge.ageHuman)}.`;
-        summary = source;
+        // Note: since the bridge's compile timestamp is authoritative (see
+        // unity-state.js), `lastCompileSourceIsBridge` flips on most heartbeats
+        // and no longer cleanly indicates "restored after daemon restart." The
+        // raw flag is still in the body for debugging, but we no longer branch
+        // the summary on it — the timestamp + age is all the caller needs.
+        summary = `Last observed clean compile: ${lastSuccess}${fmtAgo(lastSuccessAge.ageHuman)}.`;
       }
 
       return {

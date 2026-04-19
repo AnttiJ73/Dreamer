@@ -10,6 +10,20 @@ tags, breaking changes bump the minor version (0.x.0), fixes bump patch.
 ## [Unreleased]
 
 ### Added
+- **`refresh-assets` auto-heal for "Unknown type" script misclassification.**
+  Unity sometimes imports a `.cs` file via `DefaultImporter` (unknown asset
+  type) instead of `MonoImporter` when the write lands while the Editor is
+  unfocused on Windows. The MonoScript subasset never gets generated, so
+  `add-component` fails and the script can't be dragged onto a GameObject.
+  The daemon-side asset watcher now tracks which `.cs` files changed since
+  the last refresh, and `refresh-assets` force-reimports any file Unity
+  didn't classify as MonoScript. Result JSON includes `reimported[]` and
+  `misclassified[]`.
+- **`reimport-script` rescue command** — force-reimports `.cs` files under a
+  path (file or folder, recursive by default), then kicks
+  `CompilationPipeline.RequestScriptCompilation()`. Use when the auto-heal
+  in `refresh-assets` didn't catch a misclassified file, or when the watcher
+  missed the original write.
 - **`set-property` property-name aliasing for built-in components** —
   Unity built-ins serialize as `m_Pascal` (e.g. `m_Sprite`, `m_LocalPosition`).
   The CLI now accepts the C# camelCase form (`sprite`, `localPosition`,
@@ -23,6 +37,18 @@ tags, breaking changes bump the minor version (0.x.0), fixes bump patch.
 - **`compile-status` summary shows age next to timestamps.**
   `Last observed clean compile: 2026-04-19T14:22:11Z (3m 14s ago).`
 
+### Fixed
+- **`lastCompileSuccess` now updates on every compile**, not just the first
+  one after daemon startup. The previous logic had two guards that both
+  missed the common case: the bridge-restore path only ran when the value
+  was null, and the edge-detection path required the daemon to observe
+  `compiling: true → false` directly (short compiles finish between state
+  ticks, so the edge was never registered). Bridge timestamp is now
+  accepted monotonically — whenever newer than the current record. Fixes
+  the "force-compile, check timestamp, retry" agent loop where
+  `compile-status` reported an old timestamp despite Unity having
+  re-compiled.
+
 ### Changed
 - **Dreamer CLI reference moved from slash command to Claude Code skill.**
   The reference now lives at `.claude/skills/dreamer/SKILL.md` (auto-loaded
@@ -30,6 +56,12 @@ tags, breaking changes bump the minor version (0.x.0), fixes bump patch.
   (user-invoked only via `/dreamer`). `./bin/dreamer update` migrates
   pre-existing installs — it removes the legacy file after copying the new
   skill. Fresh installs write only the skill.
+- **SKILL.md prioritizes the synthesized `compile-status` fields.** New
+  section at the top of the compile-status docs tells agents to read
+  `body.status` + `summary` as source of truth rather than computing
+  verdicts from raw `errors` / `lastSuccess` / `compiling` fields, plus a
+  stop-retrying rule after two failed refresh-assets cycles. Mitigates the
+  agent-loop pattern reported in Blackend Core use.
 
 ## [0.1.0-pre]
 

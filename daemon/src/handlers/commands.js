@@ -14,7 +14,7 @@ const DAEMON_SIDE_KINDS = new Set(['compile_status', 'console']);
  * @param {import('../unity-state')} unityState
  * @returns {object} Route handler map
  */
-function createCommandHandlers(queue, scheduler, unityState) {
+function createCommandHandlers(queue, scheduler, unityState, assetWatcher) {
   return {
     /**
      * POST /api/commands — Submit a new command.
@@ -55,8 +55,18 @@ function createCommandHandlers(queue, scheduler, unityState) {
         return resolveDaemonSide(body.kind, body.args || {}, unityState);
       }
 
+      // Auto-enrich refresh_assets with the list of .cs files the watcher saw
+      // change since the last refresh. The bridge uses this list to heal files
+      // that Unity misclassified as DefaultImporter (unknown asset type) when
+      // they were written while the Editor was unfocused. See AssetOps.cs.
+      const args = body.args || {};
+      if (body.kind === 'refresh_assets' && assetWatcher && !args.changedFiles) {
+        const changed = assetWatcher.getChangedFiles();
+        if (changed.length > 0) args.changedFiles = changed;
+      }
+
       try {
-        const cmd = createCommand(body.kind, body.args || {}, body.options || {});
+        const cmd = createCommand(body.kind, args, body.options || {});
         queue.add(cmd);
         // Kick the scheduler immediately so it can evaluate the new command
         scheduler.tick();

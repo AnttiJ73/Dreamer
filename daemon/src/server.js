@@ -36,7 +36,7 @@ const unityState = new UnityState();
 const scheduler = new Scheduler(queue, unityState);
 const assetWatcher = new AssetWatcher(path.resolve(DAEMON_DIR, '..'));
 assetWatcher.start();
-const commandHandlers = createCommandHandlers(queue, scheduler, unityState);
+const commandHandlers = createCommandHandlers(queue, scheduler, unityState, assetWatcher);
 const unityHandlers = createUnityHandlers(queue, unityState, scheduler, assetWatcher);
 const statusHandlers = createStatusHandlers(queue, unityState, assetWatcher, scheduler);
 

@@ -155,11 +155,170 @@ namespace Dreamer.AgentBridge
         /// Force Unity to scan the disk for changed/new/deleted assets.
         /// This is essential when files are written externally (by an agent, CLI, etc.)
         /// because Unity on Windows does not reliably detect changes without focus.
+        ///
+        /// Auto-heal: if the caller passes a `changedFiles` array (forward-slash
+        /// "Assets/..." paths), every .cs file that Unity imports as something
+        /// other than MonoScript (i.e. got classified as the default/unknown
+        /// importer because of an ill-timed write outside the Editor) is
+        /// force-reimported. This fixes the common "script exists on disk but
+        /// doesn't appear in Assembly-CSharp and can't be assigned to prefabs"
+        /// bug caused by unfocused-Editor imports.
+        ///
+        /// Result JSON:
+        ///   { refreshed: true, checked: N, reimported: [...], misclassified: [...] }
+        /// where `misclassified` lists files that are STILL not MonoScript after
+        /// the force-reimport — those need human intervention (bad namespace,
+        /// syntax preventing initial parse, etc.).
         /// </summary>
         public static CommandResult RefreshAssets(Dictionary<string, object> args)
         {
             AssetDatabase.Refresh(ImportAssetOptions.Default);
-            return CommandResult.Ok(SimpleJson.Object().Put("refreshed", true).ToString());
+
+            // Auto-heal phase. Only runs when the daemon-side watcher gave us a
+            // concrete list of changed files; a bare refresh_assets call with
+            // no arg list skips this entirely (fast path, unchanged behavior).
+            var reimported = new List<string>();
+            var misclassified = new List<string>();
+            int checkedCount = 0;
+
+            if (args.TryGetValue("changedFiles", out object cfObj) && cfObj is List<object> cfList)
+            {
+                foreach (var item in cfList)
+                {
+                    string p = item as string;
+                    if (string.IsNullOrEmpty(p)) continue;
+                    if (!p.EndsWith(".cs", StringComparison.OrdinalIgnoreCase)) continue;
+                    if (!System.IO.File.Exists(System.IO.Path.GetFullPath(p))) continue;
+
+                    checkedCount++;
+                    var healResult = HealScriptClassification(p);
+                    if (healResult == HealOutcome.Reimported) reimported.Add(p);
+                    else if (healResult == HealOutcome.StillMisclassified) misclassified.Add(p);
+                }
+            }
+
+            var resultJson = SimpleJson.Object()
+                .Put("refreshed", true)
+                .Put("checked", checkedCount)
+                .Put("reimportedCount", reimported.Count)
+                .Put("misclassifiedCount", misclassified.Count)
+                .Put("reimported", reimported.ToArray())
+                .Put("misclassified", misclassified.ToArray());
+            if (misclassified.Count > 0)
+            {
+                resultJson.Put("hint",
+                    "Some .cs files are still not classified as MonoScript after force-reimport. " +
+                    "Common causes: syntax error preventing initial parse, namespace/class-name mismatch with filename, " +
+                    "or Unity still treating the file as an unknown asset type. Run `./bin/dreamer reimport-script --path <file>` " +
+                    "to try a stronger repair, or inspect the file and fix any syntax issues.");
+            }
+            return CommandResult.Ok(resultJson.ToString());
+        }
+
+        /// <summary>
+        /// Explicit rescue command. Force-reimports all .cs files under the given
+        /// path (single file or folder). Unlike RefreshAssets, this runs
+        /// force-reimport on every .cs regardless of current classification —
+        /// useful when the watcher missed the original write and the file is
+        /// stuck as unknown.
+        ///
+        /// Args: { path: "Assets/Foo.cs" | "Assets/Scripts", recursive?: true }
+        /// </summary>
+        public static CommandResult ReimportScripts(Dictionary<string, object> args)
+        {
+            string target = SimpleJson.GetString(args, "path");
+            if (string.IsNullOrEmpty(target))
+                return CommandResult.Fail("'path' is required (a .cs file or a folder containing .cs files).");
+
+            bool recursive = !args.ContainsKey("recursive") || SimpleJson.GetBool(args, "recursive", true);
+
+            // Normalize to forward slashes so we can compare with AssetDatabase paths.
+            target = target.Replace('\\', '/').TrimEnd('/');
+
+            var reimported = new List<string>();
+            var healed = new List<string>();
+            var misclassified = new List<string>();
+
+            string full = System.IO.Path.GetFullPath(target);
+            if (System.IO.File.Exists(full))
+            {
+                if (!target.EndsWith(".cs", StringComparison.OrdinalIgnoreCase))
+                    return CommandResult.Fail($"Path '{target}' is a file but not a .cs — reimport-script only handles scripts.");
+                ForceReimport(target, reimported, healed, misclassified);
+            }
+            else if (System.IO.Directory.Exists(full))
+            {
+                var opt = recursive ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly;
+                var files = System.IO.Directory.GetFiles(full, "*.cs", opt);
+                foreach (var f in files)
+                {
+                    // Convert absolute path back to "Assets/..." form.
+                    string rel = f.Replace('\\', '/');
+                    int idx = rel.IndexOf("/Assets/", StringComparison.OrdinalIgnoreCase);
+                    if (idx < 0 && !rel.StartsWith("Assets/", StringComparison.OrdinalIgnoreCase)) continue;
+                    string assetPath = idx >= 0 ? rel.Substring(idx + 1) : rel;
+                    ForceReimport(assetPath, reimported, healed, misclassified);
+                }
+            }
+            else
+            {
+                return CommandResult.Fail($"Path not found: {target}");
+            }
+
+            // Kick a compile — force-reimport alone doesn't always trigger one if Unity's
+            // compilation pipeline thinks nothing relevant changed.
+            UnityEditor.Compilation.CompilationPipeline.RequestScriptCompilation();
+
+            return CommandResult.Ok(SimpleJson.Object()
+                .Put("path", target)
+                .Put("recursive", recursive)
+                .Put("reimportedCount", reimported.Count)
+                .Put("healedCount", healed.Count)
+                .Put("misclassifiedCount", misclassified.Count)
+                .Put("reimported", reimported.ToArray())
+                .Put("healed", healed.ToArray())
+                .Put("misclassified", misclassified.ToArray())
+                .ToString());
+        }
+
+        enum HealOutcome { AlreadyMonoScript, Reimported, StillMisclassified }
+
+        /// <summary>
+        /// Check whether <paramref name="assetPath"/> is classified as MonoScript.
+        /// If not, force-reimport and check again. Returns which outcome landed.
+        /// </summary>
+        static HealOutcome HealScriptClassification(string assetPath)
+        {
+            var typeBefore = AssetDatabase.GetMainAssetTypeAtPath(assetPath);
+            if (typeBefore == typeof(MonoScript)) return HealOutcome.AlreadyMonoScript;
+
+            // Force a full re-import. ForceUpdate says "pretend the hash changed";
+            // ForceSynchronousImport says "don't defer, do it now on this thread."
+            AssetDatabase.ImportAsset(assetPath,
+                ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
+
+            var typeAfter = AssetDatabase.GetMainAssetTypeAtPath(assetPath);
+            return typeAfter == typeof(MonoScript)
+                ? HealOutcome.Reimported
+                : HealOutcome.StillMisclassified;
+        }
+
+        /// <summary>
+        /// Force-reimport a .cs file unconditionally (for the rescue command path).
+        /// Reports which bucket it lands in.
+        /// </summary>
+        static void ForceReimport(string assetPath, List<string> reimported, List<string> healed, List<string> misclassified)
+        {
+            var typeBefore = AssetDatabase.GetMainAssetTypeAtPath(assetPath);
+            bool wasMonoScript = typeBefore == typeof(MonoScript);
+
+            AssetDatabase.ImportAsset(assetPath,
+                ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
+
+            var typeAfter = AssetDatabase.GetMainAssetTypeAtPath(assetPath);
+            reimported.Add(assetPath);
+            if (!wasMonoScript && typeAfter == typeof(MonoScript)) healed.Add(assetPath);
+            else if (typeAfter != typeof(MonoScript)) misclassified.Add(assetPath);
         }
 
         /// <summary>

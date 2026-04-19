@@ -28,6 +28,7 @@ namespace Dreamer.AgentBridge
             _handlers["inspect_asset"]     = AssetOps.InspectAsset;
             _handlers["save_assets"]       = AssetOps.SaveAssets;
             _handlers["refresh_assets"]    = AssetOps.RefreshAssets;
+            _handlers["reimport_scripts"]  = AssetOps.ReimportScripts;
 
             // Script operations
             _handlers["create_script"]     = ScriptOps.CreateScript;

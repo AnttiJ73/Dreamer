@@ -36,6 +36,14 @@ class AssetWatcher {
     this.lastChange = null;
     /** Relative path (under Assets/) of most recent change, or null. */
     this.lastChangedFile = null;
+    /**
+     * Set of forward-slash "Assets/..."-prefixed paths that have changed since
+     * the last markClean(). Consumed by `refresh_assets` so Unity's bridge can
+     * auto-heal misclassified .cs files (DefaultImporter instead of
+     * MonoImporter) with a targeted force-import before returning.
+     * @type {Set<string>}
+     */
+    this.changedFiles = new Set();
     this._watcher = null;
     this._active = false;
   }
@@ -77,20 +85,35 @@ class AssetWatcher {
 
   /**
    * Mark clean — call after Unity has processed a refresh-assets so we stop
-   * auto-prepending more refreshes.
+   * auto-prepending more refreshes. Clears both the dirty flag and the
+   * changed-files set.
    */
   markClean() {
     this.dirty = false;
+    this.changedFiles.clear();
+  }
+
+  /**
+   * Return a snapshot of the changed files accumulated since the last
+   * markClean(), with paths normalized to forward-slash "Assets/..." form
+   * so they're ready to hand to Unity's AssetDatabase API.
+   * @returns {string[]}
+   */
+  getChangedFiles() {
+    return Array.from(this.changedFiles);
   }
 
   /**
    * Test-only. Simulates a filesystem change without touching fs.watch.
-   * @param {string} relativePath
+   * @param {string} relativePath - path relative to Assets/ (what fs.watch gives us)
    */
   _markDirty(relativePath) {
     this.dirty = true;
     this.lastChange = Date.now();
     this.lastChangedFile = relativePath;
+    // Normalize to forward-slash "Assets/..." form that AssetDatabase expects.
+    const normalized = 'Assets/' + relativePath.replace(/\\/g, '/');
+    this.changedFiles.add(normalized);
   }
 
   /** Serialisable snapshot for /api/status. */
@@ -100,6 +123,7 @@ class AssetWatcher {
       dirty: this.dirty,
       lastChange: this.lastChange,
       lastChangedFile: this.lastChangedFile,
+      changedFileCount: this.changedFiles.size,
     };
   }
 }

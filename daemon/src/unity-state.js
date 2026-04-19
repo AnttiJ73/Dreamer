@@ -72,24 +72,41 @@ class UnityState {
     this.connected = true;
     this.lastHeartbeat = Date.now();
 
-    // Restore lastCompileSuccess from Unity's own memory when the daemon has
-    // no record of its own — happens after a daemon restart while Unity has
-    // been running healthily. Without this, `compile-status` stays in the
-    // unhelpful `idle` state until the next actual compile cycle completes,
-    // even though Unity is perfectly fine.
-    if (!this.lastCompileSuccess
-        && state.lastCompileTime
-        && state.lastCompileSucceeded === true) {
-      this.lastCompileSuccess = state.lastCompileTime;
-      this.lastCompileSourceIsBridge = true;
+    // Accept the bridge's `lastCompileTime` as authoritative whenever it's
+    // NEWER than ours. The bridge records every compile-finished event via
+    // Unity's CompilationPipeline.compilationFinished callback, so it's the
+    // ground truth. Relying on our own `wasCompiling → !compiling` edge
+    // detection misses short compiles (<2s state-tick interval) — both ticks
+    // see compiling:false and the edge never registers, leaving our
+    // timestamp stale while Unity has actually re-compiled multiple times.
+    //
+    // This also covers the "restore after daemon restart" case that the
+    // previous guard was written for — if we have no timestamp yet, any
+    // bridge-reported success is monotonically newer than 0.
+    if (state.lastCompileTime && state.lastCompileSucceeded === true) {
+      const bridgeMs = Date.parse(state.lastCompileTime);
+      const ourMs = this.lastCompileSuccess ? Date.parse(this.lastCompileSuccess) : 0;
+      if (Number.isFinite(bridgeMs) && bridgeMs > ourMs) {
+        this.lastCompileSuccess = state.lastCompileTime;
+        this.lastCompileSourceIsBridge = true;
+      }
     }
 
+    // Secondary path: if the daemon DID observe the compiling → !compiling
+    // edge directly (long compiles), also stamp the success. The timestamp
+    // may be a hair later than the bridge's, but that's fine — we just take
+    // whichever is newer via the same monotonic gate.
     const compilationJustSucceeded =
       wasCompiling && !this.compiling && this.compileErrors.length === 0;
 
     if (compilationJustSucceeded) {
-      this.lastCompileSuccess = new Date().toISOString();
-      this.lastCompileSourceIsBridge = false;
+      const now = new Date().toISOString();
+      const nowMs = Date.parse(now);
+      const ourMs = this.lastCompileSuccess ? Date.parse(this.lastCompileSuccess) : 0;
+      if (nowMs > ourMs) {
+        this.lastCompileSuccess = now;
+        this.lastCompileSourceIsBridge = false;
+      }
     }
 
     return { compilationJustSucceeded };

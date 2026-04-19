@@ -360,6 +360,7 @@ async function run(argv) {
         'instantiate-prefab --asset PATH [--name NAME] [--parent /PATH] [--position {x,y,z}]',
         'create-gameobject --name NAME [--parent PATH] [--scene SCENE]',
         'save-assets',
+        'reimport-script --path FILE_OR_FOLDER [--non-recursive]   (force re-import of .cs files Unity misclassified as unknown)',
         'status [--id CMD_ID]',
         'queue [--state STATE] [--task TASK_ID]',
         'compile-status',
@@ -602,6 +603,21 @@ async function run(argv) {
       case 'refresh-assets':
         await submitCommand('refresh_assets', {}, flags);
         break;
+
+      case 'reimport-script':
+      case 'reimport-scripts': {
+        // Accept both spellings — "reimport-script" reads better with --path pointing
+        // at a single .cs file; "reimport-scripts" reads better with a folder.
+        if (!flags.path && !flags.asset) {
+          fail('--path FILE_OR_FOLDER (or --asset PATH) is required for reimport-script');
+        }
+        const rsArgs = {
+          path: flags.path || flags.asset,
+          recursive: flags['non-recursive'] ? false : true,
+        };
+        await submitCommand('reimport_scripts', rsArgs, flags);
+        break;
+      }
 
       // ── Query commands (no submission, direct daemon query) ────────────
       case 'status': {
