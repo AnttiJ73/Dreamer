@@ -179,6 +179,9 @@ async function handleRequest(req, res) {
     } else if (method === 'GET' && pathname === '/api/console') {
       result = await statusHandlers.console(query);
 
+    } else if (method === 'GET' && pathname === '/api/activity') {
+      result = await statusHandlers.activity(query);
+
     // ── Shutdown (daemon management) ──────────────────────────────────
     } else if (method === 'POST' && pathname === '/api/shutdown') {
       sendJSON(res, 200, { ok: true, message: 'Shutting down' });

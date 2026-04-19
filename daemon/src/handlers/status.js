@@ -234,6 +234,75 @@ function createStatusHandlers(queue, unityState, assetWatcher, scheduler) {
     },
 
     /**
+     * GET /api/activity — Recent commands across the queue, newest first.
+     *
+     * Designed for multi-agent visibility: when several Claude sessions drive
+     * the same project, each agent can check what the others just did before
+     * drawing conclusions about compile errors or scene state. Combined with
+     * the --label flag on command submit (e.g. --label "agent-A:player-setup"),
+     * activity becomes a legible audit trail with minimal boilerplate.
+     *
+     * Query: ?limit=N (default 20) — cap of returned entries
+     *        ?since=MS (optional) — only commands newer than MS-ago
+     *        ?state=X (optional) — filter by state
+     */
+    async activity(query) {
+      const now = Date.now();
+      const limit = Math.max(1, Math.min(200, parseInt(query.limit, 10) || 20));
+      const sinceMs = parseInt(query.since, 10);
+      const stateFilter = query.state || null;
+
+      let all = queue.list();
+      if (stateFilter) all = all.filter((c) => c.state === stateFilter);
+      if (Number.isFinite(sinceMs) && sinceMs > 0) {
+        const cutoff = now - sinceMs;
+        all = all.filter((c) => {
+          const t = c.createdAt ? Date.parse(c.createdAt) : 0;
+          return t >= cutoff;
+        });
+      }
+
+      // Sort newest createdAt first — queue.list()'s default sort is priority/oldest.
+      all.sort((a, b) => Date.parse(b.createdAt || 0) - Date.parse(a.createdAt || 0));
+
+      const entries = all.slice(0, limit).map((c) => {
+        const created = c.createdAt ? Date.parse(c.createdAt) : null;
+        const updated = c.updatedAt ? Date.parse(c.updatedAt) : null;
+        const dispatched = c.dispatchedAt ? Date.parse(c.dispatchedAt) : null;
+        const terminal = c.state === 'succeeded' || c.state === 'failed'
+          || c.state === 'cancelled' || c.state === 'blocked';
+        const durationMs = terminal && dispatched && updated
+          ? Math.max(0, updated - dispatched)
+          : null;
+
+        return {
+          id: c.id,
+          kind: c.kind,
+          label: c.humanLabel || null,
+          state: c.state,
+          error: c.error || null,
+          waitingReason: c.waitingReason || null,
+          createdAt: c.createdAt || null,
+          createdAge: withAge(c.createdAt, now),
+          endedAt: terminal ? c.updatedAt : null,
+          endedAge: terminal ? withAge(c.updatedAt, now) : null,
+          durationMs,
+          durationHuman: humanizeDuration(durationMs),
+        };
+      });
+
+      return {
+        status: 200,
+        body: {
+          now: new Date(now).toISOString(),
+          totalReturned: entries.length,
+          limit,
+          entries,
+        },
+      };
+    },
+
+    /**
      * GET /api/console — Recent console entries.
      * Query: ?count=N
      */

@@ -10,6 +10,21 @@ tags, breaking changes bump the minor version (0.x.0), fixes bump patch.
 ## [Unreleased]
 
 ### Added
+- **`./bin/dreamer activity`** — newest-first view of recent commands across
+  the queue, with per-entry label / kind / state / age / duration. Built for
+  multi-agent visibility: when several Claude sessions drive the same
+  project, each agent can call `activity --since 2m` before drawing
+  conclusions about compile errors or scene state. Flags: `--limit N`,
+  `--since 90s|5m|1h`, `--state X`. Exposed at `GET /api/activity`.
+- **`--label TEXT` flag promoted as a first-class tool** in CLI help +
+  SKILL.md. The flag already existed (as `humanLabel`); it's now documented
+  as the canonical way to tag commands in parallel-agent scenarios, e.g.
+  `--label "sessionA:player-setup"`. Labels appear in `status`, `queue`,
+  and `activity` output.
+- **SKILL.md "Parallel agent sessions" section** — tool-focused guidance,
+  no prescriptive coordination protocol. Core rule: check
+  `activity --since 2m` before blaming yourself for compile errors in
+  multi-agent workflows.
 - **`refresh-assets` auto-heal for "Unknown type" script misclassification.**
   Unity sometimes imports a `.cs` file via `DefaultImporter` (unknown asset
   type) instead of `MonoImporter` when the write lands while the Editor is

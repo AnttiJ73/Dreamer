@@ -365,6 +365,7 @@ async function run(argv) {
         'queue [--state STATE] [--task TASK_ID]',
         'compile-status',
         'console [--count N]',
+        'activity [--limit N] [--since 90s|5m|1h] [--state X]   (recent commands across the queue, newest first — multi-agent visibility)',
         'add-child-to-prefab --asset PATH_OR_GUID --child-name NAME [--parent-path SUBPATH]',
         'save-as-prefab --scene-object NAME [--path FOLDER] [--name PREFABNAME]',
         'execute-menu-item "MenuItem/Path"',
@@ -390,6 +391,7 @@ async function run(argv) {
         '--no-focus       suppress all Unity focus (upfront + --wait fallback)',
         '--focus-after MS override stall threshold before focusing a --wait command that hasn\'t completed (default 5000, smart mode only)',
         '--no-refresh     skip the auto refresh-assets that runs before compile-gated commands when .cs files have changed',
+        '--label TEXT    tag the command with a free-form label (recommended in multi-agent sessions: `--label "agent-A:player-setup"`). Appears in status, queue, activity.',
       ],
     });
     return;
@@ -698,6 +700,30 @@ async function run(argv) {
         await ensureDaemon();
         const count = flags.count || '50';
         const resp = await httpRequest('GET', `/api/console?count=${count}`);
+        if (resp.status >= 400) fail(resp.data.error || `HTTP ${resp.status}`);
+        out(resp.data);
+        break;
+      }
+
+      case 'activity': {
+        await ensureDaemon();
+        // Build query string from optional flags: --limit N, --since DURATION, --state X.
+        // --since accepts bare ms, or "Ns"/"Nm"/"Nh" for the common conversational durations.
+        const params = [];
+        const limit = parseInt(flags.limit, 10);
+        if (Number.isFinite(limit) && limit > 0) params.push(`limit=${limit}`);
+        if (flags.since) {
+          const raw = String(flags.since).trim();
+          const m = raw.match(/^(\d+)(ms|s|m|h)?$/);
+          if (!m) fail(`--since must be a number followed by ms|s|m|h (e.g. "90s", "5m"); got "${raw}"`);
+          const n = parseInt(m[1], 10);
+          const unit = m[2] || 'ms';
+          const multiplier = { ms: 1, s: 1000, m: 60000, h: 3600000 }[unit];
+          params.push(`since=${n * multiplier}`);
+        }
+        if (flags.state) params.push(`state=${encodeURIComponent(flags.state)}`);
+        const qs = params.length ? `?${params.join('&')}` : '';
+        const resp = await httpRequest('GET', `/api/activity${qs}`);
         if (resp.status >= 400) fail(resp.data.error || `HTTP ${resp.status}`);
         out(resp.data);
         break;

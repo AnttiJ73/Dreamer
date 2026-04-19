@@ -168,6 +168,16 @@ Opt-outs if needed:
 
 Check watcher state any time: `./bin/dreamer status` includes an `assets: { active, dirty, lastChangedFile }` block.
 
+## Parallel agent sessions on the same Unity project
+
+Dreamer doesn't enforce coordination between multiple agents driving the same Unity project. If you're one of several Claude sessions on the same project (solo dev running two terminals, team using shared git workspace, etc.), use these tools for visibility:
+
+- **Always pass `--label "<agent-id>:<task>"`** on every mutation. Example: `./bin/dreamer add-component --label "sessionB:player-setup" --asset Assets/Prefabs/Player.prefab --type Rigidbody --wait`. The label lands in `status`, `queue`, and `activity`, making the command trail legible.
+- **Before drawing conclusions about compile errors, scene state, or missing types**, check `./bin/dreamer activity --since 2m`. It shows recent commands with their labels — if another agent just wrote scripts 30 seconds ago, that's probably the cause of the errors you're seeing, not your own changes.
+- **Don't revert your own work based on a compile error you didn't clearly cause.** Check `activity` first. If another agent is mid-edit, wait or work on an unrelated task.
+
+No explicit locking exists. Expect occasional conflicts (both agents editing the same prefab, both adding the same component). Dreamer's commands are atomic individually; races across commands are on you to reason about. If things get wrong, `./bin/dreamer activity` + `git log` + `git diff` are the recovery toolkit.
+
 ## CRITICAL: Reading `compile-status` correctly
 
 The `/api/compile-status` response has a **synthesized `status` field**. Read that. Trust its `summary`. Do NOT compute your own verdict from `errors` / `lastSuccess` / `compiling` — that's exactly how agents end up in a "force-compile, check timestamp, retry" loop for minutes.
