@@ -124,7 +124,10 @@ namespace Dreamer.AgentBridge
                 .ToString());
         }
 
-        static string BuildMessagesJson(UnityEditor.Rendering.ShaderMessage[] msgs)
+        // ShaderMessage is UnityEditor.ShaderMessage (NOT UnityEditor.Rendering) in
+        // Unity's public API — despite the severity enum living in
+        // UnityEditor.Rendering. The namespace mismatch is Unity's; we just match it.
+        static string BuildMessagesJson(UnityEditor.ShaderMessage[] msgs)
         {
             if (msgs == null || msgs.Length == 0) return "[]";
             var arr = SimpleJson.Array();
