@@ -11,13 +11,33 @@ namespace Dreamer.AgentBridge
     public static class SceneOps
     {
         /// <summary>
+        /// Read the parent scene path from args. The canonical key is
+        /// <c>parentPath</c>; <c>parent</c> is accepted as an alias because agents
+        /// (and humans) reach for it naturally, and a silent-ignore placed the
+        /// GameObject at scene root with no error. Warns on alias use so the
+        /// agent learns the canonical form.
+        /// </summary>
+        static string ResolveParentPath(Dictionary<string, object> args)
+        {
+            string canonical = SimpleJson.GetString(args, "parentPath");
+            if (!string.IsNullOrEmpty(canonical)) return canonical;
+            string alias = SimpleJson.GetString(args, "parent");
+            if (!string.IsNullOrEmpty(alias))
+            {
+                DreamerLog.Warn($"'parent' is accepted as an alias — use 'parentPath' in future calls. Resolved to: '{alias}'");
+                return alias;
+            }
+            return null;
+        }
+
+        /// <summary>
         /// Create a new empty GameObject in the active scene.
         /// Args: { name: "ObjectName", parentPath?: "/Canvas/Panel", scene?: "SceneName" }
         /// </summary>
         public static CommandResult CreateGameObject(Dictionary<string, object> args)
         {
             string name = SimpleJson.GetString(args, "name", "GameObject");
-            string parentPath = SimpleJson.GetString(args, "parentPath");
+            string parentPath = ResolveParentPath(args);
 
             var go = new GameObject(name);
             Undo.RegisterCreatedObjectUndo(go, $"Create {name}");
@@ -361,7 +381,7 @@ namespace Dreamer.AgentBridge
                 instance.name = nameOverride;
 
             // Optional parent
-            string parentPath = SimpleJson.GetString(args, "parentPath");
+            string parentPath = ResolveParentPath(args);
             if (!string.IsNullOrEmpty(parentPath))
             {
                 var parent = PropertyOps.FindSceneObject(parentPath, out string parentError);
@@ -525,7 +545,7 @@ namespace Dreamer.AgentBridge
         {
             string name = SimpleJson.GetString(args, "name", "GameObject");
             string savePath = SimpleJson.GetString(args, "savePath");
-            string parentPath = SimpleJson.GetString(args, "parentPath");
+            string parentPath = ResolveParentPath(args);
 
             Transform parent = null;
             if (!string.IsNullOrEmpty(parentPath))

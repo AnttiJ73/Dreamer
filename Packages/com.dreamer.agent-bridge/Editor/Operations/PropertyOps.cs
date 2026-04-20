@@ -19,6 +19,13 @@ namespace Dreamer.AgentBridge
         /// Value for ObjectReference fields:
         ///   { "assetRef": "Assets/Prefabs/X.prefab" }  — asset reference (auto-resolves typed component refs)
         ///   { "sceneRef": "/Main Camera" }              — scene object reference
+        ///
+        /// Array / List&lt;T&gt; handling:
+        ///   propertyPath "entries"            — value is the full replacement (pass [] to clear)
+        ///   propertyPath "entries[24]"        — target element N directly (bracket shorthand for
+        ///                                       Unity's "entries.Array.data[24]")
+        ///   value { "_size": N, "24": val }   — resize + sparse assignment (append-safe: leaves
+        ///                                       existing elements at other indices untouched)
         /// </summary>
         public static CommandResult SetProperty(Dictionary<string, object> args)
         {
@@ -175,49 +182,91 @@ namespace Dreamer.AgentBridge
         }
 
         /// <summary>
-        /// Resolve a property path with a tolerance for Unity's built-in component
-        /// naming convention. Built-in components (Transform, SpriteRenderer, Collider,
-        /// Behaviour subclasses, etc.) expose serialized fields as "m_Pascal" even
-        /// though the public C# property is "camelCase" — so a user writing
-        /// <c>--property sprite</c> hits "Property not found" unless they know
-        /// to spell it as <c>m_Sprite</c>. User-defined [SerializeField] fields keep
-        /// their declared name and resolve via the primary lookup unchanged.
+        /// Resolve a property path, tolerating two common user-friendly shorthands:
         ///
-        /// Resolution order:
-        ///   1. The path as given (works for user fields + already-prefixed paths).
-        ///   2. m_&lt;UpperFirst(firstSegment)&gt;&lt;rest&gt; for single-identifier paths
-        ///      that don't already look prefixed. Multi-segment paths (those with '.'
-        ///      or '[') only get the prefix applied to the first segment so that
-        ///      sub-paths like "localPosition.x" still reach "m_LocalPosition.x".
+        /// (A) Unity built-in m_-prefix convention. Built-in components (Transform,
+        /// SpriteRenderer, Collider, Behaviour subclasses, etc.) expose serialized
+        /// fields as "m_Pascal" even though the public C# property is "camelCase"
+        /// — so <c>--property sprite</c> hits "Property not found" unless spelled
+        /// as <c>m_Sprite</c>. User-defined [SerializeField] fields keep their
+        /// declared name and resolve via the primary lookup unchanged.
+        ///
+        /// (B) Bracket index shorthand. Unity's SerializedProperty path for an
+        /// array element is <c>entries.Array.data[24]</c>, but agents reasonably
+        /// write <c>entries[24]</c>. Without rewriting, FindProperty returns null
+        /// and the agent falls back to replacing the whole array. We translate
+        /// <c>[N]</c> segments to <c>.Array.data[N]</c> after the direct-lookup
+        /// fails.
+        ///
+        /// Candidate order (first match wins):
+        ///   1. Path as given
+        ///   2. m_-prefixed first segment
+        ///   3. Bracket-rewritten: <c>[N]</c> → <c>.Array.data[N]</c>
+        ///   4. Both transformations combined
         /// </summary>
         static SerializedProperty FindPropertyWithAlias(SerializedObject so, string propertyPath, out string resolvedPath)
         {
             resolvedPath = propertyPath;
             if (so == null || string.IsNullOrEmpty(propertyPath)) return null;
 
-            // 1. Exact match (user-defined [SerializeField] fields + already-prefixed paths).
-            var sp = so.FindProperty(propertyPath);
-            if (sp != null) return sp;
-
-            // 2. Unity built-in convention: public "sprite" → serialized "m_Sprite".
-            string firstSeg;
-            string rest;
-            int boundary = IndexOfPathBoundary(propertyPath);
-            if (boundary < 0) { firstSeg = propertyPath; rest = ""; }
-            else { firstSeg = propertyPath.Substring(0, boundary); rest = propertyPath.Substring(boundary); }
-
-            if (!firstSeg.StartsWith("m_", StringComparison.Ordinal) && firstSeg.Length > 0 && char.IsLower(firstSeg[0]))
+            foreach (var candidate in GetPropertyPathCandidates(propertyPath))
             {
-                string aliased = "m_" + char.ToUpperInvariant(firstSeg[0]) + firstSeg.Substring(1) + rest;
-                var aliasedSp = so.FindProperty(aliased);
-                if (aliasedSp != null)
+                var sp = so.FindProperty(candidate);
+                if (sp != null)
                 {
-                    resolvedPath = aliased;
-                    return aliasedSp;
+                    resolvedPath = candidate;
+                    return sp;
                 }
             }
-
             return null;
+        }
+
+        /// <summary>
+        /// Enumerate the resolution candidates for a user-supplied property path.
+        /// Ordering matters: earlier candidates are preferred and represent closer
+        /// matches to what the user wrote.
+        /// </summary>
+        static IEnumerable<string> GetPropertyPathCandidates(string path)
+        {
+            yield return path;
+
+            string withMPrefix = MaybeAddMPrefix(path);
+            if (withMPrefix != path) yield return withMPrefix;
+
+            string bracketRewritten = RewriteBracketIndices(path);
+            if (bracketRewritten != path)
+            {
+                yield return bracketRewritten;
+                string both = MaybeAddMPrefix(bracketRewritten);
+                if (both != bracketRewritten) yield return both;
+            }
+        }
+
+        /// <summary>
+        /// Prefix the first segment with "m_" + UpperFirst if it looks like a
+        /// bare camelCase public-property name. Idempotent on already-prefixed
+        /// paths and on paths starting with a non-letter.
+        /// </summary>
+        static string MaybeAddMPrefix(string path)
+        {
+            int boundary = IndexOfPathBoundary(path);
+            string firstSeg = boundary < 0 ? path : path.Substring(0, boundary);
+            string rest = boundary < 0 ? "" : path.Substring(boundary);
+            if (firstSeg.StartsWith("m_", StringComparison.Ordinal)) return path;
+            if (firstSeg.Length == 0 || !char.IsLower(firstSeg[0])) return path;
+            return "m_" + char.ToUpperInvariant(firstSeg[0]) + firstSeg.Substring(1) + rest;
+        }
+
+        /// <summary>
+        /// Rewrite user-friendly <c>[N]</c> array-index segments to Unity's
+        /// canonical <c>.Array.data[N]</c>. <c>entries[24].count</c> becomes
+        /// <c>entries.Array.data[24].count</c>. Paths that don't contain bracket
+        /// indices are returned unchanged.
+        /// </summary>
+        static string RewriteBracketIndices(string path)
+        {
+            return System.Text.RegularExpressions.Regex.Replace(
+                path, @"\[(\d+)\]", ".Array.data[$1]");
         }
 
         /// <summary>

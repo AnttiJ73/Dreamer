@@ -58,6 +58,11 @@ When you write .cs files directly to disk (not via `./bin/dreamer create-script`
 # Set scene object reference (e.g., assign Main Camera to a Camera field on a scene instance)
 ./bin/dreamer set-property --scene-object "MyPrefab" --component "Game.MyComponent" --property "mainCamera" --value '{"sceneRef":"Main Camera"}' --wait
 
+# Scene GameObject editing — delete, rename, duplicate by scene path.
+# Use these instead of trying to work around via execute-menu-item or set-property on m_Name.
+./bin/dreamer delete-gameobject --scene-object "/UICanvas/OldPanel" --wait
+./bin/dreamer rename --scene-object "/UICanvas/TempName" --name "FinalName" --wait
+
 # Refresh (after writing files to disk externally)
 ./bin/dreamer refresh-assets --wait
 
