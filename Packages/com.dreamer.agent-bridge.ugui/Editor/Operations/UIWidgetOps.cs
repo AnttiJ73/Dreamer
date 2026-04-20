@@ -1007,12 +1007,11 @@ namespace Dreamer.AgentBridge
             tRT.anchoredPosition = new Vector2(0, 2);
             tRT.sizeDelta = new Vector2(0, 150);
 
-            // Template > Viewport (with Mask). Fills the template fully — no scrollbar
-            // reservation, since this scaffold doesn't add a Scrollbar. Earlier versions
-            // had offsetMax.x=-18 to reserve scrollbar space, but the resulting
-            // anchoredPosition.x=-9 (pivot-derived) made the live popup spill leftward
-            // out of the dropdown. Set pivot BEFORE offsets — Unity recomputes derived
-            // values on each set, so pivot order matters.
+            // Template > Viewport (with Mask). Inset by 3px on every side so the
+            // masked content doesn't paint over the rounded corners of the template
+            // background sprite — a 0-inset viewport looked "boxy" at the edges
+            // where the rounded corner should show through. Set pivot BEFORE offsets:
+            // Unity recomputes derived values on each set, so pivot order matters.
             var vp = new GameObject("Viewport", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(Mask));
             vp.transform.SetParent(template.transform, false);
             var vpImg = vp.GetComponent<Image>();
@@ -1022,8 +1021,8 @@ namespace Dreamer.AgentBridge
             vpRT.anchorMin = new Vector2(0, 0);
             vpRT.anchorMax = new Vector2(1, 1);
             vpRT.pivot = new Vector2(0.5f, 1);
-            vpRT.offsetMin = Vector2.zero;
-            vpRT.offsetMax = Vector2.zero;
+            vpRT.offsetMin = new Vector2(3, 3);
+            vpRT.offsetMax = new Vector2(-3, -3);
 
             // Template > Viewport > Content
             var contentGo = new GameObject("Content", typeof(RectTransform));

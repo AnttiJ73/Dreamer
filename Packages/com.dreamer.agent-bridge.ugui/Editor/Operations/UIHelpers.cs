@@ -463,18 +463,27 @@ namespace Dreamer.AgentBridge
         // Hard-coded so we don't depend on Enum.Parse which needs the typed reference.
         static int TMPAlignmentValue(string name)
         {
+            // Normalized form: lowercase, '-' and '_' replaced with space.
+            // Both "middle-left" and "middle left" map to the same normalized
+            // form, and both point at TMP's Left (513 = Middle|Left). Earlier
+            // versions missed the explicit "middle left" cases and fell through
+            // to default → alignment not applied → TMP defaulted to TopLeft,
+            // which visually stuffs text into the top-left corner of tall rows
+            // (e.g. a 14px label in a 32px row) and reads as "label size wrong".
             switch (name.Trim().ToLowerInvariant().Replace('_', ' ').Replace('-', ' '))
             {
-                case "top left":      return 257;   // TopLeft
+                case "top left":      return 257;   // TopLeft  = Top | Left
                 case "top":
-                case "top center":    return 258;   // Top
-                case "top right":     return 260;   // TopRight
-                case "left":          return 513;   // Left
+                case "top center":    return 258;   // Top      = Top | Center
+                case "top right":     return 260;   // TopRight = Top | Right
+                case "left":
+                case "middle left":   return 513;   // Left     = Middle | Left
                 case "center":
                 case "middle":
-                case "middle center": return 514;   // Center
-                case "right":         return 516;   // Right
-                case "bottom left":   return 1025;
+                case "middle center": return 514;   // Center   = Middle | Center
+                case "right":
+                case "middle right":  return 516;   // Right    = Middle | Right
+                case "bottom left":   return 1025;  // BottomLeft  = Bottom | Left
                 case "bottom":
                 case "bottom center": return 1026;
                 case "bottom right":  return 1028;
