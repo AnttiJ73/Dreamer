@@ -233,7 +233,14 @@ async function focusUnity(projectRoot) {
       # Walk every Unity.exe process and find the one whose command line has
       # -projectpath matching our target. Use Win32_Process (CIM) for command-
       # line access. Normalise slashes + case on both sides.
+      #
+      # IMPORTANT: we derive the backslash via [char]92 rather than typing one
+      # literally. Node's child_process.spawn on Windows mangles backslashes
+      # when passing the -Command block (they get partially consumed by the
+      # CreateProcess command-line quoting rules), which silently broke the
+      # earlier regex/Replace approaches.
       $target = '${target}'
+      $bs = [char]92
       $matched = $null
       try {
         $cims = Get-CimInstance Win32_Process -Filter "Name='Unity.exe'" -ErrorAction SilentlyContinue
@@ -242,8 +249,7 @@ async function focusUnity(projectRoot) {
           if ($cl -eq $null) { continue }
           # Skip AssetImportWorker / batch-mode children — they include -batchMode.
           if ($cl -like '*-batchMode*') { continue }
-          $normal = $cl -replace '\\\\', '/' -replace '\\\\', '/'
-          $normalLower = $normal.ToLower()
+          $normalLower = $cl.Replace($bs, '/').ToLower()
           if ($normalLower -like "*-projectpath*$target*") {
             $matched = $cim.ProcessId
             break
@@ -283,7 +289,10 @@ async function focusUnity(projectRoot) {
     let output = '';
     ps.stdout.on('data', (d) => { output += d.toString(); });
     ps.on('close', () => {
-      resolve(output.trim().startsWith('focused'));
+      // `includes`, not `startsWith`: the Win32 method calls return bools that
+      // PowerShell prints to stdout by default (True\nTrue\n...), so the
+      // "focused:..." / "not_found" signal line is never the first line.
+      resolve(output.includes('focused'));
     });
     ps.on('error', () => resolve(false));
 
