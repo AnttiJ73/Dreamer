@@ -483,19 +483,28 @@ namespace Dreamer.AgentBridge
                 hv2.childControlWidth = SimpleJson.GetBool(args, "controlChildSize", true);
                 hv2.childControlHeight = SimpleJson.GetBool(args, "controlChildSize", true);
 
-                // childForceExpand defaults to FALSE. Unity's HorizontalOrVerticalLayoutGroup.
-                // GetChildSizes silently overrides every child's flexible to max(actualFlex, 1)
-                // when forceExpand is on — meaning fixed-size children with our explicit flex=0
-                // lock would still claim surplus and split with the genuinely-flex sibling.
-                // Concrete failure: VStack with header (size [0,36] -> flex 0) + scroll list
-                // (size unset -> flex 1) splits height roughly evenly because both end up with
-                // effective flex>=1 under the override, instead of header=36, scroll=remaining.
+                // childForceExpand defaults to FALSE on both axes.
                 //
-                // forceExpand=false: surplus only goes to children with actual flex>0 from their
-                // LayoutElement. UITreeOps.ApplyAutoLayoutElement gives size-less children flex=1
-                // and sized children flex=0 — so size-less containers correctly take all surplus,
-                // sized children stay at their preferred, and Spacer (flex=1) still pushes
-                // siblings without needing forceExpand.
+                // Primary-axis justification: Unity's GetChildSizes overrides every child's
+                // flexible to max(actualFlex, 1) when forceExpand is on — which would steal
+                // surplus from fixed-size (flex=0) siblings. VStack with header (size [0,36]
+                // → flex 0) + scroll list (size unset → flex 1) would split height roughly
+                // evenly instead of header=36, scroll=remaining.
+                //
+                // Cross-axis justification: Unity DOES inflate a child to group size on the
+                // cross axis when LE.flexibleSize > 0 (independent of forceExpand). Our
+                // auto-LE gives size-less children flex=1 on that axis, so cross-axis fill
+                // still works without forceExpand — AND fixed-size (flex=0) children stay
+                // at their preferred size (e.g. a 28×28 toggle in a 32-tall row stays 28
+                // tall and centers via childAlignment, instead of stretching to 32).
+                //
+                // The earlier-suspected "cross-axis collapse" symptom was actually a layout
+                // staleness issue: Unity only runs layout while focused, so inspect can
+                // return pre-layout sizeDelta (0) on an unfocused Editor — focus Unity to
+                // see the real computed sizes.
+                //
+                // Users can still override either default via explicit
+                // `childForceExpandWidth` / `childForceExpandHeight` in the spec.
                 hv2.childForceExpandWidth  = SimpleJson.GetBool(args, "childForceExpandWidth",  false);
                 hv2.childForceExpandHeight = SimpleJson.GetBool(args, "childForceExpandHeight", false);
             }
