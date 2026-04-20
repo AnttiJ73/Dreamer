@@ -3,7 +3,8 @@
   "rootNamespace": "Dreamer.AgentBridge.UGUI",
   "references": [
     "Dreamer.AgentBridge.Editor",
-    "Dreamer.AgentBridge.UGUI"
+    "Dreamer.AgentBridge.UGUI",
+    "Unity.TextMeshPro"
   ],
   "includePlatforms": ["Editor"],
   "excludePlatforms": [],
