@@ -41,6 +41,15 @@ const KIND_DEFS = {
   set_material_shader:   { label: 'Set Material Shader',   requirements: null },
   shader_status:         { label: 'Shader Status',         requirements: null },
   inspect_shader:        { label: 'Inspect Shader',        requirements: null },
+
+  // UI Canvas (uGUI) add-on — kinds are known here so the CLI + scheduler
+  // treat them uniformly, but the bridge-side handlers only exist when
+  // the add-on package is installed. If the add-on is missing, the
+  // dispatcher returns a clear "Unknown command kind" error and the CLI
+  // short-circuits with a hint to install `com.dreamer.agent-bridge.ugui`.
+  set_rect_transform:  { label: 'Set RectTransform',  requirements: null },
+  create_ui_tree:      { label: 'Build UI Tree',      requirements: null },
+  inspect_ui_tree:     { label: 'Inspect UI Tree',    requirements: null },
 };
 
 // ── Valid states and allowed transitions ─────────────────────────────────────
@@ -118,6 +127,21 @@ function mutatesScene(kind, args) {
     case 'add_component':
     case 'remove_component':
     case 'remove_missing_scripts':
+      return !!a.sceneObjectPath;
+
+    // UGUI add-on: tree builder always writes to scene (or within a scene's
+    // canvas). Prefab-scoped UI editing goes through existing set-property /
+    // add-component on the prefab asset.
+    case 'create_ui_tree':
+      return true;
+
+    // Inspection is a read — no scene mutation, safe in Play Mode.
+    case 'inspect_ui_tree':
+      return false;
+
+    // set_rect_transform targets either a scene object (scene-edit) or a
+    // prefab asset (safe in Play Mode — the asset is the edit target).
+    case 'set_rect_transform':
       return !!a.sceneObjectPath;
 
     // Read-only or asset-only kinds.

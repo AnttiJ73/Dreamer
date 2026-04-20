@@ -165,6 +165,23 @@ Delete `<tmp>` recursively.
 4. Smoke test: `./bin/dreamer find-assets --type prefab --wait`.
 5. Report the install commit SHA from Step 2.
 6. To update later: say *"update Dreamer"* to Claude.
+7. **Mention optional add-ons**: uGUI (Canvas UI building) is available as a separate add-on — if the user plans to build uGUI menus/HUDs with Claude, they should also run *"Install the Dreamer UGUI add-on"*.
+
+---
+
+## 10a. Optional: UGUI add-on
+
+If the user asks for the uGUI add-on (either during install or later), run:
+
+```
+./bin/dreamer addon install ugui
+```
+
+This fetches the `com.dreamer.agent-bridge.ugui` Unity package from the source repo and copies it into `Packages/`, plus the `.claude/skills/dreamer-ugui/` skill directory. It also stamps `addons: ["ugui"]` into `daemon/.dreamer-source.json` so future `./bin/dreamer update` invocations keep the add-on in sync.
+
+Remove with: `./bin/dreamer addon remove ugui`. List installed: `./bin/dreamer addon list`.
+
+The add-on adds three commands: `create-ui-tree` (declarative Canvas UI builder), `inspect-ui-tree` (dump an existing UI to the same schema), `set-rect-transform` (anchor/size/pivot helper). Without the add-on, these commands return a clear "add-on not installed" error — core Dreamer is unaffected.
 
 ---
 

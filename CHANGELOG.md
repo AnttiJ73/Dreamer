@@ -9,7 +9,40 @@ tags, breaking changes bump the minor version (0.x.0), fixes bump patch.
 
 ## [Unreleased]
 
-### Added
+### Added — uGUI add-on (optional, shipped as `com.dreamer.agent-bridge.ugui`)
+- **Separate Unity package** with its own asmdef, auto-registered into core
+  via a reflection-based plugin hook in `CommandDispatcher`. Core Dreamer
+  compiles and runs identically whether or not the add-on is installed.
+- **Three public commands** — the entire UI-building surface:
+  - `create-ui-tree --json JSON_OR_@file` — declarative tree builder.
+    Modes: `create` / `append` / `replace-children` / `replace-self`.
+    Starts at any level of the hierarchy, not just Canvas roots — agents
+    can rebuild one panel without touching the surrounding UI. Node types:
+    Panel, Image, Text, Button, VStack, HStack, Grid, ScrollList, Slider,
+    Toggle, InputField, Spacer, Raw (escape hatch for custom
+    MonoBehaviours).
+  - `inspect-ui-tree --target PATH [--depth N]` — round-trip inspector.
+    Dumps an existing UI subtree to the same schema the builder consumes.
+    Recognized widgets get their type; unrecognized GOs become `Raw` with
+    `components[]` preserved. Enables the read-edit-rebuild workflow.
+  - `set-rect-transform (--scene-object PATH | --asset PATH) [--anchor
+    PRESET] [--size WxH] [--pivot X,Y]` — one-call anchor/size/pivot
+    configuration with 16 named presets (`center`, `top-stretch`, `fill`,
+    etc.) instead of six brittle `set-property` calls.
+- **`./bin/dreamer addon` subcommand** — `list` / `install <name>` /
+  `remove <name>`. Installed add-ons are recorded in
+  `daemon/.dreamer-source.json`'s `addons[]` field; `./bin/dreamer update`
+  honors that list and refreshes them alongside core.
+- **Separate skill file** at `.claude/skills/dreamer-ugui/SKILL.md` with a
+  companion `schema.md` reference. Auto-loads only when the agent
+  encounters UI-flavored task language (Canvas, Button, HUD, menu, etc.),
+  so core Dreamer sessions pay no context cost for UI docs.
+- **Design principle**: the UI scaffold Claude builds is intentionally
+  legible-not-perfect — the user refines visually in Unity's Scene/Game
+  view afterward. Claude's job is correct hierarchy + anchoring; Unity's
+  job is pixel polish.
+
+### Added — core
 - **Material + shader commands** — closes a gap where materials couldn't
   be created or meaningfully edited via Dreamer (the generic set-property
   path didn't reach Unity's `MaterialProperty` API). Six new commands:

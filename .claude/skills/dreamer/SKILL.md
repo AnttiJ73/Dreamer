@@ -234,6 +234,10 @@ Gated kinds: `create-gameobject`, `instantiate-prefab`, `create-hierarchy` (scen
 
 **Override**: `--allow-playmode` on the command. Use when you genuinely want ephemeral runtime mutation (rare). Normal path: stop Play Mode in Unity, let the queued commands dispatch.
 
+## Canvas UI building (optional add-on)
+
+For uGUI (Canvas) work — menus, HUDs, panels, buttons, scroll views, etc. — there's a separate add-on with its own skill (`dreamer-ugui`). It auto-loads when the task mentions UI. If you need it and it's not installed, ask the user to run `./bin/dreamer addon install ugui`. No UI commands ship in core Dreamer by design — the UGUI surface is large and only relevant for a subset of Unity work.
+
 ## Parallel agent sessions on the same Unity project
 
 Dreamer doesn't enforce coordination between multiple agents driving the same Unity project. If you're one of several Claude sessions on the same project (solo dev running two terminals, team using shared git workspace, etc.), use these tools for visibility:

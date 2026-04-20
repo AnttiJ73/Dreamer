@@ -303,6 +303,20 @@ async function submitCommand(kind, args, flags = {}) {
           }, null, 2) + '\n');
           process.exit(1);
         }
+        // UGUI add-on not installed: the bridge doesn't have handlers for
+        // create_ui_tree / inspect_ui_tree / set_rect_transform. Point the
+        // caller at the add-on install prompt instead of the generic error.
+        if (current.state === 'failed'
+            && current.error
+            && /^Unknown command kind:\s*(create_ui_tree|inspect_ui_tree|set_rect_transform)/.test(current.error)) {
+          process.stderr.write(JSON.stringify({
+            error: current.error,
+            commandId: current.id,
+            kind: current.kind,
+            hint: 'The uGUI add-on (com.dreamer.agent-bridge.ugui) is not installed in this project. Ask the user to run: *"Install the Dreamer UGUI add-on"* to enable UI Canvas building commands.',
+          }, null, 2) + '\n');
+          process.exit(1);
+        }
         out(current);
         return;
       }
@@ -368,6 +382,10 @@ async function run(argv) {
         'set-material-shader --asset PATH_OR_GUID --shader "Shader/Name"',
         'shader-status [--asset PATH_OR_GUID]    (no arg = project-wide scan)',
         'inspect-shader (--asset PATH_OR_GUID | --shader "Shader/Name")',
+        '── uGUI add-on (install com.dreamer.agent-bridge.ugui separately) ──',
+        'create-ui-tree --json JSON_OR_@file.json    (declarative tree: mode=create|append|replace-children|replace-self)',
+        'inspect-ui-tree --target PATH [--depth N] [--include-raw true|false] [--include-rect true|false]',
+        'set-rect-transform (--scene-object PATH | --asset PATH) [--anchor PRESET] [--size WxH] [--pivot X,Y] [--offset X,Y]',
         'status [--id CMD_ID]',
         'queue [--state STATE] [--task TASK_ID]',
         'compile-status',
@@ -385,6 +403,7 @@ async function run(argv) {
         'daemon start|stop|status',
         'registry list|remove [path]|prune|reassign --port N [--project PATH]',
         'update [--ref REF] [--dry-run] [--check]',
+        'addon list | addon install <name> | addon remove <name>    (manage optional add-ons like ugui)',
         'config get | config set key=value',
         'probe-port [--start PORT] [--count N]',
         'log tail [--n N] | log path',
@@ -706,6 +725,59 @@ async function run(argv) {
           fail('--shader "Shader/Name" or --asset PATH_OR_GUID is required for inspect-shader');
         }
         await submitCommand('inspect_shader', insArgs, flags);
+        break;
+      }
+
+      // ── UGUI add-on — three public commands ──────────────────────────
+      // Requires the `com.dreamer.agent-bridge.ugui` package to be installed
+      // alongside the core bridge. Without it, Unity will reject these
+      // commands as "Unknown command kind" and the daemon hint points the
+      // caller at the add-on install prompt.
+
+      case 'set-rect-transform': {
+        const rtArgs = {};
+        if (flags['scene-object']) rtArgs.sceneObjectPath = flags['scene-object'];
+        else if (flags.asset) {
+          const isGuid = /^[0-9a-f]{32}$/i.test(flags.asset);
+          if (isGuid) rtArgs.guid = flags.asset;
+          else rtArgs.assetPath = flags.asset;
+          if (flags['child-path']) rtArgs.childPath = flags['child-path'];
+        } else {
+          fail('--scene-object NAME or --asset PATH is required for set-rect-transform');
+        }
+        if (flags.anchor) rtArgs.anchor = flags.anchor;
+        if (flags.size) rtArgs.size = flags.size;
+        if (flags.pivot) rtArgs.pivot = flags.pivot;
+        if (flags.offset) rtArgs.offset = flags.offset;
+        if (flags['offset-min']) rtArgs.offsetMin = flags['offset-min'];
+        if (flags['offset-max']) rtArgs.offsetMax = flags['offset-max'];
+        await submitCommand('set_rect_transform', rtArgs, flags);
+        break;
+      }
+
+      case 'create-ui-tree': {
+        if (!flags.json) fail('--json JSON is required (the tree spec — inline or "@path/to/file.json")');
+        let payload;
+        let raw = flags.json;
+        if (raw.startsWith('@')) {
+          const fpath = raw.slice(1);
+          try { raw = fs.readFileSync(fpath, 'utf8'); }
+          catch (e) { fail(`Failed to read --json file '${fpath}': ${e.message}`); }
+        }
+        try { payload = JSON.parse(raw); }
+        catch (e) { fail(`--json is not valid JSON: ${e.message}`); }
+        // Payload shape: { mode, target?, canvas?, tree }
+        await submitCommand('create_ui_tree', payload, flags);
+        break;
+      }
+
+      case 'inspect-ui-tree': {
+        if (!flags.target) fail('--target PATH is required (scene path of the UI root to inspect)');
+        const iArgs = { target: flags.target };
+        if (flags.depth !== undefined) iArgs.depth = parseInt(flags.depth, 10);
+        if (flags['include-raw'] !== undefined) iArgs.includeRaw = flags['include-raw'] !== 'false' && flags['include-raw'] !== false;
+        if (flags['include-rect'] !== undefined) iArgs.includeRect = flags['include-rect'] !== 'false' && flags['include-rect'] !== false;
+        await submitCommand('inspect_ui_tree', iArgs, flags);
         break;
       }
 
@@ -1094,7 +1166,9 @@ async function run(argv) {
         const rev = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: cloneDir, stdio: ['ignore', 'pipe', 'pipe'] });
         const newSha = rev.status === 0 ? rev.stdout.toString().trim() : 'unknown';
 
-        // Paths to replace (src inside clone → dst inside projectRoot)
+        // Paths to replace (src inside clone → dst inside projectRoot).
+        // Core targets always copied; add-on targets gated on the
+        // installed add-ons list in daemon/.dreamer-source.json.
         const targets = [
           { src: 'daemon/src', dst: 'daemon/src', type: 'dir' },
           { src: 'daemon/bin', dst: 'daemon/bin', type: 'dir' },
@@ -1104,6 +1178,13 @@ async function run(argv) {
           { src: 'bin/dreamer', dst: 'bin/dreamer', type: 'file', chmod: 0o755 },
           { src: 'bin/dreamer.cmd', dst: 'bin/dreamer.cmd', type: 'file' },
         ];
+        const installedAddons = Array.isArray(source.addons) ? source.addons : [];
+        if (installedAddons.includes('ugui')) {
+          targets.push(
+            { src: 'Packages/com.dreamer.agent-bridge.ugui', dst: 'Packages/com.dreamer.agent-bridge.ugui', type: 'dir' },
+            { src: '.claude/skills/dreamer-ugui', dst: '.claude/skills/dreamer-ugui', type: 'dir' },
+          );
+        }
 
         const missing = targets.filter((t) => !fs.existsSync(path.join(cloneDir, t.src)));
         if (missing.length > 0) {
@@ -1173,10 +1254,123 @@ async function run(argv) {
           sha: newSha,
           replaced: applied,
           migrated,
+          addons: installedAddons,
           preserved: ['daemon/.dreamer-config.json', 'daemon/.dreamer-source.json', 'daemon/.dreamer-queue.json'],
           note: 'Daemon stopped; it will auto-restart on the next dreamer command. Unity may need a moment to reimport the updated package.',
         });
         break;
+      }
+
+      case 'addon': {
+        // addon list | addon install <name> | addon remove <name>
+        const sub = positional[1];
+        const KNOWN_ADDONS = {
+          ugui: {
+            description: 'uGUI (Canvas UI) building add-on — create-ui-tree, inspect-ui-tree, set-rect-transform',
+            paths: [
+              { src: 'Packages/com.dreamer.agent-bridge.ugui', dst: 'Packages/com.dreamer.agent-bridge.ugui', type: 'dir' },
+              { src: '.claude/skills/dreamer-ugui', dst: '.claude/skills/dreamer-ugui', type: 'dir' },
+            ],
+          },
+        };
+
+        // Read current source.json; the source marker records installed add-ons.
+        let src;
+        try { src = JSON.parse(fs.readFileSync(SOURCE_PATH, 'utf8')); }
+        catch { fail('daemon/.dreamer-source.json missing — reinstall Dreamer to manage add-ons.'); }
+        const currentAddons = Array.isArray(src.addons) ? src.addons : [];
+
+        if (sub === 'list' || !sub) {
+          out({
+            installed: currentAddons,
+            available: Object.entries(KNOWN_ADDONS).map(([name, def]) => ({
+              name, description: def.description, installed: currentAddons.includes(name),
+            })),
+          });
+          break;
+        }
+
+        if (sub === 'install' || sub === 'remove') {
+          const name = positional[2];
+          if (!name) fail(`Usage: dreamer addon ${sub} <name>. Available: ${Object.keys(KNOWN_ADDONS).join(', ')}`);
+          if (!KNOWN_ADDONS[name]) fail(`Unknown add-on '${name}'. Available: ${Object.keys(KNOWN_ADDONS).join(', ')}`);
+
+          if (sub === 'install') {
+            if (currentAddons.includes(name)) {
+              out({ alreadyInstalled: true, name, note: 'Run `./bin/dreamer update` to refresh the add-on files from the source repo.' });
+              break;
+            }
+
+            // Clone the source repo and copy add-on paths.
+            const os = require('os');
+            const tmpBase = fs.mkdtempSync(path.join(os.tmpdir(), `dreamer-addon-${name}-`));
+            const cloneDir = path.join(tmpBase, 'repo');
+            const ref = src.ref || 'main';
+            const clone = spawnSync('git', ['clone', '--depth', '1', '--branch', ref, src.repo, cloneDir], {
+              stdio: ['ignore', 'pipe', 'pipe'],
+            });
+            if (clone.status !== 0) {
+              const err = (clone.stderr && clone.stderr.toString().trim()) || 'unknown error';
+              try { fs.rmSync(tmpBase, { recursive: true, force: true }); } catch { /* ignore */ }
+              fail(`git clone failed for ${src.repo}@${ref}: ${err}`);
+            }
+
+            try {
+              for (const p of KNOWN_ADDONS[name].paths) {
+                const srcAbs = path.join(cloneDir, p.src);
+                const dstAbs = path.join(projectRoot, p.dst);
+                if (!fs.existsSync(srcAbs)) fail(`Source repo at '${ref}' is missing '${p.src}' — add-on not available on this ref.`);
+                if (p.type === 'dir') {
+                  if (fs.existsSync(dstAbs)) fs.rmSync(dstAbs, { recursive: true, force: true });
+                  fs.mkdirSync(path.dirname(dstAbs), { recursive: true });
+                  fs.cpSync(srcAbs, dstAbs, { recursive: true });
+                } else {
+                  fs.mkdirSync(path.dirname(dstAbs), { recursive: true });
+                  fs.copyFileSync(srcAbs, dstAbs);
+                }
+              }
+              // Record the add-on in source.json so future updates pull it too.
+              src.addons = Array.from(new Set([...currentAddons, name]));
+              fs.writeFileSync(SOURCE_PATH, JSON.stringify(src, null, 2) + '\n', 'utf8');
+            }
+            finally {
+              try { fs.rmSync(tmpBase, { recursive: true, force: true }); } catch { /* ignore */ }
+            }
+
+            out({
+              installed: true,
+              name,
+              installedFiles: KNOWN_ADDONS[name].paths.map((p) => p.dst),
+              note: 'Unity will recompile the bridge package. When it finishes, the add-on commands become available.',
+            });
+            break;
+          }
+
+          // remove
+          if (!currentAddons.includes(name)) {
+            out({ notInstalled: true, name });
+            break;
+          }
+          for (const p of KNOWN_ADDONS[name].paths) {
+            const dstAbs = path.join(projectRoot, p.dst);
+            try {
+              if (fs.existsSync(dstAbs)) fs.rmSync(dstAbs, { recursive: true, force: true });
+            } catch (e) {
+              // Non-fatal — continue trying other paths.
+            }
+          }
+          src.addons = currentAddons.filter((n) => n !== name);
+          fs.writeFileSync(SOURCE_PATH, JSON.stringify(src, null, 2) + '\n', 'utf8');
+          out({
+            removed: true,
+            name,
+            removedFiles: KNOWN_ADDONS[name].paths.map((p) => p.dst),
+            note: 'Unity will recompile. Add-on commands will return "Unknown command kind" until you reinstall the add-on.',
+          });
+          break;
+        }
+
+        fail(`Unknown addon subcommand: '${sub}'. Use: list | install <name> | remove <name>`);
       }
 
       case 'config': {

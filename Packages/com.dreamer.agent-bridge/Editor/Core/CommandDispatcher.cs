@@ -74,6 +74,54 @@ namespace Dreamer.AgentBridge
             // Shader operations
             _handlers["shader_status"]           = ShaderOps.ShaderStatus;
             _handlers["inspect_shader"]          = ShaderOps.InspectShader;
+
+            // Add-on plugin discovery. Each add-on ships a type named
+            // "Dreamer.AgentBridge.<Name>.Registration" with a static
+            // `Register(IDictionary<string, Func<Dictionary<string,object>, CommandResult>>)`
+            // method. Core discovers them via reflection so it can compile + run
+            // standalone, and add-ons can drop in without any edits here.
+            DiscoverPluginRegistrations();
+        }
+
+        /// <summary>
+        /// Reflection-based plugin discovery. Finds every assembly-accessible
+        /// type whose full name ends in ".Registration" and is in the
+        /// Dreamer.AgentBridge namespace family, then invokes its static
+        /// `Register` method with our handler dictionary. Keeps core
+        /// decoupled from optional add-on packages — nothing here fails if
+        /// an add-on is absent.
+        /// </summary>
+        static void DiscoverPluginRegistrations()
+        {
+            foreach (var asm in System.AppDomain.CurrentDomain.GetAssemblies())
+            {
+                Type[] types;
+                try { types = asm.GetTypes(); }
+                catch (System.Reflection.ReflectionTypeLoadException rtle) { types = rtle.Types; }
+                catch { continue; }
+
+                if (types == null) continue;
+                foreach (var t in types)
+                {
+                    if (t == null) continue;
+                    if (t.FullName == null) continue;
+                    if (!t.FullName.StartsWith("Dreamer.AgentBridge.", System.StringComparison.Ordinal)) continue;
+                    if (!t.FullName.EndsWith(".Registration", System.StringComparison.Ordinal)) continue;
+
+                    var m = t.GetMethod("Register",
+                        System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
+                    if (m == null) continue;
+                    try
+                    {
+                        m.Invoke(null, new object[] { _handlers });
+                        DreamerLog.Info($"Plugin registered: {t.FullName}");
+                    }
+                    catch (System.Exception ex)
+                    {
+                        DreamerLog.Warn($"Plugin registration failed for {t.FullName}: {ex.Message}");
+                    }
+                }
+            }
         }
 
         /// <summary>Dispatch a command and return the result.</summary>
