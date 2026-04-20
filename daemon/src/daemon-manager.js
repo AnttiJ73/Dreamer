@@ -289,7 +289,10 @@ async function focusUnity(projectRoot) {
     let output = '';
     ps.stdout.on('data', (d) => { output += d.toString(); });
     ps.on('close', () => {
-      resolve(output.trim().startsWith('focused'));
+      // `includes`, not `startsWith`: the Win32 method calls return bools that
+      // PowerShell prints to stdout by default (True\nTrue\n...), so the
+      // "focused:..." / "not_found" signal line is never the first line.
+      resolve(output.includes('focused'));
     });
     ps.on('error', () => resolve(false));
 
