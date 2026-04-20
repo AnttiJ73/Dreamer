@@ -155,10 +155,24 @@ class UnityState {
     if (elapsed > timeoutMs) {
       this.connected = false;
     }
-    // If disconnected for >30s, reset compiling state — stale data is worse than unknown
-    if (elapsed > 30000 && this.compiling) {
-      this.compiling = false;
-      log.info('Resetting stale compiling state after prolonged disconnect');
+    // If disconnected for >30s, reset all cached editor state — stale data is
+    // worse than unknown. This covers three distinct ways a flag could get
+    // stuck after Unity comes back:
+    //   - `compiling: true` lingering while Unity actually restarted idle
+    //   - `playMode: true` blocking scene-mutation commands with "play mode
+    //     active" after the user has already exited play mode
+    //   - `compileErrors: [...]` blocking compile-gated commands with stale
+    //     errors the user has since fixed
+    // Fresh state arrives on the first heartbeat post-reconnect anyway, so
+    // zeroing here just avoids a window of misleading gate reasons.
+    if (elapsed > 30000) {
+      let cleared = false;
+      if (this.compiling)              { this.compiling = false;     cleared = true; }
+      if (this.playMode)               { this.playMode = false;      cleared = true; }
+      if (this.compileErrors.length)   { this.compileErrors = [];    cleared = true; }
+      if (cleared) {
+        log.info('Resetting stale editor state (compiling/playMode/errors) after prolonged disconnect');
+      }
     }
   }
 

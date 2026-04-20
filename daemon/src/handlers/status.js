@@ -143,13 +143,22 @@ function createStatusHandlers(queue, unityState, assetWatcher, scheduler) {
       const hasEverCompiled = lastSuccess !== null;
 
       // Cross-check: have watched assets changed since the last observed clean compile?
-      // Only meaningful when both timestamps exist. Note: the asset watcher watches
-      // Assets/ only, not Packages/ — Dreamer package development edits won't trip this.
+      // Gated on the watcher's own `dirty` flag, which `refresh_assets` clears via
+      // `markClean()` when Unity confirms it's processed the changes. Without that
+      // gate, a write that triggers fs.watch but produces no real compile (identical
+      // content, already-imported file) leaves `lastAssetChange > lastSuccess` stuck
+      // true forever — agent polls `compile-status` and never sees it clear.
+      // Note: the asset watcher watches Assets/ only, not Packages/ — Dreamer
+      // package development edits won't trip this.
+      const watcherDirty = assetWatcher ? assetWatcher.isDirty() : false;
       const lastAssetChange = assetWatcher ? assetWatcher.lastChange : null;
       const lastChangedFile = assetWatcher ? assetWatcher.lastChangedFile : null;
       const lastSuccessMs = lastSuccess ? Date.parse(lastSuccess) : 0;
       const assetsDirtySinceCompile =
-        lastAssetChange != null && lastSuccessMs > 0 && lastAssetChange > lastSuccessMs;
+        watcherDirty &&
+        lastAssetChange != null &&
+        lastSuccessMs > 0 &&
+        lastAssetChange > lastSuccessMs;
 
       // Pre-compute ages so summary strings can show "X ago" next to raw timestamps.
       // Readers scan "2m 14s ago" far faster than subtracting an ISO string from `now`.

@@ -47,6 +47,27 @@ function projectMismatchResponse(unityState, reportedPath) {
  * @param {import('../scheduler')} scheduler
  * @returns {object} Route handler map
  */
+/**
+ * Auto-clear the asset watcher's `dirty` flag when Unity's last clean compile
+ * happened AFTER the last observed asset change. Covers the path where Unity's
+ * own Auto Refresh imports+compiles a direct-write edit (no daemon
+ * refresh_assets in the loop) — without this, `dirty` stays stuck true forever,
+ * every subsequent compile-gated command auto-prepends an unneeded refresh, and
+ * `compile-status` can't exit the "stale" state.
+ *
+ * Called from both state and heartbeat paths because `lastCompileTime` updates
+ * flow through either channel.
+ */
+function _autoClearDirtyIfCompileCaughtUp(unityState, assetWatcher) {
+  if (!assetWatcher || !assetWatcher.isDirty()) return;
+  if (!unityState.lastCompileSuccess) return;
+  const lastSuccessMs = Date.parse(unityState.lastCompileSuccess);
+  const lastChangeMs = assetWatcher.lastChange || 0;
+  if (Number.isFinite(lastSuccessMs) && lastSuccessMs > lastChangeMs) {
+    assetWatcher.markClean();
+  }
+}
+
 function createUnityHandlers(queue, unityState, scheduler, assetWatcher) {
   return {
     /**
@@ -140,6 +161,10 @@ function createUnityHandlers(queue, unityState, scheduler, assetWatcher) {
         unityState.addConsoleEntries(body.recentConsole);
       }
 
+      // Auto-clear stale `dirty` if Unity's last clean compile is now newer
+      // than the last asset change.
+      _autoClearDirtyIfCompileCaughtUp(unityState, assetWatcher);
+
       // If compilation just finished successfully, kick the scheduler
       if (compilationJustSucceeded) {
         scheduler.tick();
@@ -174,6 +199,10 @@ function createUnityHandlers(queue, unityState, scheduler, assetWatcher) {
         if (body.recentConsole) {
           unityState.addConsoleEntries(body.recentConsole);
         }
+
+        // `lastCompileTime` may arrive via heartbeat too (bridge batches it
+        // into whichever endpoint is next). Same auto-clear applies.
+        _autoClearDirtyIfCompileCaughtUp(unityState, assetWatcher);
       } else {
         unityState.heartbeat();
       }
