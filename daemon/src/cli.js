@@ -1271,6 +1271,7 @@ async function run(argv) {
       case 'addon': {
         // addon list | addon install <name> | addon remove <name>
         const { spawnSync } = require('child_process');
+        const projectRoot = path.resolve(__dirname, '..', '..');
         const sub = positional[1];
         const KNOWN_ADDONS = {
           ugui: {
