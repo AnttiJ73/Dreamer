@@ -185,14 +185,33 @@ async function ensureDaemon() {
 
 /**
  * Focus the Unity Editor window (Windows only).
- * Uses PowerShell to call SetForegroundWindow on the Unity process.
+ *
+ * When multiple Unity instances run on the same machine (e.g. one for the
+ * game project, one for a Dreamer dev project), `Get-Process -Name Unity`
+ * returns all of them. Picking the first via `Select -First 1` used to be
+ * good enough but silently focused the wrong window in multi-project
+ * setups — commands meant for project A would nudge project B's editor.
+ *
+ * Now matches the Unity process whose command-line `-projectpath` matches
+ * <paramref name="projectRoot"/>. Falls back to first-window behaviour when
+ * projectRoot isn't supplied (keeps the command usable without context),
+ * but always prefers the path-match when it can compute one.
+ *
+ * @param {string} [projectRoot] - absolute path to the Unity project root.
+ *   When omitted, defaults to the project that owns this Dreamer install
+ *   (path.resolve(__dirname, '..', '..')).
  * @returns {Promise<boolean>} true if Unity was found and focused
  */
-async function focusUnity() {
+async function focusUnity(projectRoot) {
   if (process.platform !== 'win32') {
     // macOS/Linux: not implemented yet
     return false;
   }
+
+  const targetRoot = projectRoot || path.resolve(__dirname, '..', '..');
+  // Normalize to forward slashes + lowercase so PowerShell -like matches case-insensitively
+  // regardless of drive-letter/slash variation between Unity and filesystem.
+  const target = targetRoot.replace(/\\/g, '/').toLowerCase();
 
   return new Promise((resolve) => {
     const ps = spawn('powershell', ['-NoProfile', '-Command', `
@@ -211,8 +230,35 @@ async function focusUnity() {
           [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
         }
 "@
-      $p = Get-Process -Name Unity -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
-      if ($p) {
+      # Walk every Unity.exe process and find the one whose command line has
+      # -projectpath matching our target. Use Win32_Process (CIM) for command-
+      # line access. Normalise slashes + case on both sides.
+      $target = '${target}'
+      $matched = $null
+      try {
+        $cims = Get-CimInstance Win32_Process -Filter "Name='Unity.exe'" -ErrorAction SilentlyContinue
+        foreach ($cim in $cims) {
+          $cl = $cim.CommandLine
+          if ($cl -eq $null) { continue }
+          # Skip AssetImportWorker / batch-mode children — they include -batchMode.
+          if ($cl -like '*-batchMode*') { continue }
+          $normal = $cl -replace '\\\\', '/' -replace '\\\\', '/'
+          $normalLower = $normal.ToLower()
+          if ($normalLower -like "*-projectpath*$target*") {
+            $matched = $cim.ProcessId
+            break
+          }
+        }
+      } catch { }
+
+      if ($matched -ne $null) {
+        $p = Get-Process -Id $matched -ErrorAction SilentlyContinue
+      } else {
+        # Fallback: first foreground-capable Unity.exe (legacy behaviour).
+        $p = Get-Process -Name Unity -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
+      }
+
+      if ($p -and $p.MainWindowHandle -ne 0) {
         $hwnd = $p.MainWindowHandle
         if ([Win32Focus]::IsIconic($hwnd)) {
           [Win32Focus]::ShowWindow($hwnd, 9)
@@ -228,7 +274,7 @@ async function focusUnity() {
         [Win32Focus]::SetForegroundWindow($hwnd)
         [Win32Focus]::BringWindowToTop($hwnd)
         [Win32Focus]::AttachThreadInput($ourThread, $fgThread, $false)
-        Write-Output "focused"
+        if ($matched -ne $null) { Write-Output "focused:matched" } else { Write-Output "focused:fallback" }
       } else {
         Write-Output "not_found"
       }
@@ -237,7 +283,7 @@ async function focusUnity() {
     let output = '';
     ps.stdout.on('data', (d) => { output += d.toString(); });
     ps.on('close', () => {
-      resolve(output.trim().includes('focused'));
+      resolve(output.trim().startsWith('focused'));
     });
     ps.on('error', () => resolve(false));
 
