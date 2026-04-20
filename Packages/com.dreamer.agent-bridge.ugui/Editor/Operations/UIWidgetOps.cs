@@ -259,6 +259,49 @@ namespace Dreamer.AgentBridge
             if (SimpleJson.GetBool(args, "preserveAspect", false))
                 img.preserveAspect = true;
 
+            // Image type — Simple (default), Sliced, Tiled, Filled. "Filled" enables fillAmount.
+            string imageTypeStr = SimpleJson.GetString(args, "imageType");
+            if (!string.IsNullOrEmpty(imageTypeStr))
+            {
+                switch (imageTypeStr.Trim().ToLowerInvariant())
+                {
+                    case "simple": img.type = Image.Type.Simple; break;
+                    case "sliced": img.type = Image.Type.Sliced; break;
+                    case "tiled":  img.type = Image.Type.Tiled;  break;
+                    case "filled": img.type = Image.Type.Filled; break;
+                }
+            }
+            // Fill amount (0..1) — only meaningful when type=Filled. Auto-promotes
+            // type to Filled if user supplied fillAmount without imageType.
+            if (args.TryGetValue("fillAmount", out object faRaw))
+            {
+                if (img.type != Image.Type.Filled) img.type = Image.Type.Filled;
+                img.fillAmount = Mathf.Clamp01(UIHelpers.ToFloatSafe(faRaw, 1f));
+            }
+            // Fill method — Horizontal | Vertical | Radial90 | Radial180 | Radial360
+            string fmStr = SimpleJson.GetString(args, "fillMethod");
+            if (!string.IsNullOrEmpty(fmStr))
+            {
+                if (img.type != Image.Type.Filled) img.type = Image.Type.Filled;
+                switch (fmStr.Trim().ToLowerInvariant().Replace("_", ""))
+                {
+                    case "horizontal": img.fillMethod = Image.FillMethod.Horizontal; break;
+                    case "vertical":   img.fillMethod = Image.FillMethod.Vertical; break;
+                    case "radial90":   img.fillMethod = Image.FillMethod.Radial90; break;
+                    case "radial180":  img.fillMethod = Image.FillMethod.Radial180; break;
+                    case "radial360":  img.fillMethod = Image.FillMethod.Radial360; break;
+                }
+            }
+            // Fill origin — int (Image's enum varies by FillMethod). 0 default for most.
+            if (args.TryGetValue("fillOrigin", out object foRaw))
+            {
+                img.fillOrigin = (int)UIHelpers.ToFloatSafe(foRaw, 0f);
+            }
+            if (args.TryGetValue("fillClockwise", out object fcRaw))
+            {
+                img.fillClockwise = SimpleJson.GetBool(args, "fillClockwise", true);
+            }
+
             string err = FinalizeUI(go, args, "Create UI Image");
             if (err != null) return CommandResult.Fail(err);
             return ResultFor(go);
@@ -436,7 +479,21 @@ namespace Dreamer.AgentBridge
             {
                 hv2.childControlWidth = SimpleJson.GetBool(args, "controlChildSize", true);
                 hv2.childControlHeight = SimpleJson.GetBool(args, "controlChildSize", true);
-                hv2.childForceExpandWidth = SimpleJson.GetBool(args, "childForceExpandWidth", false);
+
+                // childForceExpand defaults to FALSE. Unity's HorizontalOrVerticalLayoutGroup.
+                // GetChildSizes silently overrides every child's flexible to max(actualFlex, 1)
+                // when forceExpand is on — meaning fixed-size children with our explicit flex=0
+                // lock would still claim surplus and split with the genuinely-flex sibling.
+                // Concrete failure: VStack with header (size [0,36] -> flex 0) + scroll list
+                // (size unset -> flex 1) splits height roughly evenly because both end up with
+                // effective flex>=1 under the override, instead of header=36, scroll=remaining.
+                //
+                // forceExpand=false: surplus only goes to children with actual flex>0 from their
+                // LayoutElement. UITreeOps.ApplyAutoLayoutElement gives size-less children flex=1
+                // and sized children flex=0 — so size-less containers correctly take all surplus,
+                // sized children stay at their preferred, and Spacer (flex=1) still pushes
+                // siblings without needing forceExpand.
+                hv2.childForceExpandWidth  = SimpleJson.GetBool(args, "childForceExpandWidth",  false);
                 hv2.childForceExpandHeight = SimpleJson.GetBool(args, "childForceExpandHeight", false);
             }
             if (lg is GridLayoutGroup grid2 && args.TryGetValue("cellSize", out object cellRaw)
@@ -521,13 +578,29 @@ namespace Dreamer.AgentBridge
             vpRT.offsetMax = Vector2.zero;
             vpRT.pivot = new Vector2(0, 1);
 
-            // Content
+            // Content. Anchor depends on direction: when horizontal scrolling is enabled,
+            // Content must be free to grow horizontally beyond Viewport width — so anchor
+            // to top-left point (not stretched). The ContentSizeFitter then sizes Content
+            // to fit children. Vertical-only scrolling can still stretch Content horizontally
+            // (Content.width = Viewport.width), which gives nicer reflow for text columns.
+            bool horizontalScroll = direction == "horizontal" || direction == "both";
             var content = new GameObject("Content", typeof(RectTransform));
             content.transform.SetParent(viewport.transform, false);
             var contentRT = content.GetComponent<RectTransform>();
-            contentRT.anchorMin = new Vector2(0, 1);
-            contentRT.anchorMax = new Vector2(1, 1);
-            contentRT.pivot = new Vector2(0, 1);
+            if (horizontalScroll)
+            {
+                // Top-left fixed: free to grow in both axes via ContentSizeFitter.
+                contentRT.anchorMin = new Vector2(0, 1);
+                contentRT.anchorMax = new Vector2(0, 1);
+                contentRT.pivot = new Vector2(0, 1);
+            }
+            else
+            {
+                // Top-stretched: width matches Viewport, height grows via fitter.
+                contentRT.anchorMin = new Vector2(0, 1);
+                contentRT.anchorMax = new Vector2(1, 1);
+                contentRT.pivot = new Vector2(0, 1);
+            }
             contentRT.sizeDelta = new Vector2(0, 0);
             contentRT.anchoredPosition = Vector2.zero;
 
@@ -539,6 +612,20 @@ namespace Dreamer.AgentBridge
             if (args.TryGetValue("padding", out object pad)) layoutArgs["padding"] = pad;
             AttachLayoutGroup(content, contentLayout, layoutArgs);
 
+            // For horizontal/both scrolling: also force horizontalFit on the ContentSizeFitter
+            // so Content can grow past the Viewport width. AttachLayoutGroup's fitContent only
+            // sets horizontalFit when the LAYOUT direction is horizontal/grid — but a both-
+            // scrolling list with a vertical layout still needs horizontal fit for the children
+            // to push Content wider than the Viewport.
+            if (horizontalScroll)
+            {
+                var fitter = content.GetComponent<ContentSizeFitter>();
+                if (fitter == null) fitter = content.AddComponent<ContentSizeFitter>();
+                fitter.horizontalFit = ContentSizeFitter.FitMode.PreferredSize;
+                if (fitter.verticalFit == ContentSizeFitter.FitMode.Unconstrained)
+                    fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+            }
+
             // Wire up ScrollRect
             scroll.viewport = vpRT;
             scroll.content = contentRT;
@@ -549,6 +636,19 @@ namespace Dreamer.AgentBridge
                 default:           scroll.horizontal = false; scroll.vertical = true;  break;
             }
             scroll.movementType = ScrollRect.MovementType.Elastic;
+
+            // Optional: attach MapPanZoom for runtime mouse-wheel zoom. Pan is already
+            // handled by ScrollRect's built-in drag — this just adds the missing zoom.
+            // Also zero the ScrollRect's scrollSensitivity so the wheel only zooms (via
+            // MapPanZoom's IScrollHandler) and doesn't simultaneously scroll the content.
+            // Set here at build time so the serialized scene reflects the change — relying
+            // on MapPanZoom.Awake() alone leaves the scene asset showing scrollSensitivity=1
+            // even though the runtime value gets zeroed.
+            if (SimpleJson.GetBool(args, "mapPanZoom", false))
+            {
+                root.AddComponent<Dreamer.AgentBridge.UGUI.MapPanZoom>();
+                scroll.scrollSensitivity = 0f;
+            }
 
             string err = FinalizeUI(root, args, "Create UI Scroll List");
             if (err != null) return CommandResult.Fail(err);
@@ -748,6 +848,203 @@ namespace Dreamer.AgentBridge
                 rt.sizeDelta = new Vector2(200, 30);
             }
             string err = FinalizeUI(root, args, "Create UI InputField");
+            if (err != null) return CommandResult.Fail(err);
+            return ResultFor(root);
+        }
+
+        /// <summary>
+        /// Force-add a legacy UnityEngine.UI.Text component (NOT TMP). Some Unity widgets
+        /// (Dropdown, InputField legacy mode) require this exact type and won't accept
+        /// TMP_Text. Used for those widgets to avoid runtime NREs from null casts.
+        /// </summary>
+        static Text AddLegacyText(GameObject go, string text, float fontSize, Color color, TextAnchor alignment)
+        {
+            var t = go.AddComponent<Text>();
+            t.text = text ?? "";
+            t.fontSize = Mathf.RoundToInt(fontSize);
+            t.color = color;
+            t.alignment = alignment;
+            t.horizontalOverflow = HorizontalWrapMode.Wrap;
+            t.verticalOverflow = VerticalWrapMode.Truncate;
+            t.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf")
+                  ?? Resources.GetBuiltinResource<Font>("Arial.ttf");
+            return t;
+        }
+
+        // ────────────────────────────────────────────────────────────────
+        //  create_ui_dropdown
+        //  Args: { parent, name?, options?: ["a","b",...], value?: int (selected index),
+        //          captionFontSize?, itemFontSize?, rect args }
+        //  Builds a fully-functional UnityEngine.UI.Dropdown with caption + arrow + popup
+        //  template. Populated with options; value selects initial item. The user can wire
+        //  onValueChanged via Inspector or set-property on m_OnValueChanged.m_PersistentCalls
+        //  afterward; nothing else is needed for the widget to work in Play Mode.
+        // ────────────────────────────────────────────────────────────────
+        public static CommandResult CreateDropdown(Dictionary<string, object> args)
+        {
+            var parent = ResolveParent(args, out string parentErr);
+            if (!string.IsNullOrEmpty(parentErr) && parent == null) return CommandResult.Fail(parentErr);
+
+            string name = SimpleJson.GetString(args, "name", "Dropdown");
+            float captionFontSize = SimpleJson.GetFloat(args, "captionFontSize", 14f);
+            float itemFontSize    = SimpleJson.GetFloat(args, "itemFontSize",    14f);
+
+            // Root: Image bg + Dropdown
+            var root = new GameObject(name, typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(Dropdown));
+            if (parent != null) root.transform.SetParent(parent, false);
+            var bgImg = root.GetComponent<Image>();
+            bgImg.color = new Color(0.95f, 0.95f, 0.95f, 1f);
+            var uiBg = AssetDatabase.GetBuiltinExtraResource<Sprite>("UI/Skin/UISprite.psd");
+            if (uiBg != null) { bgImg.sprite = uiBg; bgImg.type = Image.Type.Sliced; }
+
+            // Caption (currently-selected label). Legacy UnityEngine.UI.Dropdown REQUIRES
+            // a legacy Text component on captionText — TMP_Text won't satisfy the property
+            // type and assigning .captionText = null below would NRE on dd.captionText.text.
+            // For TMP support we'd need TMP_Dropdown, which has a different structure.
+            var label = new GameObject("Label", typeof(RectTransform));
+            label.transform.SetParent(root.transform, false);
+            AddLegacyText(label, "", captionFontSize, new Color(0.15f, 0.15f, 0.15f, 1f), TextAnchor.MiddleLeft);
+            var lblRT = label.GetComponent<RectTransform>();
+            lblRT.anchorMin = Vector2.zero; lblRT.anchorMax = Vector2.one;
+            lblRT.offsetMin = new Vector2(10, 6); lblRT.offsetMax = new Vector2(-25, -7);
+
+            // Arrow
+            var arrow = new GameObject("Arrow", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+            arrow.transform.SetParent(root.transform, false);
+            var arrowImg = arrow.GetComponent<Image>();
+            var arrowSpr = AssetDatabase.GetBuiltinExtraResource<Sprite>("UI/Skin/DropdownArrow.psd");
+            if (arrowSpr != null) arrowImg.sprite = arrowSpr;
+            arrowImg.color = new Color(0.15f, 0.15f, 0.15f, 1f);
+            var arRT = arrow.GetComponent<RectTransform>();
+            arRT.anchorMin = new Vector2(1, 0.5f); arRT.anchorMax = new Vector2(1, 0.5f);
+            arRT.pivot = new Vector2(1, 0.5f);
+            arRT.sizeDelta = new Vector2(20, 20);
+            arRT.anchoredPosition = new Vector2(-8, 0);
+
+            // Template (popup) — Dropdown needs this to instantiate when opened.
+            var template = new GameObject("Template", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(ScrollRect));
+            template.transform.SetParent(root.transform, false);
+            template.SetActive(false);
+            var tImg = template.GetComponent<Image>();
+            tImg.color = Color.white;
+            if (uiBg != null) { tImg.sprite = uiBg; tImg.type = Image.Type.Sliced; }
+            var tRT = template.GetComponent<RectTransform>();
+            tRT.anchorMin = new Vector2(0, 0); tRT.anchorMax = new Vector2(1, 0);
+            tRT.pivot = new Vector2(0.5f, 1);
+            tRT.anchoredPosition = new Vector2(0, 2);
+            tRT.sizeDelta = new Vector2(0, 150);
+
+            // Template > Viewport (with Mask). Fills the template fully — no scrollbar
+            // reservation, since this scaffold doesn't add a Scrollbar. Earlier versions
+            // had offsetMax.x=-18 to reserve scrollbar space, but the resulting
+            // anchoredPosition.x=-9 (pivot-derived) made the live popup spill leftward
+            // out of the dropdown. Set pivot BEFORE offsets — Unity recomputes derived
+            // values on each set, so pivot order matters.
+            var vp = new GameObject("Viewport", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(Mask));
+            vp.transform.SetParent(template.transform, false);
+            var vpImg = vp.GetComponent<Image>();
+            vpImg.color = Color.white;
+            vp.GetComponent<Mask>().showMaskGraphic = false;
+            var vpRT = vp.GetComponent<RectTransform>();
+            vpRT.anchorMin = new Vector2(0, 0);
+            vpRT.anchorMax = new Vector2(1, 1);
+            vpRT.pivot = new Vector2(0.5f, 1);
+            vpRT.offsetMin = Vector2.zero;
+            vpRT.offsetMax = Vector2.zero;
+
+            // Template > Viewport > Content
+            var contentGo = new GameObject("Content", typeof(RectTransform));
+            contentGo.transform.SetParent(vp.transform, false);
+            var cRT = contentGo.GetComponent<RectTransform>();
+            cRT.anchorMin = new Vector2(0, 1); cRT.anchorMax = new Vector2(1, 1);
+            cRT.pivot = new Vector2(0.5f, 1);
+            cRT.sizeDelta = new Vector2(0, 28);
+
+            // Template > Viewport > Content > Item (toggle for each option)
+            var item = new GameObject("Item", typeof(RectTransform), typeof(Toggle));
+            item.transform.SetParent(contentGo.transform, false);
+            var itemRT = item.GetComponent<RectTransform>();
+            itemRT.anchorMin = new Vector2(0, 0.5f); itemRT.anchorMax = new Vector2(1, 0.5f);
+            itemRT.pivot = new Vector2(0.5f, 0.5f);
+            itemRT.sizeDelta = new Vector2(0, 20);
+
+            // Item > Background
+            var itemBg = new GameObject("Item Background", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+            itemBg.transform.SetParent(item.transform, false);
+            var ibImg = itemBg.GetComponent<Image>();
+            ibImg.color = new Color(0.96f, 0.96f, 0.96f, 1f);
+            var ibRT = itemBg.GetComponent<RectTransform>();
+            ibRT.anchorMin = Vector2.zero; ibRT.anchorMax = Vector2.one;
+            ibRT.offsetMin = Vector2.zero; ibRT.offsetMax = Vector2.zero;
+
+            // Item > Checkmark (visible when selected)
+            var itemCheck = new GameObject("Item Checkmark", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+            itemCheck.transform.SetParent(item.transform, false);
+            var icImg = itemCheck.GetComponent<Image>();
+            var checkSpr = AssetDatabase.GetBuiltinExtraResource<Sprite>("UI/Skin/Checkmark.psd");
+            if (checkSpr != null) icImg.sprite = checkSpr;
+            icImg.color = new Color(0.15f, 0.15f, 0.15f, 1f);
+            var icRT = itemCheck.GetComponent<RectTransform>();
+            icRT.anchorMin = new Vector2(0, 0.5f); icRT.anchorMax = new Vector2(0, 0.5f);
+            icRT.pivot = new Vector2(0.5f, 0.5f);
+            icRT.sizeDelta = new Vector2(20, 20);
+            icRT.anchoredPosition = new Vector2(10, 0);
+
+            // Item > Label (legacy Text — Dropdown.itemText requires it, see captionText note above)
+            var itemLabel = new GameObject("Item Label", typeof(RectTransform));
+            itemLabel.transform.SetParent(item.transform, false);
+            AddLegacyText(itemLabel, "Option", itemFontSize, new Color(0.15f, 0.15f, 0.15f, 1f), TextAnchor.MiddleLeft);
+            var ilRT = itemLabel.GetComponent<RectTransform>();
+            ilRT.anchorMin = Vector2.zero; ilRT.anchorMax = Vector2.one;
+            ilRT.offsetMin = new Vector2(20, 1); ilRT.offsetMax = new Vector2(-10, -2);
+
+            var toggle = item.GetComponent<Toggle>();
+            toggle.targetGraphic = ibImg;
+            toggle.graphic = icImg;
+            toggle.isOn = true;
+
+            // Template > Scrollbar (vertical) — Dropdown wires this if present.
+            // Skip for simplicity; Dropdown still works without it (just no scrollbar visible
+            // when the option list overflows the popup height).
+
+            // Wire ScrollRect on Template
+            var sr = template.GetComponent<ScrollRect>();
+            sr.viewport = vpRT;
+            sr.content = cRT;
+            sr.horizontal = false;
+            sr.vertical = true;
+            sr.movementType = ScrollRect.MovementType.Clamped;
+
+            // Wire Dropdown
+            var dd = root.GetComponent<Dropdown>();
+            dd.template = tRT;
+            dd.captionText = label.GetComponent<Text>();
+            dd.itemText = itemLabel.GetComponent<Text>();
+            dd.targetGraphic = bgImg;
+
+            // Apply options
+            dd.options.Clear();
+            if (args.TryGetValue("options", out object optsRaw) && optsRaw is List<object> optsList)
+            {
+                foreach (var o in optsList)
+                {
+                    string s = o?.ToString() ?? "";
+                    dd.options.Add(new Dropdown.OptionData(s));
+                }
+            }
+            int initialValue = (int)SimpleJson.GetFloat(args, "value", 0f);
+            if (dd.options.Count > 0)
+            {
+                dd.value = Mathf.Clamp(initialValue, 0, dd.options.Count - 1);
+                dd.captionText.text = dd.options[dd.value].text;
+            }
+
+            if (!args.ContainsKey("size"))
+            {
+                var rt = root.GetComponent<RectTransform>();
+                rt.sizeDelta = new Vector2(200, 32);
+            }
+            string err = FinalizeUI(root, args, "Create UI Dropdown");
             if (err != null) return CommandResult.Fail(err);
             return ResultFor(root);
         }

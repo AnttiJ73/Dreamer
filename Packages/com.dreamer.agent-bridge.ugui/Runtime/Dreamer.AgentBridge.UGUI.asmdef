@@ -1,11 +1,8 @@
 {
-  "name": "Dreamer.AgentBridge.UGUI.Editor",
+  "name": "Dreamer.AgentBridge.UGUI",
   "rootNamespace": "Dreamer.AgentBridge.UGUI",
-  "references": [
-    "Dreamer.AgentBridge.Editor",
-    "Dreamer.AgentBridge.UGUI"
-  ],
-  "includePlatforms": ["Editor"],
+  "references": [],
+  "includePlatforms": [],
   "excludePlatforms": [],
   "allowUnsafeCode": false,
   "overrideReferences": false,

@@ -154,9 +154,22 @@ namespace Dreamer.AgentBridge
 
         /// <summary>
         /// Apply an anchor preset + size + optional pivot/offset overrides.
-        /// When an axis is stretched (e.g. top-stretch has horizontal stretch),
-        /// `size.x` becomes a total left+right margin and is split evenly; the
-        /// caller can override the split by also setting offsetMin / offsetMax.
+        ///
+        /// sizeDelta semantics:
+        /// - On stretched axes: sizeDelta is the inset from parent (0 = fill exactly,
+        ///   negative = smaller than parent, positive = bigger than parent). When `size`
+        ///   isn't given, defaults to 0 (fill exactly) — NOT Unity's RectTransform default
+        ///   of (100,100), which would make the panel 100px bigger than its parent and
+        ///   throw off every nested LayoutGroup measurement.
+        /// - On non-stretched axes: sizeDelta is the literal pixel size from `size.x` or
+        ///   `size.y`. When `size` isn't given on that axis, the existing sizeDelta value
+        ///   is preserved.
+        ///
+        /// offsetMin/Max semantics:
+        /// - Only applied per-axis when that axis is stretched. Setting `offsetMin: [0, 100]`
+        ///   on a vertically-stretched (e.g. stretch-right) panel applies the y inset (100)
+        ///   but leaves the x offset alone — otherwise the x component would overwrite the
+        ///   sizeDelta-derived offsets and zero out the panel width.
         /// </summary>
         public static void ApplyRectTransform(
             RectTransform rt,
@@ -171,34 +184,40 @@ namespace Dreamer.AgentBridge
             rt.anchorMax = anchor.anchorMax;
             rt.pivot = pivotOverride ?? anchor.pivot;
 
-            if (size.HasValue)
-            {
-                // For a stretched axis, sizeDelta is (parentSize - actualSize) effectively
-                // = the sum of offsetMin/offsetMax along that axis. A size of 0 on a
-                // stretched axis means "fill parent exactly". For a non-stretched axis,
-                // sizeDelta IS the actual pixel size.
-                var sd = size.Value;
-                if (anchor.stretchX)
-                {
-                    // Interpret as "inset total on X"; default 0 (fill).
-                    // offsetMin.x = -sd.x/2 makes the rect extend sd.x/2 beyond left parent edge
-                    // which would be weird, so we instead treat sd.x as total horizontal margin.
-                    // Leave sizeDelta.x alone unless user overrode offsets.
-                    rt.sizeDelta = new Vector2(0, anchor.stretchY ? 0 : sd.y);
-                }
-                else if (anchor.stretchY)
-                {
-                    rt.sizeDelta = new Vector2(sd.x, 0);
-                }
-                else
-                {
-                    rt.sizeDelta = sd;
-                }
-            }
+            // Per-axis sizeDelta: stretched axes default to 0 (fill exactly), non-stretched
+            // axes take the literal size. Always recompute, even when `size` is null, so
+            // Unity's (100,100) RectTransform default doesn't leak into a "fill"-anchored panel.
+            Vector2 sd = rt.sizeDelta;
+            if (anchor.stretchX) sd.x = size.HasValue ? size.Value.x : 0;
+            else if (size.HasValue) sd.x = size.Value.x;
+            if (anchor.stretchY) sd.y = size.HasValue ? size.Value.y : 0;
+            else if (size.HasValue) sd.y = size.Value.y;
+            rt.sizeDelta = sd;
 
             if (anchoredPosition.HasValue) rt.anchoredPosition = anchoredPosition.Value;
-            if (offsetMin.HasValue) rt.offsetMin = offsetMin.Value;
-            if (offsetMax.HasValue) rt.offsetMax = offsetMax.Value;
+
+            // Per-axis offset application — only on stretched axes. On non-stretched axes
+            // the offsets are derived from sizeDelta + pivot; overwriting them would corrupt
+            // the panel size. Common bug: side-anchored vertically-stretched panel with
+            // `offsetMin: [0, 100]` zeroing the width because the x component clobbered
+            // the -sizeDelta.x*pivot.x derived value.
+            if (offsetMin.HasValue || offsetMax.HasValue)
+            {
+                Vector2 newMin = rt.offsetMin;
+                Vector2 newMax = rt.offsetMax;
+                if (offsetMin.HasValue)
+                {
+                    if (anchor.stretchX) newMin.x = offsetMin.Value.x;
+                    if (anchor.stretchY) newMin.y = offsetMin.Value.y;
+                }
+                if (offsetMax.HasValue)
+                {
+                    if (anchor.stretchX) newMax.x = offsetMax.Value.x;
+                    if (anchor.stretchY) newMax.y = offsetMax.Value.y;
+                }
+                rt.offsetMin = newMin;
+                rt.offsetMax = newMax;
+            }
         }
 
         // ── Value parsing (shared JSON helpers) ─────────────────────────
@@ -492,6 +511,16 @@ namespace Dreamer.AgentBridge
         /// Ensure the active scene has an EventSystem — required for Button/Toggle/Slider
         /// clicks to fire. Creates one at the scene root if missing. Returns true if
         /// a new EventSystem was created.
+        ///
+        /// Picks the input module matching the project's active Input handling:
+        /// when Unity defines ENABLE_INPUT_SYSTEM (New or Both modes) and the
+        /// `com.unity.inputsystem` package is installed, attaches
+        /// InputSystemUIInputModule (resolved via reflection so this add-on stays
+        /// optional-dependency on the Input System package). Otherwise attaches the
+        /// legacy StandaloneInputModule. Mismatched modules throw at runtime
+        /// ("You are trying to read Input using the UnityEngine.Input class, but
+        /// you have switched active Input handling to Input System package") —
+        /// hence the explicit detection here.
         /// </summary>
         public static bool EnsureEventSystem()
         {
@@ -501,10 +530,22 @@ namespace Dreamer.AgentBridge
             var existing = UnityEngine.Object.FindObjectOfType<UnityEngine.EventSystems.EventSystem>(true);
 #endif
             if (existing != null) return false;
-            var go = new GameObject("EventSystem",
-                typeof(UnityEngine.EventSystems.EventSystem),
-                typeof(UnityEngine.EventSystems.StandaloneInputModule));
+
+            var go = new GameObject("EventSystem", typeof(UnityEngine.EventSystems.EventSystem));
             Undo.RegisterCreatedObjectUndo(go, "Create EventSystem");
+
+            System.Type moduleType = null;
+#if ENABLE_INPUT_SYSTEM
+            foreach (var asm in System.AppDomain.CurrentDomain.GetAssemblies())
+            {
+                System.Type t = null;
+                try { t = asm.GetType("UnityEngine.InputSystem.UI.InputSystemUIInputModule", false); }
+                catch { /* assembly may not load — skip */ }
+                if (t != null) { moduleType = t; break; }
+            }
+#endif
+            if (moduleType == null) moduleType = typeof(UnityEngine.EventSystems.StandaloneInputModule);
+            go.AddComponent(moduleType);
             return true;
         }
 
@@ -587,8 +628,62 @@ namespace Dreamer.AgentBridge
                 else return "`offsetMax` must be [x,y].";
             }
 
+            // High-level `margin` shortcut: writes the correct offsetMin/Max for stretched
+            // axes from CSS-style [top, right, bottom, left] (or uniform N, or per-side
+            // dict). Doesn't override explicit offsetMin/Max if both are present — those win.
+            if (args.TryGetValue("margin", out object marginRaw))
+            {
+                if (!TryParseMargin(marginRaw, out float mTop, out float mRight, out float mBot, out float mLeft))
+                    return "`margin` must be N (uniform), [top, right, bottom, left], or {\"top\":N,\"right\":N,\"bottom\":N,\"left\":N}.";
+                // offsetMin = (left, bottom) for stretched axes — positive insets in.
+                // offsetMax = (-right, -top) for stretched axes — negative pulls in from right/top.
+                if (!oMin.HasValue) oMin = new Vector2(mLeft, mBot);
+                if (!oMax.HasValue) oMax = new Vector2(-mRight, -mTop);
+            }
+
             ApplyRectTransform(rt, spec, size, pivot, pos, oMin, oMax);
             return null;
+        }
+
+        /// <summary>
+        /// Parse `margin`: uniform N, CSS-order [top, right, bottom, left] array, or
+        /// per-side dict {top, right, bottom, left}. All values are positive insets;
+        /// the caller flips sign for offsetMax (top/right pull in from far edges).
+        /// </summary>
+        public static bool TryParseMargin(object raw, out float top, out float right, out float bottom, out float left)
+        {
+            top = right = bottom = left = 0f;
+            if (raw == null) return false;
+            if (raw is List<object> list)
+            {
+                if (list.Count == 1)
+                {
+                    float v = ToFloat(list[0]);
+                    top = right = bottom = left = v;
+                    return true;
+                }
+                if (list.Count == 4)
+                {
+                    top    = ToFloat(list[0]);
+                    right  = ToFloat(list[1]);
+                    bottom = ToFloat(list[2]);
+                    left   = ToFloat(list[3]);
+                    return true;
+                }
+                return false;
+            }
+            if (raw is Dictionary<string, object> dict)
+            {
+                top    = TryGetFloat(dict, "top",    0f);
+                right  = TryGetFloat(dict, "right",  0f);
+                bottom = TryGetFloat(dict, "bottom", 0f);
+                left   = TryGetFloat(dict, "left",   0f);
+                return true;
+            }
+            // Scalar: uniform.
+            float u = ToFloat(raw);
+            top = right = bottom = left = u;
+            return true;
         }
 
         /// <summary>

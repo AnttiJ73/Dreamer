@@ -252,11 +252,15 @@ namespace Dreamer.AgentBridge
                 var files = System.IO.Directory.GetFiles(full, "*.cs", opt);
                 foreach (var f in files)
                 {
-                    // Convert absolute path back to "Assets/..." form.
+                    // Convert absolute path back to AssetDatabase form. Unity treats
+                    // both "Assets/..." (project assets) and "Packages/..." (embedded /
+                    // resolved packages) as valid asset roots. Earlier versions of this
+                    // loop only looked for /Assets/, so any .cs under Packages/ was
+                    // silently skipped — which made the rescue command useless for
+                    // editing add-on package code (the exact case this is most needed for).
                     string rel = f.Replace('\\', '/');
-                    int idx = rel.IndexOf("/Assets/", StringComparison.OrdinalIgnoreCase);
-                    if (idx < 0 && !rel.StartsWith("Assets/", StringComparison.OrdinalIgnoreCase)) continue;
-                    string assetPath = idx >= 0 ? rel.Substring(idx + 1) : rel;
+                    string assetPath = ToAssetDatabasePath(rel);
+                    if (assetPath == null) continue;
                     ForceReimport(assetPath, reimported, healed, misclassified);
                 }
             }
@@ -279,6 +283,33 @@ namespace Dreamer.AgentBridge
                 .Put("healed", healed.ToArray())
                 .Put("misclassified", misclassified.ToArray())
                 .ToString());
+        }
+
+        /// <summary>
+        /// Convert a forward-slash absolute or relative path to an AssetDatabase
+        /// path. Unity accepts both "Assets/..." and "Packages/..." as roots —
+        /// returns the substring starting at whichever it finds, or null when
+        /// the path doesn't sit inside either (out-of-project file).
+        /// </summary>
+        static string ToAssetDatabasePath(string forwardSlashPath)
+        {
+            if (string.IsNullOrEmpty(forwardSlashPath)) return null;
+
+            // Already a relative AssetDatabase path?
+            if (forwardSlashPath.StartsWith("Assets/", StringComparison.OrdinalIgnoreCase)
+                || forwardSlashPath.StartsWith("Packages/", StringComparison.OrdinalIgnoreCase))
+                return forwardSlashPath;
+
+            // Absolute path — look for /Assets/ or /Packages/ inside.
+            int aIdx = forwardSlashPath.IndexOf("/Assets/", StringComparison.OrdinalIgnoreCase);
+            int pIdx = forwardSlashPath.IndexOf("/Packages/", StringComparison.OrdinalIgnoreCase);
+
+            // Pick the rightmost match (handles unusual layouts where a project lives under
+            // another path containing "Assets" or "Packages" — the project's own root wins).
+            int idx = Math.Max(aIdx, pIdx);
+            if (idx < 0) return null;
+
+            return forwardSlashPath.Substring(idx + 1);
         }
 
         enum HealOutcome { AlreadyMonoScript, Reimported, StillMisclassified }

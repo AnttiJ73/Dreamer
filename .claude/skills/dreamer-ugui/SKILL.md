@@ -5,25 +5,44 @@ description: Build and edit Unity Canvas (uGUI) UIs via Dreamer's declarative tr
 
 # Dreamer — UGUI (Canvas UI) add-on
 
-Optional add-on that layers three commands on top of Dreamer for building and iterating on Unity's Canvas UI system. Installed via `./bin/dreamer addon install ugui`; if the add-on isn't present, the commands return a clear install hint.
+Optional add-on. Adds three commands for declarative Canvas UI building. UI Toolkit (UXML) is a different system — not covered here; handle via direct file write + `refresh-assets`.
 
-This is for **uGUI** (the Canvas-based UI system). UI Toolkit (UXML/USS) is a different system — agents handle UXML files fine via direct write + `refresh-assets`, so there's no Dreamer add-on for it.
+## Commands
 
-## The three commands
-
-| Command | When to use |
+| Command | Use for |
 |---|---|
-| `create-ui-tree` | Build a new UI subtree from a JSON spec. Handles Canvas creation, layout groups, every common widget. Modes: `create`, `append`, `replace-children`, `replace-self`. Start at any level of the hierarchy. **This is the main tool — reach for it first.** |
-| `inspect-ui-tree` | Dump an existing UI subtree back to the same JSON schema. Use to read current state before modifying. |
-| `set-rect-transform` | Tweak one specific element's anchoring / size / pivot without rebuilding. Use for small adjustments. |
+| `create-ui-tree` | Build/replace UI from a JSON spec. Modes: `create`, `append`, `replace-children`, `replace-self`. **Default tool.** |
+| `inspect-ui-tree` | Read existing UI back as the same JSON schema. Use before modifying. |
+| `set-rect-transform` | Single-element anchor/size/pivot tweak. Use for small adjustments. |
 
-## Design philosophy
+## Read these before building anything non-trivial
 
-The user will refine the UI visually in Unity's Scene/Game view after Claude builds it — Unity's editor is already good at that. Claude's job is to **get the structure right**: correct component hierarchy, reasonable anchoring, layout groups configured properly. Pixel-perfect styling is not the goal. A legible scaffold that compiles and is easy to edit visually is.
+Both ship with the add-on at `Packages/com.dreamer.agent-bridge.ugui/`:
 
-## Basic examples
+- **`UI-DESIGN-CONVENTIONS.md`** — naming, structure, sizing, spacing rules. Optimized for legible first-build output that the user can edit visually OR describe back to you.
+- **`UNITY-LAYOUT-QUIRKS.md`** — Unity behaviors the schema works around. Read when a layout doesn't render the way the spec says.
 
-### Build a main menu from scratch
+`schema.md` (this skill folder) is the full schema reference — every node type, every field, every enum.
+
+## Hard rules
+
+- Always pass `--wait` on `create-ui-tree` and `set-rect-transform`.
+- Always check the result's `warnings[]` — schema flags things that compile but render wrong.
+- Default to `ScrollList` for any list or growable content.
+- Pick `anchored` OR `LayoutGroup` per container, never both.
+- Set `size` on every LayoutGroup child. `[0, 0]` or omitted = fill.
+- One flex child per axis in a LayoutGroup. Header (fixed) + Content (flex) + Footer (fixed) is the universal pattern.
+
+## Modes
+
+| Mode | Effect | `target` required |
+|---|---|---|
+| `create` | New Canvas + tree under it | No |
+| `append` | Add tree as new child of target | Yes |
+| `replace-children` | Clear target's children, build from tree | Yes |
+| `replace-self` | Delete target, put tree in its place | Yes (must have parent) |
+
+## Quick build
 
 ```bash
 ./bin/dreamer create-ui-tree --wait --json '{
@@ -32,117 +51,77 @@ The user will refine the UI visually in Unity's Scene/Game view after Claude bui
   "tree": {
     "type": "VStack", "name": "Menu",
     "anchor": "center", "size": [400, 400],
-    "padding": 20, "spacing": 10, "fitContent": false,
+    "padding": 20, "spacing": 10,
     "children": [
-      {"type": "Text", "text": "My Game", "fontSize": 48, "alignment": "center"},
-      {"type": "Button", "text": "Play"},
-      {"type": "Button", "text": "Options"},
-      {"type": "Button", "text": "Quit"}
+      {"type": "Text", "text": "My Game", "fontSize": 32, "size": [0, 48], "alignment": "middle-center"},
+      {"type": "Button", "name": "PlayBtn",    "text": "Play",    "size": [0, 48]},
+      {"type": "Button", "name": "OptionsBtn", "text": "Options", "size": [0, 48]},
+      {"type": "Button", "name": "QuitBtn",    "text": "Quit",    "size": [0, 48]}
     ]
   }
 }'
 ```
 
-### Add a HUD to an existing Canvas
+## Iterate on existing UI
 
 ```bash
-./bin/dreamer create-ui-tree --wait --json '{
-  "mode": "append",
-  "target": "/MainCanvas",
-  "tree": {
-    "type": "HStack", "name": "TopBar",
-    "anchor": "top-stretch", "size": [0, 60],
-    "padding": [10, 10, 10, 10], "spacing": 20,
-    "children": [
-      {"type": "Text", "text": "Score: 0", "fontSize": 24},
-      {"type": "Spacer"},
-      {"type": "Text", "text": "HP: 100", "fontSize": 24}
-    ]
-  }
-}'
-```
-
-### Iterate on an existing UI
-
-```bash
-# Read current state
+# Read current
 ./bin/dreamer inspect-ui-tree --target /MainCanvas/Menu --wait
 
-# ... edit the JSON that came back ...
-
-# Replace the subtree with the modified version
+# Rebuild that subtree with edited JSON
 ./bin/dreamer create-ui-tree --wait --json '{
   "mode": "replace-children",
   "target": "/MainCanvas/Menu",
-  "tree": { ...new tree... }
+  "tree": { ...edited... }
 }'
 ```
 
-### Nudge one element's anchoring
-
+For single-element anchor/size adjustment without rebuild:
 ```bash
-./bin/dreamer set-rect-transform --scene-object /MainCanvas/Menu/PlayButton --anchor center --size 200x60 --wait
+./bin/dreamer set-rect-transform --scene-object /MainCanvas/Menu/PlayBtn --anchor center --size 200x60 --wait
 ```
 
-## Writing a tree — the JSON schema at a glance
+## Schema at a glance
 
-Every node has a `type` plus optional `name`, `anchor`, `size`, `pivot`, `offset` for RectTransform, plus type-specific fields, plus `children: [...]` for containers.
+Every node: `type` + optional `name`, `anchor`, `size`, `pivot`, `offset` / `margin`, plus type-specific fields, plus `children: [...]` for containers.
 
-**Container types** (take children):
-- `Panel` — background image + RectTransform. Fields: `color` (`"#RRGGBB"` or `{"r","g","b","a"}`), `sprite` (asset path)
-- `VStack` — vertical LayoutGroup. Fields: `padding` (N or `[l,t,r,b]`), `spacing` (N), `childAlignment`, `fitContent` (bool)
-- `HStack` — horizontal LayoutGroup. Same fields as VStack
-- `Grid` — grid LayoutGroup. Fields: `cellSize` (`[w,h]`), plus VStack's fields
-- `ScrollList` — ScrollRect with Viewport + Content. Fields: `direction` (`"vertical"|"horizontal"|"both"`), `contentLayout` (`"vertical"|"horizontal"|"grid"`), plus VStack's layout fields. Children are placed in Content, not the root.
+**Containers** (take children):
 
-**Leaf types**:
-- `Text` — TMP if available, legacy Text otherwise. Fields: `text`, `fontSize`, `color`, `alignment` (`"center"|"top"|"top-left"|...`)
-- `Button` — Image + Button + child Text. Fields: `text`, `fontSize`, `bgColor`, `textColor`, `sprite`. onClick wiring is NOT auto-done — use Unity's inspector or a follow-up `set-property` on the button's `onClick` field.
-- `Image` — Image component. Fields: `sprite` (path string or `{"assetRef":...,"subAsset":"name"}`), `color`, `preserveAspect` (bool)
-- `Slider` — Fields: `min`, `max`, `value`, `whole` (bool), `direction` (`"left-to-right"` etc.)
-- `Toggle` — Fields: `label`, `isOn` (bool)
-- `InputField` — Fields: `placeholder`, `text`
-- `Spacer` — flexible space for layout groups. Field: `flex` (weight, default 1), optional `size` (minimum)
-- `Raw` — escape hatch, bare GameObject + optional `components: ["Namespace.Type"]` array for custom MonoBehaviours
-
-**Anchor presets** (for `anchor` field):
-```
-fill                              top-left    top    top-right
-top-stretch                       left        center right
-middle-stretch                    bottom-left bottom bottom-right
-bottom-stretch
-stretch-left  stretch-center  stretch-right
-```
-
-**Sizes** can be `[w,h]`, `"WxH"`, or `{"w":N,"h":N}`.
-
-## Modes for `create-ui-tree`
-
-| Mode | Behavior | Target required? |
+| type | fields | notes |
 |---|---|---|
-| `create` | Build a new Canvas (from `canvas` field) + place `tree` inside it | No |
-| `append` | Add `tree` as a new child of `target` | Yes |
-| `replace-children` | Delete all children of `target`, rebuild from `tree` | Yes |
-| `replace-self` | Delete `target`, put `tree` where it was | Yes (must not be scene root) |
+| `Panel` | `color`, `sprite` | Background image + RectTransform |
+| `VStack` / `HStack` | `padding`, `spacing`, `childAlignment` | Vertical/Horizontal LayoutGroup |
+| `Grid` | `cellSize: [w,h]`, plus VStack fields | Fixed cell grid |
+| `ScrollList` | `direction: "vertical"\|"horizontal"\|"both"`, `contentLayout`, `spacing`, `padding`, `mapPanZoom` | Children placed in Content |
 
-The tree can start at any level — target a specific panel, not just the canvas root. Useful when iterating on a sub-section of existing UI.
+**Leaves**:
 
-## Workflow tips
+| type | fields |
+|---|---|
+| `Text` | `text`, `fontSize`, `color`, `alignment` |
+| `Button` | `text`, `fontSize`, `bgColor`, `textColor`, `sprite` (onClick NOT auto-wired) |
+| `Image` | `sprite`, `color`, `preserveAspect`, `imageType` (`Simple`/`Sliced`/`Tiled`/`Filled`), `fillAmount`, `fillMethod`, `fillOrigin`, `fillClockwise` |
+| `Slider` | `min`, `max`, `value`, `whole`, `direction` |
+| `Toggle` | `label`, `isOn` |
+| `InputField` | `placeholder`, `text` |
+| `Dropdown` | `options: [...]`, `value: int`, `captionFontSize`, `itemFontSize` |
+| `Spacer` | `flex` (default 1), `size` (minimum) |
+| `Raw` | `components: ["Namespace.Type", ...]` — escape hatch |
 
-- **Before modifying a complex existing UI, always call `inspect-ui-tree` first.** It returns the same schema you'd write, so you can edit and feed it back.
-- **Run `./bin/dreamer compile-status` first** if the tree uses custom types via `Raw → components`. Unknown types are silently skipped otherwise.
-- **Check the result's `warnings[]` field** after `create-ui-tree`. Unknown node types, missing custom components, and unsupported props get logged there.
-- **onClick wiring is out of scope** for v0.1.x. Build the button, then ask the user to hook up the event in Unity's inspector — it's one click. Or use `set-property` on the button's `onClick.m_PersistentCalls` field if you really need to script it (complex — the inspector is easier).
-- **Play Mode gate applies**: `create-ui-tree` and `set-rect-transform` (on scene objects) wait for Play Mode to exit. Asset-targeting `set-rect-transform` (prefab UI) is not gated.
+**Anchor presets**: `top-left`, `top`, `top-right`, `left`, `center`, `right`, `bottom-left`, `bottom`, `bottom-right`, `top-stretch`, `middle-stretch`, `bottom-stretch`, `stretch-left`, `stretch-center`, `stretch-right`, `fill`.
 
-## Full schema reference
+**Sizes**: `[w, h]`, `"WxH"`, or `{"w": N, "h": N}`.
 
-See [schema.md](schema.md) in this skill directory for the full schema — every node type, every field, every enum value. Loads on demand when you need the precise spec.
+## Build-time gotchas
+
+- `Raw` with `components`: run `./bin/dreamer compile-status` first if your custom types might not exist. Unknown types are skipped with a warning.
+- `mapPanZoom: true` on a ScrollList: attaches MapPanZoom + zeroes scrollSensitivity (so wheel zooms instead of scrolling).
+- `imageType: "Filled"` + `fillAmount`: image fill percentage. Use for HP/MP bars, progress indicators (NOT Slider — that's for user-interactive).
+- `Button`'s onClick wiring: out of scope. Build the button, ask the user to wire it in Inspector or use `set-property` on `onClick.m_PersistentCalls`.
+- Play Mode gate: `create-ui-tree` and scene-targeting `set-rect-transform` wait for Play Mode to exit. Asset-targeting `set-rect-transform` is not gated.
 
 ## When the add-on is missing
 
-If `create-ui-tree` returns *"Unknown command kind: create_ui_tree"*, the add-on isn't installed. Tell the user:
+If `create-ui-tree` returns "Unknown command kind: create_ui_tree", tell the user:
 
 > To enable UI building commands, run: `./bin/dreamer addon install ugui`
-
-This fetches the add-on from the Dreamer repo, installs it into Unity, and registers the commands. No restart needed beyond Unity's automatic bridge recompile.

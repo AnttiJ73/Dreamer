@@ -1280,8 +1280,43 @@ async function run(argv) {
               { src: 'Packages/com.dreamer.agent-bridge.ugui', dst: 'Packages/com.dreamer.agent-bridge.ugui', type: 'dir' },
               { src: '.claude/skills/dreamer-ugui', dst: '.claude/skills/dreamer-ugui', type: 'dir' },
             ],
+            // Section appended to CLAUDE.md on install, stripped on remove. Wrapped in
+            // <!-- dreamer-addon:ugui --> markers so we can find/replace idempotently.
+            claudeMdSection: `<!-- dreamer-addon:ugui:start -->
+## Dreamer UGUI add-on
+
+For any Canvas (uGUI) UI task — menus, HUDs, panels, buttons, scroll views — **default to \`./bin/dreamer create-ui-tree\`** (declarative JSON spec). Don't write Canvas UI in C# unless explicitly asked.
+
+- Skill: \`.claude/skills/dreamer-ugui/SKILL.md\` (auto-loads on UI tasks)
+- Conventions: \`Packages/com.dreamer.agent-bridge.ugui/UI-DESIGN-CONVENTIONS.md\`
+- Quirks reference: \`Packages/com.dreamer.agent-bridge.ugui/UNITY-LAYOUT-QUIRKS.md\`
+- Always pass \`--wait\` and check the result's \`warnings[]\`
+<!-- dreamer-addon:ugui:end -->`,
           },
         };
+
+        // Append/strip an addon's CLAUDE.md section idempotently using the marker tags.
+        function updateClaudeMdForAddon(addonName, action) {
+          const def = KNOWN_ADDONS[addonName];
+          if (!def || !def.claudeMdSection) return;
+          const claudeMdPath = path.join(projectRoot, 'CLAUDE.md');
+          let content = '';
+          try { content = fs.readFileSync(claudeMdPath, 'utf8'); } catch { /* will create */ }
+
+          const startTag = `<!-- dreamer-addon:${addonName}:start -->`;
+          const endTag = `<!-- dreamer-addon:${addonName}:end -->`;
+          const sectionRegex = new RegExp(`${startTag}[\\s\\S]*?${endTag}\\n?`, 'g');
+          // Always strip first so install is also idempotent (no duplicate section if reinstalled).
+          content = content.replace(sectionRegex, '');
+
+          if (action === 'install') {
+            // Append with a leading blank line if file isn't empty.
+            const sep = content.length > 0 && !content.endsWith('\n\n') ? (content.endsWith('\n') ? '\n' : '\n\n') : '';
+            content = content + sep + def.claudeMdSection + '\n';
+          }
+
+          fs.writeFileSync(claudeMdPath, content, 'utf8');
+        }
 
         // Read current source.json; the source marker records installed add-ons.
         let src;
@@ -1341,6 +1376,8 @@ async function run(argv) {
               // Record the add-on in source.json so future updates pull it too.
               src.addons = Array.from(new Set([...currentAddons, name]));
               fs.writeFileSync(SOURCE_PATH, JSON.stringify(src, null, 2) + '\n', 'utf8');
+              // Augment CLAUDE.md so future Claude sessions know the add-on exists.
+              try { updateClaudeMdForAddon(name, 'install'); } catch { /* non-fatal */ }
             }
             finally {
               try { fs.rmSync(tmpBase, { recursive: true, force: true }); } catch { /* ignore */ }
@@ -1350,7 +1387,14 @@ async function run(argv) {
               installed: true,
               name,
               installedFiles: KNOWN_ADDONS[name].paths.map((p) => p.dst),
-              note: 'Unity will recompile the bridge package. When it finishes, the add-on commands become available.',
+              claudeMdUpdated: !!KNOWN_ADDONS[name].claudeMdSection,
+              nextSteps: [
+                'Unity will recompile the bridge package — wait until done.',
+                `Verify with: ./bin/dreamer ${name === 'ugui' ? 'create-ui-tree' : 'help'} (commands become available after recompile)`,
+                name === 'ugui'
+                  ? `Conventions doc: Packages/com.dreamer.agent-bridge.ugui/UI-DESIGN-CONVENTIONS.md (read before building non-trivial UI).`
+                  : null,
+              ].filter(Boolean),
             });
             break;
           }
@@ -1370,10 +1414,13 @@ async function run(argv) {
           }
           src.addons = currentAddons.filter((n) => n !== name);
           fs.writeFileSync(SOURCE_PATH, JSON.stringify(src, null, 2) + '\n', 'utf8');
+          // Strip the CLAUDE.md section so future Claude sessions don't reference a missing add-on.
+          try { updateClaudeMdForAddon(name, 'remove'); } catch { /* non-fatal */ }
           out({
             removed: true,
             name,
             removedFiles: KNOWN_ADDONS[name].paths.map((p) => p.dst),
+            claudeMdUpdated: !!KNOWN_ADDONS[name].claudeMdSection,
             note: 'Unity will recompile. Add-on commands will return "Unknown command kind" until you reinstall the add-on.',
           });
           break;

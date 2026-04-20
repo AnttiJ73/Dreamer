@@ -129,14 +129,17 @@ Do NOT ignore `.dreamer-config.json` or `.dreamer-source.json` — those are com
 
 Invoke as `./bin/dreamer <command>` (POSIX/bash) or `.\bin\dreamer <command>` (Windows cmd/PowerShell) from the project root. Daemon auto-starts on first use; talks to Unity over localhost.
 
-- Skill: `.claude/skills/dreamer/SKILL.md`
+- Skill: `.claude/skills/dreamer/SKILL.md` (full command surface, auto-loads on Unity tasks)
 - Config: `daemon/.dreamer-config.json` (port, autoFocus, defaultWaitTimeout)
-- Source tracking: `daemon/.dreamer-source.json`
-- Update: `./bin/dreamer update` (preserves config)
+- Source: `daemon/.dreamer-source.json` — `./bin/dreamer update` to pull latest
 - Always pass `--wait` to mutation commands
 - After writing `.cs` files directly, run `./bin/dreamer refresh-assets --wait`
 - Check `./bin/dreamer status` before mutating
+
+For Canvas (uGUI) UI work — menus, HUDs, panels, buttons, scroll views — install the optional UGUI add-on (`./bin/dreamer addon install ugui`). It adds `create-ui-tree` for declarative UI building. Without it, Canvas UI work falls back to manual C# scripting which is much slower.
 ```
+
+The UGUI add-on appends its own CLAUDE.md section on install (between `<!-- dreamer-addon:ugui:start -->` and `:end -->` markers) and strips it on remove. Don't pre-add the UGUI section here — `addon install ugui` handles that.
 
 ---
 

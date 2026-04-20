@@ -236,7 +236,13 @@ Gated kinds: `create-gameobject`, `instantiate-prefab`, `create-hierarchy` (scen
 
 ## Canvas UI building (optional add-on)
 
-For uGUI (Canvas) work — menus, HUDs, panels, buttons, scroll views, etc. — there's a separate add-on with its own skill (`dreamer-ugui`). It auto-loads when the task mentions UI. If you need it and it's not installed, ask the user to run `./bin/dreamer addon install ugui`. No UI commands ship in core Dreamer by design — the UGUI surface is large and only relevant for a subset of Unity work.
+For any uGUI (Canvas) work — menus, HUDs, panels, buttons, scroll views, dropdowns, sliders — DEFAULT to the `dreamer-ugui` skill (auto-loads when the task mentions UI). Don't write Canvas UI in C# unless explicitly asked.
+
+If `create-ui-tree` returns "Unknown command kind: create_ui_tree", the add-on isn't installed. Tell the user:
+
+> To enable UI building commands, run: `./bin/dreamer addon install ugui`
+
+No UI commands ship in core Dreamer by design — the UGUI surface is large and only relevant for a subset of Unity work.
 
 ## Parallel agent sessions on the same Unity project
 

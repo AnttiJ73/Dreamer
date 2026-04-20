@@ -5,6 +5,7 @@ using UnityEngine;
 using UnityEngine.UI;
 using Object = UnityEngine.Object;
 
+// recompile-touch 2026-04-20: forcing Unity to pick up auto-LayoutElement + warning helpers
 namespace Dreamer.AgentBridge
 {
     /// <summary>
@@ -192,6 +193,7 @@ namespace Dreamer.AgentBridge
                 case "toggle":      go = BuildDelegated(spec, parent, UIWidgetOps.CreateToggle, out _); break;
                 case "inputfield":
                 case "input-field": go = BuildDelegated(spec, parent, UIWidgetOps.CreateInputField, out _); break;
+                case "dropdown":    go = BuildDelegated(spec, parent, UIWidgetOps.CreateDropdown, out _); break;
 
                 case "spacer":      go = BuildSpacer(spec, parent); break;
 
@@ -203,6 +205,16 @@ namespace Dreamer.AgentBridge
             }
 
             if (go == null) return null;
+
+            // Layout-group plumbing (post-create, pre-recurse):
+            //   1. Auto-attach LayoutElement when this node sits inside a HorizontalOrVertical
+            //      LayoutGroup and has a `size` — without it, controlChildSize=true reads
+            //      preferredWidth/Height (defaults to 0) and silently shrinks the child to
+            //      zero, which is the #1 source of "I set size and nothing happened".
+            //   2. Surface known anti-patterns to warnings[] so the agent gets a signal
+            //      instead of guessing why the layout is off.
+            ApplyAutoLayoutElement(go, spec, parent);
+            WarnLayoutAntipatterns(go, spec, parent, key, warnings);
 
             // Recurse children (for container types only — leaf types like Text/Image/Button
             // don't consume children, but we warn rather than silently drop them).
@@ -243,6 +255,7 @@ namespace Dreamer.AgentBridge
                 case "toggle":
                 case "inputfield":
                 case "input-field":
+                case "dropdown":
                     return true;
                 default:
                     return false;  // Button allows a child Text override; container types (Panel, stacks, ScrollList) take children
@@ -312,6 +325,11 @@ namespace Dreamer.AgentBridge
             if (spec.TryGetValue("sprite", out object s)) wArgs["sprite"] = s;
             if (spec.TryGetValue("color", out object c)) wArgs["color"] = c;
             if (spec.TryGetValue("preserveAspect", out object pa)) wArgs["preserveAspect"] = pa;
+            if (spec.TryGetValue("imageType", out object it)) wArgs["imageType"] = it;
+            if (spec.TryGetValue("fillAmount", out object fa)) wArgs["fillAmount"] = fa;
+            if (spec.TryGetValue("fillMethod", out object fm)) wArgs["fillMethod"] = fm;
+            if (spec.TryGetValue("fillOrigin", out object fo)) wArgs["fillOrigin"] = fo;
+            if (spec.TryGetValue("fillClockwise", out object fc)) wArgs["fillClockwise"] = fc;
             var result = UIWidgetOps.CreateImage(wArgs);
             return result.success ? FindChildByResult(parent, result) : null;
         }
@@ -352,6 +370,7 @@ namespace Dreamer.AgentBridge
             if (spec.TryGetValue("contentLayout", out object cl)) wArgs["contentLayout"] = cl;
             if (spec.TryGetValue("spacing", out object sp)) wArgs["spacing"] = sp;
             if (spec.TryGetValue("padding", out object pad)) wArgs["padding"] = pad;
+            if (spec.TryGetValue("mapPanZoom", out object mpz)) wArgs["mapPanZoom"] = mpz;
             var result = UIWidgetOps.CreateScrollList(wArgs);
             if (!result.success) { warnings.Add($"ScrollList failed: {result.error}"); return null; }
             return FindChildByResult(parent, result);
@@ -434,7 +453,7 @@ namespace Dreamer.AgentBridge
         static Dictionary<string, object> CopyRectArgs(Dictionary<string, object> spec)
         {
             var result = new Dictionary<string, object>();
-            foreach (var key in new[] { "anchor", "size", "pivot", "offset", "anchoredPosition", "offsetMin", "offsetMax" })
+            foreach (var key in new[] { "anchor", "size", "pivot", "offset", "anchoredPosition", "offsetMin", "offsetMax", "margin" })
             {
                 if (spec.TryGetValue(key, out object v)) result[key] = v;
             }
@@ -487,6 +506,96 @@ namespace Dreamer.AgentBridge
         {
             var rt = UIHelpers.EnsureRectTransform(go);
             UIHelpers.ApplyRectTransformArgs(rt, spec);
+        }
+
+        /// <summary>
+        /// When `parent` carries a HorizontalOrVerticalLayoutGroup (VStack/HStack) and the
+        /// child spec has a `size`, attach a LayoutElement so the LayoutGroup respects the
+        /// requested dimensions. Without this, `size` is silently dropped under
+        /// `controlChildSize=true` because the LayoutGroup reads LayoutElement.preferredX
+        /// (default 0), not RectTransform.sizeDelta.
+        ///
+        /// Both preferred AND flex are set explicitly (NOT left at -1) on each axis. Unity's
+        /// LayoutUtility.GetLayoutProperty SKIPS negative values and falls through to the next
+        /// ILayoutElement on the same GameObject. Container nodes (HStack, VStack, ScrollList)
+        /// have a LayoutGroup or ScrollRect that ALSO implements ILayoutElement at lower
+        /// priority — leaving flex at -1 here makes Unity use the LayoutGroup's reported
+        /// flex (max of children), which silently re-flexes a "fixed-size" child. Setting
+        /// flex=0 explicitly locks the axis to the LayoutElement's preferred value.
+        ///
+        /// Convention: positive size value -> preferred=size, flex=0 (locked size).
+        ///             zero/missing       -> preferred=0, flex=1 (fills available space).
+        /// Skips GridLayoutGroup children (Grid uses cellSize, ignores LayoutElement).
+        /// Skips when a LayoutElement already exists (Spacer attaches its own).
+        /// </summary>
+        static void ApplyAutoLayoutElement(GameObject go, Dictionary<string, object> spec, Transform parent)
+        {
+            if (parent == null) return;
+            var hv = parent.GetComponent<HorizontalOrVerticalLayoutGroup>();
+            if (hv == null) return; // GridLayoutGroup or no layout — nothing to do
+
+            // Don't override an existing LayoutElement (e.g. Spacer adds its own with flex).
+            if (go.GetComponent<LayoutElement>() != null) return;
+
+            // Always attach a LayoutElement under a LayoutGroup parent — even when `size`
+            // is omitted. Without an LE, Unity's LayoutUtility falls through to whatever
+            // ILayoutElement the child happens to carry (HorizontalLayoutGroup, ScrollRect's
+            // implicit reporting, etc.) which silently re-flexes the child. Sized children
+            // get locked dimensions; size-less children default to fill (preferred=0, flex=1).
+            Vector2 size = Vector2.zero;
+            bool hasSize = false;
+            if (spec.TryGetValue("size", out object sizeRaw)
+                && UIHelpers.TryParseSize(sizeRaw, out Vector2 parsed))
+            {
+                size = parsed;
+                hasSize = true;
+            }
+
+            var le = go.AddComponent<LayoutElement>();
+            if (hasSize && size.x > 0) { le.preferredWidth  = size.x; le.flexibleWidth  = 0f; }
+            else                       { le.preferredWidth  = 0f;     le.flexibleWidth  = 1f; }
+            if (hasSize && size.y > 0) { le.preferredHeight = size.y; le.flexibleHeight = 0f; }
+            else                       { le.preferredHeight = 0f;     le.flexibleHeight = 1f; }
+        }
+
+        /// <summary>
+        /// Surface known schema misuses to the result's warnings[] so the agent
+        /// learns why the layout looks off instead of guessing. Currently:
+        ///   - `anchor` set on a child of a LayoutGroup parent (LayoutGroup overrides anchoring)
+        ///   - `Spacer` under a LayoutGroup with controlChildSize off on the relevant axis
+        ///     (Spacer pushes via flexible(Width|Height), which the LayoutGroup ignores in that mode)
+        /// </summary>
+        static void WarnLayoutAntipatterns(GameObject go, Dictionary<string, object> spec, Transform parent, string typeKey, List<string> warnings)
+        {
+            if (parent == null) return;
+            var parentLG = parent.GetComponent<LayoutGroup>();
+            if (parentLG == null) return;
+
+            string nodePath = PathOf(go.transform);
+
+            if (spec.ContainsKey("anchor"))
+            {
+                warnings.Add(
+                    $"`anchor` on '{nodePath}' is overridden by parent LayoutGroup ({parent.name}). " +
+                    "Either remove the anchor or remove the LayoutGroup on the parent.");
+            }
+
+            // Spacer no longer needs a warning: with controlChildSize=true (default) and
+            // Spacer's own flex=1, surplus distribution gives Spacer the remaining space
+            // regardless of parent's forceExpand flag. Only fails if the user explicitly
+            // disables controlChildSize on the parent.
+            if (typeKey == "spacer" && parentLG is HorizontalOrVerticalLayoutGroup hv)
+            {
+                bool isVerticalParent = parentLG is VerticalLayoutGroup;
+                bool axisControl = isVerticalParent ? hv.childControlHeight : hv.childControlWidth;
+                if (!axisControl)
+                {
+                    warnings.Add(
+                        $"Spacer '{nodePath}' won't push siblings — parent '{parent.name}' has " +
+                        $"controlChild{(isVerticalParent ? "Height" : "Width")} disabled. Spacer needs " +
+                        $"the LayoutGroup to read its flex value to expand into the surplus.");
+                }
+            }
         }
     }
 }
