@@ -783,15 +783,23 @@ namespace Dreamer.AgentBridge
             cRT.offsetMin = new Vector2(2, 2); cRT.offsetMax = new Vector2(-2, -2);
             check.GetComponent<Image>().color = new Color(0.2f, 0.6f, 1f, 1f);
 
-            // Label to the right of the box
-            string label = SimpleJson.GetString(args, "label", "Toggle");
-            var lblGo = new GameObject("Label", typeof(RectTransform));
-            lblGo.transform.SetParent(root.transform, false);
-            UIHelpers.AddTextComponent(lblGo, label, 16f, Color.black, "middle-left", out _);
-            var lRT = lblGo.GetComponent<RectTransform>();
-            lRT.anchorMin = new Vector2(0, 0); lRT.anchorMax = new Vector2(1, 1);
-            lRT.offsetMin = new Vector2(25, 0); lRT.offsetMax = Vector2.zero;
-            lRT.pivot = new Vector2(0, 0.5f);
+            // Label to the right of the box — only when the caller explicitly set
+            // a non-empty `label`. Previously we defaulted to "Toggle", which broke
+            // the common pattern of an externally-positioned label next to a
+            // checkbox-only Toggle (size [28, 28]): the internal Label would
+            // stretch-fill the 28px-wide toggle minus the 25px checkbox offset =
+            // 3px of visible width with the default text "Toggle" jammed into it.
+            string label = SimpleJson.GetString(args, "label", "");
+            if (!string.IsNullOrEmpty(label))
+            {
+                var lblGo = new GameObject("Label", typeof(RectTransform));
+                lblGo.transform.SetParent(root.transform, false);
+                UIHelpers.AddTextComponent(lblGo, label, 16f, Color.black, "middle-left", out _);
+                var lRT = lblGo.GetComponent<RectTransform>();
+                lRT.anchorMin = new Vector2(0, 0); lRT.anchorMax = new Vector2(1, 1);
+                lRT.offsetMin = new Vector2(25, 0); lRT.offsetMax = Vector2.zero;
+                lRT.pivot = new Vector2(0, 0.5f);
+            }
 
             var toggle = root.GetComponent<Toggle>();
             toggle.targetGraphic = bg.GetComponent<Image>();
@@ -800,8 +808,9 @@ namespace Dreamer.AgentBridge
 
             if (!args.ContainsKey("size"))
             {
+                // Default: just the checkbox when no label; label-width room when there is one.
                 var rt = root.GetComponent<RectTransform>();
-                rt.sizeDelta = new Vector2(160, 20);
+                rt.sizeDelta = string.IsNullOrEmpty(label) ? new Vector2(20, 20) : new Vector2(160, 20);
             }
             string err = FinalizeUI(root, args, "Create UI Toggle");
             if (err != null) return CommandResult.Fail(err);
