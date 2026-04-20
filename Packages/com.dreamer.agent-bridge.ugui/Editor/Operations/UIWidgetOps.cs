@@ -4,6 +4,9 @@ using UnityEditor;
 using UnityEngine;
 using UnityEngine.UI;
 using Object = UnityEngine.Object;
+#if DREAMER_HAS_TMP
+using TMPro;
+#endif
 
 namespace Dreamer.AgentBridge
 {
@@ -799,7 +802,11 @@ namespace Dreamer.AgentBridge
         // ────────────────────────────────────────────────────────────────
         //  create_ui_input_field
         //  Args: { parent, name?, placeholder?, text?, rect args }
-        //  Uses TMP_InputField if available (richer); legacy InputField otherwise.
+        //  Uses TMP_InputField when DREAMER_HAS_TMP is defined (Unity 6's merged
+        //  ugui+TMP package or any project with com.unity.textmeshpro installed).
+        //  Falls back to legacy UnityEngine.UI.InputField when TMP is absent —
+        //  keeps consistency with AddTextComponent's TMP-first Text rendering
+        //  so the placeholder and typed text match surrounding labels.
         // ────────────────────────────────────────────────────────────────
         public static CommandResult CreateInputField(Dictionary<string, object> args)
         {
@@ -810,17 +817,63 @@ namespace Dreamer.AgentBridge
             string placeholder = SimpleJson.GetString(args, "placeholder", "Enter text...");
             string initialText = SimpleJson.GetString(args, "text", "");
 
-            // Legacy InputField is simplest and always available. TMP_InputField requires
-            // more wiring (TextArea child with ViewportMask). Prefer legacy for scaffolding;
-            // user can swap to TMP afterward if they care.
+#if DREAMER_HAS_TMP
+            var root = new GameObject(name, typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(TMP_InputField));
+#else
             var root = new GameObject(name, typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(InputField));
+#endif
             if (parent != null) root.transform.SetParent(parent, false);
             var bgImg = root.GetComponent<Image>();
             bgImg.color = Color.white;
             var uiSprite = AssetDatabase.GetBuiltinExtraResource<Sprite>("UI/Skin/InputFieldBackground.psd");
             if (uiSprite != null) { bgImg.sprite = uiSprite; bgImg.type = Image.Type.Sliced; }
 
-            // Placeholder
+#if DREAMER_HAS_TMP
+            // TMP_InputField requires a Text Area child that owns the Mask/viewport,
+            // with the TMP_Text as a child of that. This is the structure Unity
+            // generates via GameObject > UI > Input Field - TextMeshPro.
+            var textArea = new GameObject("Text Area", typeof(RectTransform), typeof(RectMask2D));
+            textArea.transform.SetParent(root.transform, false);
+            var taRT = textArea.GetComponent<RectTransform>();
+            taRT.anchorMin = Vector2.zero; taRT.anchorMax = Vector2.one;
+            taRT.offsetMin = new Vector2(10, 6); taRT.offsetMax = new Vector2(-10, -7);
+
+            // Placeholder (TMP)
+            var phGo = new GameObject("Placeholder", typeof(RectTransform));
+            phGo.transform.SetParent(textArea.transform, false);
+            var phTmp = phGo.AddComponent<TextMeshProUGUI>();
+            phTmp.text = placeholder;
+            phTmp.fontSize = 14;
+            phTmp.color = new Color(0.5f, 0.5f, 0.5f, 0.6f);
+            phTmp.alignment = TextAlignmentOptions.MidlineLeft;
+            phTmp.enableWordWrapping = false;
+            phTmp.overflowMode = TextOverflowModes.Ellipsis;
+            var phRT = phGo.GetComponent<RectTransform>();
+            phRT.anchorMin = Vector2.zero; phRT.anchorMax = Vector2.one;
+            phRT.offsetMin = Vector2.zero; phRT.offsetMax = Vector2.zero;
+
+            // Typed text (TMP)
+            var textGo = new GameObject("Text", typeof(RectTransform));
+            textGo.transform.SetParent(textArea.transform, false);
+            var textTmp = textGo.AddComponent<TextMeshProUGUI>();
+            textTmp.text = initialText;
+            textTmp.fontSize = 14;
+            textTmp.color = Color.black;
+            textTmp.alignment = TextAlignmentOptions.MidlineLeft;
+            textTmp.enableWordWrapping = false;
+            textTmp.overflowMode = TextOverflowModes.Overflow;
+            var tRT = textGo.GetComponent<RectTransform>();
+            tRT.anchorMin = Vector2.zero; tRT.anchorMax = Vector2.one;
+            tRT.offsetMin = Vector2.zero; tRT.offsetMax = Vector2.zero;
+
+            var input = root.GetComponent<TMP_InputField>();
+            input.targetGraphic = bgImg;
+            input.textViewport = taRT;
+            input.textComponent = textTmp;
+            input.placeholder = phTmp;
+            input.text = initialText;
+#else
+            // Placeholder (legacy)
             var phGo = new GameObject("Placeholder", typeof(RectTransform));
             phGo.transform.SetParent(root.transform, false);
             UIHelpers.AddTextComponent(phGo, placeholder, 14f, new Color(0.5f, 0.5f, 0.5f, 0.6f), "middle-left", out _);
@@ -828,7 +881,7 @@ namespace Dreamer.AgentBridge
             phRT.anchorMin = Vector2.zero; phRT.anchorMax = Vector2.one;
             phRT.offsetMin = new Vector2(10, 6); phRT.offsetMax = new Vector2(-10, -7);
 
-            // Text
+            // Typed text (legacy)
             var textGo = new GameObject("Text", typeof(RectTransform));
             textGo.transform.SetParent(root.transform, false);
             UIHelpers.AddTextComponent(textGo, initialText, 14f, Color.black, "middle-left", out _);
@@ -838,9 +891,10 @@ namespace Dreamer.AgentBridge
 
             var input = root.GetComponent<InputField>();
             input.targetGraphic = bgImg;
-            input.textComponent = textGo.GetComponent<Text>(); // only set if legacy Text; TMP users need to re-wire manually
+            input.textComponent = textGo.GetComponent<Text>();
             input.placeholder = phGo.GetComponent<Text>();
             input.text = initialText;
+#endif
 
             if (!args.ContainsKey("size"))
             {
@@ -852,10 +906,13 @@ namespace Dreamer.AgentBridge
             return ResultFor(root);
         }
 
+#if !DREAMER_HAS_TMP
         /// <summary>
-        /// Force-add a legacy UnityEngine.UI.Text component (NOT TMP). Some Unity widgets
-        /// (Dropdown, InputField legacy mode) require this exact type and won't accept
-        /// TMP_Text. Used for those widgets to avoid runtime NREs from null casts.
+        /// Force-add a legacy UnityEngine.UI.Text component (NOT TMP). Used by the
+        /// legacy fallback paths for Dropdown and InputField when TMP isn't
+        /// available — those widgets' captionText/textComponent properties are
+        /// typed <c>Text</c> and NRE at runtime if handed a TMP component.
+        /// Only compiled when DREAMER_HAS_TMP is undefined.
         /// </summary>
         static Text AddLegacyText(GameObject go, string text, float fontSize, Color color, TextAnchor alignment)
         {
@@ -870,13 +927,15 @@ namespace Dreamer.AgentBridge
                   ?? Resources.GetBuiltinResource<Font>("Arial.ttf");
             return t;
         }
+#endif
 
         // ────────────────────────────────────────────────────────────────
         //  create_ui_dropdown
         //  Args: { parent, name?, options?: ["a","b",...], value?: int (selected index),
         //          captionFontSize?, itemFontSize?, rect args }
-        //  Builds a fully-functional UnityEngine.UI.Dropdown with caption + arrow + popup
-        //  template. Populated with options; value selects initial item. The user can wire
+        //  Builds a fully-functional TMP_Dropdown (or legacy UnityEngine.UI.Dropdown
+        //  when DREAMER_HAS_TMP is not defined) with caption + arrow + popup template.
+        //  Populated with options; value selects initial item. The user can wire
         //  onValueChanged via Inspector or set-property on m_OnValueChanged.m_PersistentCalls
         //  afterward; nothing else is needed for the widget to work in Play Mode.
         // ────────────────────────────────────────────────────────────────
@@ -889,21 +948,35 @@ namespace Dreamer.AgentBridge
             float captionFontSize = SimpleJson.GetFloat(args, "captionFontSize", 14f);
             float itemFontSize    = SimpleJson.GetFloat(args, "itemFontSize",    14f);
 
-            // Root: Image bg + Dropdown
+#if DREAMER_HAS_TMP
+            // Root: Image bg + TMP_Dropdown
+            var root = new GameObject(name, typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(TMP_Dropdown));
+#else
+            // Root: Image bg + legacy Dropdown
             var root = new GameObject(name, typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(Dropdown));
+#endif
             if (parent != null) root.transform.SetParent(parent, false);
             var bgImg = root.GetComponent<Image>();
             bgImg.color = new Color(0.95f, 0.95f, 0.95f, 1f);
             var uiBg = AssetDatabase.GetBuiltinExtraResource<Sprite>("UI/Skin/UISprite.psd");
             if (uiBg != null) { bgImg.sprite = uiBg; bgImg.type = Image.Type.Sliced; }
 
-            // Caption (currently-selected label). Legacy UnityEngine.UI.Dropdown REQUIRES
-            // a legacy Text component on captionText — TMP_Text won't satisfy the property
-            // type and assigning .captionText = null below would NRE on dd.captionText.text.
-            // For TMP support we'd need TMP_Dropdown, which has a different structure.
+            // Caption (currently-selected label). Type depends on dropdown variant:
+            // TMP_Dropdown.captionText requires TMP_Text; legacy Dropdown.captionText
+            // requires legacy UnityEngine.UI.Text (NRE on the wrong type).
             var label = new GameObject("Label", typeof(RectTransform));
             label.transform.SetParent(root.transform, false);
+#if DREAMER_HAS_TMP
+            var labelTmp = label.AddComponent<TextMeshProUGUI>();
+            labelTmp.text = "";
+            labelTmp.fontSize = captionFontSize;
+            labelTmp.color = new Color(0.15f, 0.15f, 0.15f, 1f);
+            labelTmp.alignment = TextAlignmentOptions.MidlineLeft;
+            labelTmp.enableWordWrapping = false;
+            labelTmp.overflowMode = TextOverflowModes.Ellipsis;
+#else
             AddLegacyText(label, "", captionFontSize, new Color(0.15f, 0.15f, 0.15f, 1f), TextAnchor.MiddleLeft);
+#endif
             var lblRT = label.GetComponent<RectTransform>();
             lblRT.anchorMin = Vector2.zero; lblRT.anchorMax = Vector2.one;
             lblRT.offsetMin = new Vector2(10, 6); lblRT.offsetMax = new Vector2(-25, -7);
@@ -990,10 +1063,20 @@ namespace Dreamer.AgentBridge
             icRT.sizeDelta = new Vector2(20, 20);
             icRT.anchoredPosition = new Vector2(10, 0);
 
-            // Item > Label (legacy Text — Dropdown.itemText requires it, see captionText note above)
+            // Item > Label — same TMP/legacy split as the caption label.
             var itemLabel = new GameObject("Item Label", typeof(RectTransform));
             itemLabel.transform.SetParent(item.transform, false);
+#if DREAMER_HAS_TMP
+            var itemLabelTmp = itemLabel.AddComponent<TextMeshProUGUI>();
+            itemLabelTmp.text = "Option";
+            itemLabelTmp.fontSize = itemFontSize;
+            itemLabelTmp.color = new Color(0.15f, 0.15f, 0.15f, 1f);
+            itemLabelTmp.alignment = TextAlignmentOptions.MidlineLeft;
+            itemLabelTmp.enableWordWrapping = false;
+            itemLabelTmp.overflowMode = TextOverflowModes.Ellipsis;
+#else
             AddLegacyText(itemLabel, "Option", itemFontSize, new Color(0.15f, 0.15f, 0.15f, 1f), TextAnchor.MiddleLeft);
+#endif
             var ilRT = itemLabel.GetComponent<RectTransform>();
             ilRT.anchorMin = Vector2.zero; ilRT.anchorMax = Vector2.one;
             ilRT.offsetMin = new Vector2(20, 1); ilRT.offsetMax = new Vector2(-10, -2);
@@ -1015,14 +1098,37 @@ namespace Dreamer.AgentBridge
             sr.vertical = true;
             sr.movementType = ScrollRect.MovementType.Clamped;
 
-            // Wire Dropdown
+#if DREAMER_HAS_TMP
+            // Wire TMP_Dropdown
+            var dd = root.GetComponent<TMP_Dropdown>();
+            dd.template = tRT;
+            dd.captionText = labelTmp;
+            dd.itemText = itemLabelTmp;
+            dd.targetGraphic = bgImg;
+
+            dd.options.Clear();
+            if (args.TryGetValue("options", out object optsRaw) && optsRaw is List<object> optsList)
+            {
+                foreach (var o in optsList)
+                {
+                    string s = o?.ToString() ?? "";
+                    dd.options.Add(new TMP_Dropdown.OptionData(s));
+                }
+            }
+            int initialValue = (int)SimpleJson.GetFloat(args, "value", 0f);
+            if (dd.options.Count > 0)
+            {
+                dd.value = Mathf.Clamp(initialValue, 0, dd.options.Count - 1);
+                dd.captionText.text = dd.options[dd.value].text;
+            }
+#else
+            // Wire legacy Dropdown
             var dd = root.GetComponent<Dropdown>();
             dd.template = tRT;
             dd.captionText = label.GetComponent<Text>();
             dd.itemText = itemLabel.GetComponent<Text>();
             dd.targetGraphic = bgImg;
 
-            // Apply options
             dd.options.Clear();
             if (args.TryGetValue("options", out object optsRaw) && optsRaw is List<object> optsList)
             {
@@ -1038,6 +1144,7 @@ namespace Dreamer.AgentBridge
                 dd.value = Mathf.Clamp(initialValue, 0, dd.options.Count - 1);
                 dd.captionText.text = dd.options[dd.value].text;
             }
+#endif
 
             if (!args.ContainsKey("size"))
             {

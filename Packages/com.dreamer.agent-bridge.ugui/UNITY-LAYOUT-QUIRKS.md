@@ -64,11 +64,11 @@ Adding `±0.1` to scale per notch means at scale 0.3 each notch is a 33% jump; a
 
 **Fix** ([Runtime/MapPanZoom](Runtime/MapPanZoom.cs)): `newScale = currentScale * Mathf.Pow(1 + zoomSpeed, scrollDelta)`. Multiplicative — each notch moves the same fraction.
 
-## 9. Legacy Dropdown requires legacy Text, not TMP_Text
+## 9. Dropdown / InputField variants have incompatible text types
 
-`UnityEngine.UI.Dropdown.captionText` and `itemText` are typed `Text`. The TMP-preferred `AddTextComponent` returns null on `GetComponent<Text>()` → assignment doesn't crash, but the first `dd.captionText.text = ...` NREs.
+`UnityEngine.UI.Dropdown.captionText` is typed `Text`; `TMP_Dropdown.captionText` is typed `TMP_Text`. Same for `InputField.textComponent` vs `TMP_InputField.textComponent`. Hand a `Text` to TMP or a TMP to legacy → NRE at runtime on the first `caption.text = ...`. Mixing text variants in one project (legacy dropdown next to TMP labels elsewhere) also looks visibly inconsistent.
 
-**Fix** ([UIWidgetOps.AddLegacyText](Editor/Operations/UIWidgetOps.cs) + `CreateDropdown`): bypass the TMP path with a dedicated `AddLegacyText` helper. For TMP dropdowns, use `Raw` with `components: ["TMPro.TMP_Dropdown"]`.
+**Fix** ([UIWidgetOps.CreateDropdown](Editor/Operations/UIWidgetOps.cs) + [UIWidgetOps.CreateInputField](Editor/Operations/UIWidgetOps.cs) + [asmdef versionDefines](Editor/Dreamer.AgentBridge.UGUI.Editor.asmdef)): `DREAMER_HAS_TMP` is auto-defined when `com.unity.ugui >= 2.0.0` or `com.unity.textmeshpro >= 1.0.0` is present. Dropdown/InputField build with `TMP_Dropdown` / `TMP_InputField` + `TextMeshProUGUI` children under the define, legacy equivalents otherwise. Keeps one code path for consistency and eliminates the NRE risk.
 
 ## 10. RectTransform property-set ordering matters
 

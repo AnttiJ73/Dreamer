@@ -12,7 +12,10 @@
   "precompiledReferences": [],
   "autoReferenced": true,
   "defineConstraints": [],
-  "versionDefines": [],
+  "versionDefines": [
+    { "name": "com.unity.ugui",         "expression": "2.0.0", "define": "DREAMER_HAS_TMP" },
+    { "name": "com.unity.textmeshpro",  "expression": "1.0.0", "define": "DREAMER_HAS_TMP" }
+  ],
   "noEngineReferences": false,
   "version": "0.1.0"
 }

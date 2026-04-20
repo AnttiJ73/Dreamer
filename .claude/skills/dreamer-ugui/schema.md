@@ -207,6 +207,6 @@ Note: inspection emits explicit `anchorMin`/`anchorMax`/`pivot`/`sizeDelta` in a
 ## Limits + known gaps
 
 - **onClick, onValueChanged, onEndEdit** (UI events) are not wired by this add-on. Post-build, either wire them in Unity's Inspector (one click in the UI) or via `set-property` on the event's `m_PersistentCalls.m_Calls` array (complex — Inspector is faster).
-- **TMP_Dropdown**, **TMP_InputField** — not exposed as dedicated types. Use `Raw` with `components: ["TMPro.TMP_Dropdown"]` if needed, or create legacy widgets and manually swap.
+- **TMP_Dropdown**, **TMP_InputField** — built automatically by the `Dropdown` / `InputField` node types when TMP is present (Unity 6's merged UGUI package or `com.unity.textmeshpro`). Legacy equivalents only on projects without TMP. No flag to force one variant — consistency with surrounding text (also TMP via `AddTextComponent`) is the point.
 - **Animator on UI** — out of scope. Add via `add-component` after building.
 - **UI Toolkit (UXML/USS)** — different system; this add-on is uGUI-only.
