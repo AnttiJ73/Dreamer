@@ -232,7 +232,9 @@ async function focusUnity(projectRoot) {
 "@
       # Walk every Unity.exe process and find the one whose command line has
       # -projectpath matching our target. Use Win32_Process (CIM) for command-
-      # line access. Normalise slashes + case on both sides.
+      # line access. Normalise slashes + case on both sides. Use .Replace()
+      # (literal, non-regex) to avoid backslash-escape-pyramid issues through
+      # Node → PowerShell.
       $target = '${target}'
       $matched = $null
       try {
@@ -242,8 +244,7 @@ async function focusUnity(projectRoot) {
           if ($cl -eq $null) { continue }
           # Skip AssetImportWorker / batch-mode children — they include -batchMode.
           if ($cl -like '*-batchMode*') { continue }
-          $normal = $cl -replace '\\\\', '/' -replace '\\\\', '/'
-          $normalLower = $normal.ToLower()
+          $normalLower = $cl.Replace('\\', '/').ToLower()
           if ($normalLower -like "*-projectpath*$target*") {
             $matched = $cim.ProcessId
             break
