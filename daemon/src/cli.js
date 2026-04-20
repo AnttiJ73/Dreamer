@@ -2,6 +2,14 @@
 
 const fs = require('fs');
 const path = require('path');
+
+/**
+ * Absolute path to daemon/.dreamer-source.json — the install-time marker that
+ * records repo URL, ref, SHA, and installed add-ons. Used by both `update` and
+ * `addon install/remove`. Module-scoped so every handler can read it without
+ * redefining.
+ */
+const SOURCE_PATH = path.join(path.resolve(__dirname, '..'), '.dreamer-source.json');
 const { ensureDaemon, isDaemonRunning, startDaemon, stopDaemon, httpRequest, focusUnity } = require('./daemon-manager');
 const configModule = require('./config');
 const schemas = require('./schemas');
@@ -1100,7 +1108,6 @@ async function run(argv) {
       case 'update': {
         const { spawnSync } = require('child_process');
         const os = require('os');
-        const SOURCE_PATH = path.join(path.resolve(__dirname, '..'), '.dreamer-source.json');
         if (!fs.existsSync(SOURCE_PATH)) {
           fail('No daemon/.dreamer-source.json — self-update disabled. This Dreamer install was not produced by the installer, or the source file was deleted. Reinstall via https://github.com/AnttiJ73/Dreamer/blob/main/INSTALL.md, or pull manually.');
         }
@@ -1263,6 +1270,7 @@ async function run(argv) {
 
       case 'addon': {
         // addon list | addon install <name> | addon remove <name>
+        const { spawnSync } = require('child_process');
         const sub = positional[1];
         const KNOWN_ADDONS = {
           ugui: {
