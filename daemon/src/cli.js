@@ -1494,16 +1494,31 @@ For any Canvas (uGUI) UI task — menus, HUDs, panels, buttons, scroll views —
         const kind = positional[1];
         if (!kind) {
           out({
-            usage: 'dreamer help <kind>',
+            usage: 'dreamer help <kind> | dreamer help conventions',
             documented: schemas.list(),
+            conventionsHint: 'Run `dreamer help conventions` for cross-cutting rules: target-form flags (--asset / --scene-object / --child-path), value formats (asset/scene refs, sub-assets, sparse arrays), play-mode gating, multi-agent coordination, forbidden patterns. These rules apply to every command; per-kind schemas only document kind-specific args.',
             note: 'Only kinds listed in "documented" have a schema so far. All other kinds still work; they just lack machine-readable arg docs. Run `dreamer --help` for the full CLI command list.',
           });
+          break;
+        }
+        if (kind === 'conventions') {
+          out(schemas.conventions);
+          break;
         }
         const schema = schemas.get(kind);
         if (!schema) {
-          fail(`No schema for '${kind}'. Documented kinds: ${schemas.list().join(', ')}`);
+          fail(`No schema for '${kind}'. Documented kinds: ${schemas.list().join(', ')}. Try \`dreamer help conventions\` for cross-cutting rules.`);
         }
-        out(schema);
+        // Auto-inject a pointer to the conventions doc so callers reading any
+        // schema see the cross-cutting reference without each schema repeating
+        // it in its own description.
+        out({
+          ...schema,
+          seeAlso: [
+            ...(schema.seeAlso || []),
+            './bin/dreamer help conventions  — universal flags, target forms, path syntax, value formats, play-mode gating, multi-agent rules, forbidden patterns',
+          ],
+        });
         break;
       }
 

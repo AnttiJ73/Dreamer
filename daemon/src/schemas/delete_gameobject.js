@@ -1,34 +1,13 @@
 'use strict';
 
+const { commonArgs } = require('./_common');
+
 module.exports = {
   kind: 'delete_gameobject',
-  summary: 'Delete a GameObject from the active scene OR from inside a prefab. USE THIS instead of trying to clear m_IsActive, remove all components, or wire up an Editor menu item — none of those work.',
+  summary: 'Delete a GameObject from the active scene OR from inside a prefab. CLI verb: `delete-gameobject`. USE THIS instead of trying to clear m_IsActive, remove all components, or wire up an Editor menu item.',
   requirements: null,
-  args: {
-    sceneObjectPath: {
-      type: 'string',
-      cli: '--scene-object',
-      description: 'Path / name of the scene GameObject to delete. Children are destroyed with the parent (Unity default). CLI: --scene-object',
-    },
-    assetPath: {
-      type: 'string',
-      cli: '--asset',
-      description: 'Path to a prefab asset; combined with --child-path, deletes a child inside the prefab. CLI: --asset',
-    },
-    guid: {
-      type: 'string',
-      cli: '--asset (GUID form)',
-      description: 'Asset GUID (alternative to assetPath). CLI: --asset',
-    },
-    childPath: {
-      type: 'string',
-      cli: '--child-path',
-      description: 'For prefab mode: slash-separated path of the child to delete (relative to the prefab root). Required for prefab mode (deleting the prefab root via this command is not supported — delete the .prefab file instead). CLI: --child-path',
-    },
-  },
-  constraints: [
-    { rule: 'atLeastOne', fields: ['sceneObjectPath', 'assetPath', 'guid'] },
-  ],
+  args: commonArgs.target(),
+  constraints: [commonArgs.targetAtLeastOne()],
   result: {
     type: 'object',
     fields: {

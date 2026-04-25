@@ -1,46 +1,27 @@
 'use strict';
 
+const { commonArgs } = require('./_common');
+
 module.exports = {
   kind: 'add_component',
-  summary: 'Attach a Component (MonoBehaviour or built-in) to a prefab asset (root or any child) or a scene object.',
+  summary: 'Attach a Component (MonoBehaviour or built-in) to a prefab asset (root or any child) or a scene object. Auto-waits for compilation if .cs files have changed. Use --child-path to target a child within a prefab. See `help conventions` for target-form rules.',
   requirements: { compilation: true },
   args: {
-    assetPath: {
-      type: 'string',
-      cli: '--asset',
-      description: 'Path to a prefab asset, e.g. "Assets/Prefabs/Player.prefab". CLI: --asset',
-    },
-    guid: {
-      type: 'string',
-      cli: '--asset (GUID form)',
-      description: 'Asset GUID (alternative to assetPath; pass via --asset). CLI: --asset',
-    },
-    sceneObjectPath: {
-      type: 'string',
-      cli: '--scene-object',
-      description: 'Name or hierarchy path of a scene object instance, e.g. "Player" or "Parent/Child". CLI: --scene-object',
-    },
-    childPath: {
-      type: 'string',
-      cli: '--child-path',
-      description: 'Target a NESTED GameObject inside the prefab (slash-separated path from the prefab root, e.g. "Visuals/Body"). Required when adding a component to a prefab child rather than the prefab root. CLI: --child-path',
-    },
+    ...commonArgs.target(),
     typeName: {
       type: 'string',
       required: true,
       cli: '--type',
-      description: 'Fully-qualified type name of the component to add, e.g. "Game.PlayerController" or "UnityEngine.Rigidbody". CLI: --type',
+      description: 'Fully-qualified type name of the component to add, e.g. "Game.PlayerController" or "UnityEngine.Rigidbody".',
     },
   },
-  constraints: [
-    { rule: 'atLeastOne', fields: ['assetPath', 'guid', 'sceneObjectPath'] },
-  ],
+  constraints: [commonArgs.targetAtLeastOne()],
   result: {
     type: 'object',
     fields: {
-      typeName: { type: 'string', description: 'The resolved full type name that was attached.' },
-      sceneObjectPath: { type: 'string', description: 'Set when attached to a scene object.' },
-      assetPath: { type: 'string', description: 'Set when attached to a prefab asset.' },
+      typeName: { type: 'string' },
+      sceneObjectPath: { type: 'string' },
+      assetPath: { type: 'string' },
       childPath: { type: 'string', description: 'Set when attached to a nested child of a prefab.' },
     },
   },

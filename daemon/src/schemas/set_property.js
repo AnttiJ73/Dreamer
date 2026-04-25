@@ -1,56 +1,37 @@
 'use strict';
 
+const { commonArgs } = require('./_common');
+
 module.exports = {
   kind: 'set_property',
-  summary: 'Set a property or serialized field on a component attached to a prefab (root or any child) or scene object.',
+  summary: 'Set a property or serialized field on a component attached to a prefab (root or any child) or scene object. NOTE: m_Name / name cannot be set this way — use the `rename` command. See `help conventions` → valueFormats for the full --value catalogue (refs, sub-assets, sparse arrays).',
   requirements: null,
   args: {
-    assetPath: {
-      type: 'string',
-      cli: '--asset',
-      description: 'Path to a prefab asset, e.g. "Assets/Prefabs/Player.prefab". CLI: --asset',
-    },
-    guid: {
-      type: 'string',
-      cli: '--asset (GUID form)',
-      description: 'Asset GUID (alternative to assetPath; pass via --asset). CLI: --asset',
-    },
-    sceneObjectPath: {
-      type: 'string',
-      cli: '--scene-object',
-      description: 'Name or hierarchy path of a scene object instance. CLI: --scene-object',
-    },
-    childPath: {
-      type: 'string',
-      cli: '--child-path',
-      description: 'For nested GameObjects inside a prefab, the slash-separated path from the prefab root (e.g. "Visuals/Body"). Required when targeting a prefab child rather than the prefab root. CLI: --child-path',
-    },
+    ...commonArgs.target(),
     componentType: {
       type: 'string',
       cli: '--component',
-      description: 'Fully-qualified component type name (e.g. "Game.PlayerController" or "SpriteRenderer"). Optional — if omitted, the first non-Transform component is targeted. CLI: --component',
+      description: 'Fully-qualified component type name (e.g. "Game.PlayerController" or "SpriteRenderer"). Optional — if omitted, the first non-Transform component is targeted.',
     },
     propertyPath: {
       type: 'string',
       required: true,
       cli: '--property',
-      description: 'Field name. May be a nested path for sub-objects (e.g. "nested.inner"). For arrays/lists, use "fieldName[index]" — bracket form is rewritten internally to Unity\'s "fieldName.Array.data[index]". For appending past current length, use the {"_size": N, "<idx>": ...} sparse form on --value. NOTE: m_Name / name cannot be set via set-property — use the `rename` command instead. CLI: --property',
+      description: 'Field name. Nested paths use dots ("nested.inner"). Arrays use brackets ("entries[24]") — rewritten internally to Unity\'s "entries.Array.data[24]". Bare property names map to Unity m_Pascal serialized fields automatically (e.g. "sprite" → "m_Sprite"). To append past current length, use the {"_size":N,"<idx>":...} sparse form on --value.',
     },
     value: {
       type: 'any',
       required: true,
       cli: '--value',
-      description: 'Value to assign. Primitives pass through; object refs use {"assetRef":"..."} / {"sceneRef":"..."} / {"guid":"..."} / {"self":true,"component":"..."} / {"selfChild":"sub","component":"..."}; null clears a reference. Arrays: [...] replaces fully, {"_size":N,"i":val} sparse-updates. CLI: --value',
+      description: 'Value to assign. See `help conventions` → valueFormats for the full catalogue (primitives, vectors, asset/scene/sub-asset/self refs, sparse arrays, null to clear).',
     },
   },
-  constraints: [
-    { rule: 'atLeastOne', fields: ['assetPath', 'guid', 'sceneObjectPath'] },
-  ],
+  constraints: [commonArgs.targetAtLeastOne()],
   result: {
     type: 'object',
     fields: {
-      before: { type: 'any', description: 'Previous value (best-effort, serialised).' },
-      after: { type: 'any', description: 'New value (best-effort, serialised).' },
+      before: { type: 'any' },
+      after: { type: 'any' },
       resolvedPath: { type: 'string', description: 'The actual property path used (e.g. "m_Sprite" when you wrote "sprite").' },
     },
   },

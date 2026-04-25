@@ -1,49 +1,30 @@
 'use strict';
 
+const { commonArgs } = require('./_common');
+
 module.exports = {
   kind: 'reparent_gameobject',
-  summary: 'Move a GameObject under a new parent — in the active scene OR inside a prefab. Equivalent to drag-and-drop in Unity\'s Hierarchy / Prefab Mode window.',
+  summary: 'Move a GameObject under a new parent — in the active scene OR inside a prefab. CLI verb: `reparent`. Equivalent to drag-and-drop in Unity\'s Hierarchy / Prefab Mode window.',
   requirements: null,
   args: {
-    sceneObjectPath: {
-      type: 'string',
-      cli: '--scene-object',
-      description: 'Scene mode: path / name of the GameObject to move. CLI: --scene-object',
-    },
-    assetPath: {
-      type: 'string',
-      cli: '--asset',
-      description: 'Prefab mode: path to the prefab asset whose hierarchy you\'re editing. CLI: --asset',
-    },
-    guid: {
-      type: 'string',
-      cli: '--asset (GUID form)',
-      description: 'Asset GUID (alternative to assetPath). CLI: --asset',
-    },
-    childPath: {
-      type: 'string',
-      cli: '--child-path',
-      description: 'Prefab mode ONLY: slash-separated path of the GameObject to move, relative to the prefab root (e.g. "Visuals/Body"). Required for prefab mode. CLI: --child-path',
-    },
+    ...commonArgs.target(),
     newParentPath: {
       type: 'string',
       cli: '--new-parent',
-      description: 'Path of the new parent. Scene mode: an absolute scene path. Prefab mode: relative to the prefab root. Omit / pass empty to move to the root (scene root or prefab root depending on mode). CLI: --new-parent',
+      description: 'Path of the new parent. Scene mode: absolute scene path. Prefab mode: relative to the prefab root. Omit / pass empty to move to the root (scene root or prefab root depending on mode).',
     },
     keepWorldSpace: {
       type: 'boolean',
       cli: '--keep-world-space',
-      description: 'When true, the GO\'s world position/rotation/scale stay constant while its local transform is recomputed under the new parent. Default false (preserve local transform — visual position changes if the new parent has a different world transform). CLI: --keep-world-space true|false',
+      description: 'When true, the GO\'s world position/rotation/scale stay constant while its local transform is recomputed under the new parent. Default false (preserve local transform — visual position changes if the new parent has a different world transform).',
     },
     siblingIndex: {
       type: 'integer',
       cli: '--sibling-index',
-      description: 'Optional: place the moved GO at this sibling slot under the new parent (0 = first). Out-of-range values are clamped. CLI: --sibling-index N',
+      description: 'Place the moved GO at this sibling slot under the new parent (0 = first). Out-of-range values are clamped.',
     },
   },
-  constraints: [
-    { rule: 'atLeastOne', fields: ['sceneObjectPath', 'assetPath', 'guid'] },
-  ],
+  constraints: [commonArgs.targetAtLeastOne()],
   result: {
     type: 'object',
     fields: {
@@ -69,11 +50,6 @@ module.exports = {
       title: 'Reparent inside a prefab (paths relative to prefab root)',
       cli: './bin/dreamer reparent --asset Assets/Prefabs/Enemy.prefab --child-path "Visuals/Body" --new-parent "Bones/Root" --wait',
       args: { assetPath: 'Assets/Prefabs/Enemy.prefab', childPath: 'Visuals/Body', newParentPath: 'Bones/Root' },
-    },
-    {
-      title: 'Reparent inside a prefab to the prefab root',
-      cli: './bin/dreamer reparent --asset Assets/Prefabs/Enemy.prefab --child-path "Visuals/Decorative/Detail" --wait',
-      args: { assetPath: 'Assets/Prefabs/Enemy.prefab', childPath: 'Visuals/Decorative/Detail' },
     },
   ],
 };

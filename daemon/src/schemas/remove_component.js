@@ -1,40 +1,21 @@
 'use strict';
 
+const { commonArgs } = require('./_common');
+
 module.exports = {
   kind: 'remove_component',
-  summary: 'Remove a Component from a prefab asset (root or any child) or a scene object.',
+  summary: 'Remove a Component from a prefab asset (root or any child) or scene object. Auto-waits for compilation. Required components like Transform / RectTransform cannot be removed (Unity refuses).',
   requirements: { compilation: true },
   args: {
-    assetPath: {
-      type: 'string',
-      cli: '--asset',
-      description: 'Path to a prefab asset, e.g. "Assets/Prefabs/Player.prefab". CLI: --asset',
-    },
-    guid: {
-      type: 'string',
-      cli: '--asset (GUID form)',
-      description: 'Asset GUID (alternative to assetPath; pass via --asset). CLI: --asset',
-    },
-    sceneObjectPath: {
-      type: 'string',
-      cli: '--scene-object',
-      description: 'Name or hierarchy path of a scene object instance. CLI: --scene-object',
-    },
-    childPath: {
-      type: 'string',
-      cli: '--child-path',
-      description: 'Target a NESTED GameObject inside the prefab (slash-separated path from the prefab root, e.g. "Visuals/Body"). Required when removing a component from a prefab child rather than the prefab root. CLI: --child-path',
-    },
+    ...commonArgs.target(),
     typeName: {
       type: 'string',
       required: true,
       cli: '--type',
-      description: 'Fully-qualified type name to remove, e.g. "UnityEngine.SpriteRenderer". Required components like Transform/RectTransform cannot be removed (Unity refuses). CLI: --type',
+      description: 'Fully-qualified type name to remove, e.g. "UnityEngine.SpriteRenderer".',
     },
   },
-  constraints: [
-    { rule: 'atLeastOne', fields: ['assetPath', 'guid', 'sceneObjectPath'] },
-  ],
+  constraints: [commonArgs.targetAtLeastOne()],
   result: {
     type: 'object',
     fields: {

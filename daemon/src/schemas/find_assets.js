@@ -2,20 +2,23 @@
 
 module.exports = {
   kind: 'find_assets',
-  summary: 'Search the Unity project for assets by type, name pattern, or folder.',
+  summary: 'Search the Unity project for assets by type, name pattern, or folder. Run this BEFORE referencing an asset by path to verify it exists. CLI verb: `find-assets`.',
   requirements: null,
   args: {
     type: {
       type: 'string',
-      description: 'Asset type filter: "prefab", "script", "scene", "material", "texture", or "any".',
+      cli: '--type',
       enum: ['prefab', 'script', 'scene', 'material', 'texture', 'any'],
+      description: 'Asset type filter. Defaults to "any".',
     },
     name: {
       type: 'string',
+      cli: '--name',
       description: 'Name pattern; supports * wildcards (e.g. "Player*").',
     },
     path: {
       type: 'string',
+      cli: '--path',
       description: 'Limit search to this folder (e.g. "Assets/Prefabs").',
     },
   },
@@ -27,7 +30,15 @@ module.exports = {
     },
   },
   examples: [
-    { args: { type: 'prefab' }, note: 'All prefabs in the project.' },
-    { args: { type: 'script', name: 'Player*', path: 'Assets/Scripts' } },
+    {
+      title: 'All prefabs in the project',
+      cli: './bin/dreamer find-assets --type prefab --wait',
+      args: { type: 'prefab' },
+    },
+    {
+      title: 'Player-prefixed scripts in a specific folder',
+      cli: './bin/dreamer find-assets --type script --name "Player*" --path Assets/Scripts --wait',
+      args: { type: 'script', name: 'Player*', path: 'Assets/Scripts' },
+    },
   ],
 };

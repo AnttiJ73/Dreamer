@@ -45,11 +45,16 @@ Project-local CLI: `./bin/dreamer <command>` from the Unity project root (POSIX/
 ./bin/dreamer compile-status
 ./bin/dreamer console --count 20
 ./bin/dreamer activity --since 2m       # multi-agent visibility — what other Claude sessions did recently
-./bin/dreamer help                      # list documented kinds
-./bin/dreamer help add_component        # arg schema for one kind
+
+# Discovery — every command has a structured arg schema and worked examples
+./bin/dreamer help                      # list ALL documented kinds (38 total)
+./bin/dreamer help conventions          # cross-cutting rules: target forms, value formats, play-mode, multi-agent, forbidden patterns
+./bin/dreamer help add_component        # full schema for one kind: args (with CLI flags), constraints, examples (CLI + JSON form)
 
 # Canvas UI — see dreamer-ugui skill (auto-loads when UI keywords appear)
 ```
+
+**Authoritative discovery surface**: `./bin/dreamer help` covers all 38 commands with full schemas, CLI-flag annotations, and copy-pastable examples. Read `help conventions` once per session to internalize the cross-cutting rules; then `help <kind>` per command. Don't memorize from this skill doc — when in doubt, query `help`.
 
 **Reference companions** — load these only when you need their topic, not every session:
 - [property-values.md](property-values.md) — `--value` format catalogue: arrays, structs, sub-asset references, `entries[N]` syntax, scene path rules, `m_Name` redirect.
