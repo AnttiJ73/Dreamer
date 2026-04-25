@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Reflection;
 using UnityEditor;
 using UnityEngine;
@@ -32,10 +33,8 @@ namespace Dreamer.AgentBridge
             return CommandResult.Ok(json);
         }
 
-        /// <summary>
-        /// Execute a static method via reflection. Advanced use only.
-        /// Args: { typeName: "UnityEditor.SceneView", methodName: "RepaintAll", args?: [...] }
-        /// </summary>
+        // Static-method invoker. Args coerced against the resolved overload's
+        // parameter list (SimpleJson-parsed values won't auto-cast long->int).
         public static CommandResult ExecuteMethod(Dictionary<string, object> args)
         {
             string typeName = SimpleJson.GetString(args, "typeName");
@@ -50,38 +49,34 @@ namespace Dreamer.AgentBridge
             if (type == null)
                 return CommandResult.Fail($"Type not found: {typeName}");
 
-            // Collect method arguments if provided
-            object[] methodArgs = null;
+            List<object> rawArgs = null;
             if (args.TryGetValue("args", out object argsObj) && argsObj is List<object> argList)
             {
-                methodArgs = argList.ToArray();
+                rawArgs = argList;
             }
 
             BindingFlags flags = BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
-            MethodInfo method = null;
-
-            if (methodArgs == null || methodArgs.Length == 0)
-            {
-                method = type.GetMethod(methodName, flags, null, Type.EmptyTypes, null);
-                // Fallback: find any static method with that name
-                if (method == null)
-                    method = type.GetMethod(methodName, flags);
-            }
-            else
-            {
-                // Try to find a matching method by name (parameter type matching is best-effort)
-                method = type.GetMethod(methodName, flags);
-            }
-
+            MethodInfo method = ResolveStaticMethod(type, methodName, flags, rawArgs?.Count ?? 0);
             if (method == null)
-                return CommandResult.Fail($"Static method '{methodName}' not found on type '{typeName}'.");
+                return CommandResult.Fail($"Static method '{methodName}' not found on type '{typeName}'" +
+                    (rawArgs != null ? $" (looked for arity {rawArgs.Count})" : "") + ".");
 
             if (!method.IsStatic)
                 return CommandResult.Fail($"Method '{methodName}' on type '{typeName}' is not static.");
 
+            object[] methodArgs;
             try
             {
-                object result = method.Invoke(null, methodArgs ?? new object[0]);
+                methodArgs = CoerceArguments(method, rawArgs);
+            }
+            catch (Exception ex)
+            {
+                return CommandResult.Fail($"Failed to coerce arguments for {typeName}.{methodName}: {ex.Message}");
+            }
+
+            try
+            {
+                object result = method.Invoke(null, methodArgs);
 
                 var json = SimpleJson.Object()
                     .Put("executed", true)
@@ -102,6 +97,72 @@ namespace Dreamer.AgentBridge
             catch (Exception ex)
             {
                 return CommandResult.Fail($"Failed to invoke method: {ex.Message}");
+            }
+        }
+
+        static MethodInfo ResolveStaticMethod(Type type, string name, BindingFlags flags, int arity)
+        {
+            MethodInfo best = null;
+            foreach (var m in type.GetMethods(flags))
+            {
+                if (m.Name != name) continue;
+                var ps = m.GetParameters();
+                if (ps.Length == arity) { best = m; break; }
+                if (best == null) best = m;
+            }
+            return best;
+        }
+
+        static object[] CoerceArguments(MethodInfo method, List<object> rawArgs)
+        {
+            var ps = method.GetParameters();
+            var result = new object[ps.Length];
+            for (int i = 0; i < ps.Length; i++)
+            {
+                object raw = (rawArgs != null && i < rawArgs.Count) ? rawArgs[i] : Type.Missing;
+                if (raw == Type.Missing)
+                {
+                    if (ps[i].HasDefaultValue) result[i] = ps[i].DefaultValue;
+                    else throw new ArgumentException($"missing arg [{i}] for parameter '{ps[i].Name}' ({ps[i].ParameterType.Name})");
+                    continue;
+                }
+                result[i] = CoerceValue(raw, ps[i].ParameterType, $"[{i}] {ps[i].Name}");
+            }
+            return result;
+        }
+
+        static object CoerceValue(object raw, Type target, string ctx)
+        {
+            if (raw == null)
+            {
+                if (target.IsValueType && Nullable.GetUnderlyingType(target) == null)
+                    throw new ArgumentException($"{ctx}: null cannot bind to value type {target.Name}");
+                return null;
+            }
+            if (target.IsInstanceOfType(raw)) return raw;
+
+            if (target.IsArray && raw is List<object> rawList)
+            {
+                Type elemType = target.GetElementType();
+                var arr = Array.CreateInstance(elemType, rawList.Count);
+                for (int j = 0; j < rawList.Count; j++)
+                    arr.SetValue(CoerceValue(rawList[j], elemType, $"{ctx}[{j}]"), j);
+                return arr;
+            }
+
+            if (target.IsEnum)
+            {
+                if (raw is string s) return Enum.Parse(target, s, ignoreCase: true);
+                return Enum.ToObject(target, Convert.ChangeType(raw, Enum.GetUnderlyingType(target), CultureInfo.InvariantCulture));
+            }
+
+            try
+            {
+                return Convert.ChangeType(raw, target, CultureInfo.InvariantCulture);
+            }
+            catch (Exception ex)
+            {
+                throw new ArgumentException($"{ctx}: cannot coerce {raw.GetType().Name} '{raw}' to {target.Name} ({ex.Message})");
             }
         }
     }

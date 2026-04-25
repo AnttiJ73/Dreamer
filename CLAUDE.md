@@ -52,6 +52,23 @@ Unity side activates automatically when the package is loaded (InitializeOnLoad)
 - **Protocol**: JSON over HTTP. Daemon is server, Unity is polling client, CLI is request client
 - **Port**: 18710 default, configurable via `DREAMER_PORT` env var or EditorPrefs
 
+## Code style — comments
+
+Default to **no comments**. The code is the source of truth.
+
+Add a comment ONLY when one of:
+- A non-obvious *why* (a constraint, a Unity quirk, a past incident the code defends against). The *what* should be readable from the code itself.
+- A directive other agents will need (e.g. "keep this list in sync with X").
+- A short summary on a public API surface (one line).
+
+Avoid:
+- Multi-paragraph XML doc comments. One line max.
+- Comments that restate what the code does.
+- Comments justifying a refactor or describing what changed (that's commit message territory).
+- Decorative dividers (`// ── Section ──`) inside small files. Use them sparingly in long files only when they aid navigation.
+
+When editing a file with existing verbose comments, leave them alone unless they're stale or wrong — bulk rewrites are out of scope. Apply this rule to new and modified blocks only.
+
 ## File structure
 
 ```

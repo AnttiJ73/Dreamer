@@ -17,16 +17,17 @@
  *     ]
  *   }
  *
- * Supported types: 'string', 'number', 'boolean', 'object', 'array', 'any'.
+ * Supported types: 'string', 'number', 'integer', 'boolean', 'object', 'array', 'any'.
  *
  * Returns { valid: boolean, errors: string[] }.
  */
 
-const KNOWN_TYPES = new Set(['string', 'number', 'boolean', 'object', 'array', 'any']);
+const KNOWN_TYPES = new Set(['string', 'number', 'integer', 'boolean', 'object', 'array', 'any']);
 
 function typeOf(value) {
   if (value === null) return 'null';
   if (Array.isArray(value)) return 'array';
+  if (typeof value === 'number' && Number.isInteger(value)) return 'integer';
   return typeof value;
 }
 
@@ -51,7 +52,10 @@ function validate(schema, args) {
       } else {
         const actual = typeOf(value);
         const expected = field.type;
-        if (expected !== actual) {
+        // 'number' accepts both integers and floats; 'integer' requires exact int.
+        const ok = expected === actual
+          || (expected === 'number' && actual === 'integer');
+        if (!ok) {
           errors.push(`arg '${name}' must be ${expected}, got ${actual}`);
         }
       }

@@ -447,16 +447,51 @@ async function run(argv) {
         break;
 
       case 'inspect': {
+        const inspectArgs = {};
+        if (flags.depth !== undefined) inspectArgs.depth = parseInt(flags.depth, 10);
+        if (flags['include-transforms']) inspectArgs.includeTransforms = true;
+        if (flags['include-fields']) inspectArgs.includeFields = true;
         if (flags['scene-object']) {
-          // Inspect a specific scene object
-          await submitCommand('inspect_asset', { sceneObjectPath: flags['scene-object'] }, flags);
+          inspectArgs.sceneObjectPath = flags['scene-object'];
+          await submitCommand('inspect_asset', inspectArgs, flags);
         } else {
           const target = positional[1];
-          if (!target) fail('Usage: dreamer inspect <path-or-guid> OR dreamer inspect --scene-object NAME');
+          if (!target) fail('Usage: dreamer inspect <path-or-guid> [--depth N] [--include-transforms] [--include-fields] OR dreamer inspect --scene-object NAME');
           const isGuid = /^[0-9a-f]{32}$/i.test(target);
-          const args = isGuid ? { guid: target } : { assetPath: target };
-          await submitCommand('inspect_asset', args, flags);
+          Object.assign(inspectArgs, isGuid ? { guid: target } : { assetPath: target });
+          await submitCommand('inspect_asset', inspectArgs, flags);
         }
+        break;
+      }
+
+      case 'inspect-many': {
+        const raw = flags.paths || flags.path;
+        if (!raw) fail('Usage: dreamer inspect-many --paths a.prefab,b.prefab,c.prefab [--depth N] [--include-transforms] [--include-fields]');
+        const paths = String(raw).split(',').map(s => s.trim()).filter(Boolean);
+        if (paths.length === 0) fail('--paths must list at least one asset path.');
+        const imArgs = { paths };
+        if (flags.depth !== undefined) imArgs.depth = parseInt(flags.depth, 10);
+        if (flags['include-transforms']) imArgs.includeTransforms = true;
+        if (flags['include-fields']) imArgs.includeFields = true;
+        await submitCommand('inspect_assets', imArgs, flags);
+        break;
+      }
+
+      case 'read-property': {
+        if (!flags.asset && !flags['scene-object']) fail('--asset or --scene-object is required for read-property');
+        if (!flags.property) fail('--property is required for read-property');
+        const rpArgs = {
+          componentType: flags.component || null,
+          propertyPath: flags.property,
+        };
+        if (flags['scene-object']) {
+          rpArgs.sceneObjectPath = flags['scene-object'];
+        } else {
+          const isGuidRP = /^[0-9a-f]{32}$/i.test(flags.asset);
+          Object.assign(rpArgs, isGuidRP ? { guid: flags.asset } : { assetPath: flags.asset });
+        }
+        if (flags['child-path']) rpArgs.childPath = flags['child-path'];
+        await submitCommand('read_property', rpArgs, flags);
         break;
       }
 
@@ -661,9 +696,15 @@ async function run(argv) {
       }
 
       case 'inspect-hierarchy': {
-        await submitCommand('inspect_hierarchy', {
-          scene: flags.scene || null,
-        }, flags);
+        const ihArgs = { scene: flags.scene || null };
+        if (flags.asset) {
+          const isGuidIH = /^[0-9a-f]{32}$/i.test(flags.asset);
+          Object.assign(ihArgs, isGuidIH ? { guid: flags.asset } : { assetPath: flags.asset });
+        }
+        if (flags.depth !== undefined) ihArgs.depth = parseInt(flags.depth, 10);
+        if (flags['include-transforms']) ihArgs.includeTransforms = true;
+        if (flags['include-fields']) ihArgs.includeFields = true;
+        await submitCommand('inspect_hierarchy', ihArgs, flags);
         break;
       }
 
@@ -1072,10 +1113,18 @@ async function run(argv) {
       case 'execute-method': {
         if (!flags.type) fail('--type is required for execute-method');
         if (!flags.method) fail('--method is required for execute-method');
-        await submitCommand('execute_method', {
+        const emArgs = {
           typeName: flags.type,
           methodName: flags.method,
-        }, flags);
+        };
+        if (flags.args !== undefined) {
+          let parsed;
+          try { parsed = JSON.parse(flags.args); }
+          catch (e) { fail(`--args must be JSON: ${e.message}`); }
+          if (!Array.isArray(parsed)) fail('--args must be a JSON array');
+          emArgs.args = parsed;
+        }
+        await submitCommand('execute_method', emArgs, flags);
         break;
       }
 
@@ -1491,23 +1540,31 @@ For any Canvas (uGUI) UI task — menus, HUDs, panels, buttons, scroll views —
       }
 
       case 'help': {
-        const kind = positional[1];
-        if (!kind) {
+        const rawKind = positional[1];
+        if (!rawKind) {
           out({
-            usage: 'dreamer help <kind> | dreamer help conventions',
+            usage: 'dreamer help <kind-or-verb> | dreamer help conventions',
             documented: schemas.list(),
-            conventionsHint: 'Run `dreamer help conventions` for cross-cutting rules: target-form flags (--asset / --scene-object / --child-path), value formats (asset/scene refs, sub-assets, sparse arrays), play-mode gating, multi-agent coordination, forbidden patterns. These rules apply to every command; per-kind schemas only document kind-specific args.',
-            note: 'Only kinds listed in "documented" have a schema so far. All other kinds still work; they just lack machine-readable arg docs. Run `dreamer --help` for the full CLI command list.',
+            conventionsHint: 'Run `dreamer help conventions` for cross-cutting rules: target-form flags (--asset / --scene-object / --child-path), value formats (asset/scene refs, sub-assets, sparse arrays), play-mode gating, multi-agent coordination, forbidden patterns.',
+            note: '`help` accepts both kind names (snake_case, e.g. `create_hierarchy`) and CLI verbs (kebab-case, e.g. `create-hierarchy`). Run `dreamer --help` for the full CLI command list.',
           });
           break;
         }
-        if (kind === 'conventions') {
+        if (rawKind === 'conventions') {
           out(schemas.conventions);
           break;
         }
+        // CLI verbs that don't map to their kind via the kebab->snake transform.
+        const VERB_ALIASES = {
+          'inspect': 'inspect_asset',
+          'inspect-many': 'inspect_assets',
+          'rename': 'rename_gameobject',
+          'reparent': 'reparent_gameobject',
+        };
+        const kind = VERB_ALIASES[rawKind] || rawKind.replace(/-/g, '_');
         const schema = schemas.get(kind);
         if (!schema) {
-          fail(`No schema for '${kind}'. Documented kinds: ${schemas.list().join(', ')}. Try \`dreamer help conventions\` for cross-cutting rules.`);
+          fail(`No schema for '${rawKind}'. Documented kinds: ${schemas.list().join(', ')}. Try \`dreamer help conventions\` for cross-cutting rules.`);
         }
         // Auto-inject a pointer to the conventions doc so callers reading any
         // schema see the cross-cutting reference without each schema repeating

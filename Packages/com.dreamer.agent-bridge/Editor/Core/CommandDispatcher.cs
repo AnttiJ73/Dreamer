@@ -26,6 +26,7 @@ namespace Dreamer.AgentBridge
             // Asset operations
             _handlers["find_assets"]       = AssetOps.FindAssets;
             _handlers["inspect_asset"]     = AssetOps.InspectAsset;
+            _handlers["inspect_assets"]    = AssetOps.InspectAssets;
             _handlers["save_assets"]       = AssetOps.SaveAssets;
             _handlers["refresh_assets"]    = AssetOps.RefreshAssets;
             _handlers["reimport_scripts"]  = AssetOps.ReimportScripts;
@@ -40,6 +41,7 @@ namespace Dreamer.AgentBridge
 
             // Property operations
             _handlers["set_property"]      = PropertyOps.SetProperty;
+            _handlers["read_property"]     = PropertyOps.ReadProperty;
 
             // Prefab operations
             _handlers["create_prefab"]       = PrefabOps.CreatePrefab;
@@ -177,10 +179,12 @@ namespace Dreamer.AgentBridge
         {
             return kind == "find_assets"
                 || kind == "inspect_asset"
+                || kind == "inspect_assets"
                 || kind == "inspect_hierarchy"
                 || kind == "inspect_material"
                 || kind == "inspect_shader"
                 || kind == "shader_status"
+                || kind == "read_property"
                 || kind == "create_scene"
                 || kind == "open_scene";
         }

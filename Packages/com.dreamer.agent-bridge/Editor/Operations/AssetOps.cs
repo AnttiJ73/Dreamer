@@ -93,10 +93,12 @@ namespace Dreamer.AgentBridge
         /// </summary>
         public static CommandResult InspectAsset(Dictionary<string, object> args)
         {
+            var opts = ParseInspectionOptions(args);
+
             // Scene object inspection
             string sceneObjectPath = SimpleJson.GetString(args, "sceneObjectPath");
             if (!string.IsNullOrEmpty(sceneObjectPath))
-                return InspectSceneObject(sceneObjectPath);
+                return InspectSceneObject(sceneObjectPath, opts);
 
             string assetPath = ResolveAssetPath(args);
             if (assetPath == null)
@@ -115,10 +117,12 @@ namespace Dreamer.AgentBridge
                 .Put("type", typeName)
                 .Put("name", Path.GetFileNameWithoutExtension(assetPath));
 
-            // Type-specific details
             if (assetType == typeof(GameObject) || assetPath.EndsWith(".prefab", StringComparison.OrdinalIgnoreCase))
             {
-                InspectPrefab(assetPath, result);
+                string node = BuildPrefabNode(assetPath, opts);
+                if (node != null)
+                    return CommandResult.Ok(MergeJsonObjects(result.ToString(), node));
+                return CommandResult.Ok(result.ToString());
             }
             else if (assetType == typeof(MonoScript) || assetPath.EndsWith(".cs", StringComparison.OrdinalIgnoreCase))
             {
@@ -141,6 +145,68 @@ namespace Dreamer.AgentBridge
             }
 
             return CommandResult.Ok(result.ToString());
+        }
+
+        // Bulk inspect — single round-trip. Order preserved; per-item failures become {path,error}.
+        public static CommandResult InspectAssets(Dictionary<string, object> args)
+        {
+            if (!args.TryGetValue("paths", out object pathsObj) || !(pathsObj is List<object> rawList) || rawList.Count == 0)
+                return CommandResult.Fail("'paths' is required and must be a non-empty array of asset paths.");
+
+            var perItemArgs = new Dictionary<string, object>(args);
+            perItemArgs.Remove("paths");
+
+            var items = SimpleJson.Array();
+            int succeeded = 0, failed = 0;
+            foreach (var raw in rawList)
+            {
+                string p = raw as string;
+                if (string.IsNullOrEmpty(p))
+                {
+                    failed++;
+                    items.AddRaw(SimpleJson.Object()
+                        .PutNull("path")
+                        .Put("error", "non-string entry in paths[]")
+                        .ToString());
+                    continue;
+                }
+                perItemArgs["assetPath"] = p;
+                perItemArgs.Remove("guid");
+                perItemArgs.Remove("sceneObjectPath");
+
+                var sub = InspectAsset(perItemArgs);
+                if (sub.success)
+                {
+                    succeeded++;
+                    items.AddRaw(sub.resultJson);
+                }
+                else
+                {
+                    failed++;
+                    items.AddRaw(SimpleJson.Object()
+                        .Put("path", p)
+                        .Put("error", sub.error ?? "unknown")
+                        .ToString());
+                }
+            }
+
+            var json = SimpleJson.Object()
+                .Put("count", rawList.Count)
+                .Put("succeeded", succeeded)
+                .Put("failed", failed)
+                .PutRaw("items", items.ToString())
+                .ToString();
+            return CommandResult.Ok(json);
+        }
+
+        static InspectionOptions ParseInspectionOptions(Dictionary<string, object> args)
+        {
+            return new InspectionOptions
+            {
+                Depth = SimpleJson.GetInt(args, "depth", -1),
+                IncludeTransforms = SimpleJson.GetBool(args, "includeTransforms", false),
+                IncludeFields = SimpleJson.GetBool(args, "includeFields", false),
+            };
         }
 
         /// <summary>
@@ -463,94 +529,31 @@ namespace Dreamer.AgentBridge
 
         // ── Scene object inspection ──
 
-        static CommandResult InspectSceneObject(string objectPath)
+        static CommandResult InspectSceneObject(string objectPath, InspectionOptions opts)
         {
             var go = PropertyOps.FindSceneObject(objectPath, out string findError);
             if (go == null)
                 return CommandResult.Fail(findError ?? $"Scene object not found at path: {objectPath}");
 
-            var result = SimpleJson.Object()
-                .Put("name", go.name)
-                .Put("path", GetHierarchyPath(go))
-                .Put("instanceId", go.GetInstanceID())
-                .Put("active", go.activeSelf)
-                .Put("tag", go.tag)
-                .Put("layer", go.layer)
-                .Put("isStatic", go.isStatic);
+            // Build the unified node payload first.
+            string nodeJson = Inspection.BuildGameObjectInfo(go, opts);
 
-            // Is it a prefab instance?
+            var extras = SimpleJson.Object()
+                .Put("path", GetHierarchyPath(go));
             var prefabAsset = PrefabUtility.GetCorrespondingObjectFromSource(go);
             if (prefabAsset != null)
-            {
-                string prefabPath = AssetDatabase.GetAssetPath(prefabAsset);
-                result.Put("prefabSource", prefabPath);
-            }
+                extras.Put("prefabSource", AssetDatabase.GetAssetPath(prefabAsset));
+            return CommandResult.Ok(MergeJsonObjects(nodeJson, extras.ToString()));
+        }
 
-            // Components with serialized fields
-            var comps = SimpleJson.Array();
-            foreach (var comp in go.GetComponents<Component>())
-            {
-                if (comp == null) continue;
-                var compObj = SimpleJson.Object()
-                    .Put("type", comp.GetType().FullName)
-                    .Put("name", comp.GetType().Name);
-
-                // List serialized fields
-                var fields = SimpleJson.Array();
-                var so = new SerializedObject(comp);
-                var prop = so.GetIterator();
-                if (prop.NextVisible(true))
-                {
-                    do
-                    {
-                        // Skip internal Unity fields
-                        if (prop.name == "m_Script" || prop.name == "m_ObjectHideFlags") continue;
-                        var fieldObj = SimpleJson.Object()
-                            .Put("name", prop.name)
-                            .Put("type", prop.propertyType.ToString());
-                        // Show value for simple types
-                        switch (prop.propertyType)
-                        {
-                            case SerializedPropertyType.Integer: fieldObj.Put("value", prop.intValue); break;
-                            case SerializedPropertyType.Float: fieldObj.Put("value", prop.floatValue); break;
-                            case SerializedPropertyType.Boolean: fieldObj.Put("value", prop.boolValue); break;
-                            case SerializedPropertyType.String: fieldObj.Put("value", prop.stringValue); break;
-                            case SerializedPropertyType.Enum: fieldObj.Put("value", prop.enumNames[prop.enumValueIndex]); break;
-                            case SerializedPropertyType.ObjectReference:
-                                fieldObj.Put("value", prop.objectReferenceValue != null ? prop.objectReferenceValue.name : "null");
-                                break;
-                        }
-                        fields.AddRaw(fieldObj.ToString());
-                    } while (prop.NextVisible(false));
-                }
-                compObj.PutRaw("fields", fields.ToString());
-                comps.AddRaw(compObj.ToString());
-            }
-            result.PutRaw("components", comps.ToString());
-
-            // Children
-            var children = SimpleJson.Array();
-            for (int i = 0; i < go.transform.childCount; i++)
-            {
-                var child = go.transform.GetChild(i).gameObject;
-                var childComps = SimpleJson.Array();
-                foreach (var c in child.GetComponents<Component>())
-                {
-                    if (c == null) continue;
-                    childComps.AddRaw(SimpleJson.Object()
-                        .Put("type", c.GetType().Name)
-                        .ToString());
-                }
-                children.AddRaw(SimpleJson.Object()
-                    .Put("name", child.name)
-                    .Put("active", child.activeSelf)
-                    .Put("childCount", child.transform.childCount)
-                    .PutRaw("components", childComps.ToString())
-                    .ToString());
-            }
-            result.PutRaw("children", children.ToString());
-
-            return CommandResult.Ok(result.ToString());
+        // Splice two `{...}` JSON objects into one. Inputs must both be objects.
+        static string MergeJsonObjects(string a, string b)
+        {
+            if (string.IsNullOrEmpty(b) || b == "{}") return a;
+            if (string.IsNullOrEmpty(a) || a == "{}") return b;
+            string aInner = a.Substring(1, a.Length - 2);
+            string bInner = b.Substring(1, b.Length - 2);
+            return "{" + aInner + "," + bInner + "}";
         }
 
         static string GetHierarchyPath(GameObject go)
@@ -610,41 +613,11 @@ namespace Dreamer.AgentBridge
             return string.Join(" ", parts);
         }
 
-        static void InspectPrefab(string assetPath, JsonBuilder result)
+        static string BuildPrefabNode(string assetPath, InspectionOptions opts)
         {
             var prefab = AssetDatabase.LoadAssetAtPath<GameObject>(assetPath);
-            if (prefab == null) return;
-
-            // Root components
-            var rootComps = SimpleJson.Array();
-            foreach (var comp in prefab.GetComponents<Component>())
-            {
-                if (comp == null) continue;
-                rootComps.AddRaw(SimpleJson.Object()
-                    .Put("type", comp.GetType().FullName)
-                    .Put("name", comp.GetType().Name)
-                    .ToString());
-            }
-            result.PutRaw("components", rootComps.ToString());
-
-            // Children (1 level)
-            var children = SimpleJson.Array();
-            for (int i = 0; i < prefab.transform.childCount; i++)
-            {
-                var child = prefab.transform.GetChild(i);
-                var childComps = SimpleJson.Array();
-                foreach (var comp in child.GetComponents<Component>())
-                {
-                    if (comp == null) continue;
-                    childComps.Add(comp.GetType().Name);
-                }
-                children.AddRaw(SimpleJson.Object()
-                    .Put("name", child.name)
-                    .PutRaw("components", childComps.ToString())
-                    .Put("childCount", child.childCount)
-                    .ToString());
-            }
-            result.PutRaw("children", children.ToString());
+            if (prefab == null) return null;
+            return Inspection.BuildGameObjectInfo(prefab, opts);
         }
 
         static void InspectScript(string assetPath, JsonBuilder result)

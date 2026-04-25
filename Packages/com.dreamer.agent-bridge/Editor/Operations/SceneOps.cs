@@ -487,6 +487,38 @@ namespace Dreamer.AgentBridge
         /// </summary>
         public static CommandResult InspectHierarchy(Dictionary<string, object> args)
         {
+            var opts = new InspectionOptions
+            {
+                Depth = SimpleJson.GetInt(args, "depth", -1),
+                IncludeTransforms = SimpleJson.GetBool(args, "includeTransforms", false),
+                IncludeFields = SimpleJson.GetBool(args, "includeFields", false),
+            };
+
+            // Prefab asset target. Otherwise falls through to scene mode.
+            string assetPath = SimpleJson.GetString(args, "assetPath");
+            if (string.IsNullOrEmpty(assetPath))
+            {
+                string guid = SimpleJson.GetString(args, "guid");
+                if (!string.IsNullOrEmpty(guid))
+                    assetPath = AssetDatabase.GUIDToAssetPath(guid);
+            }
+            if (!string.IsNullOrEmpty(assetPath))
+            {
+                if (!assetPath.EndsWith(".prefab", System.StringComparison.OrdinalIgnoreCase))
+                    return CommandResult.Fail($"--asset for inspect-hierarchy must be a .prefab. Got: {assetPath}");
+                var prefab = AssetDatabase.LoadAssetAtPath<GameObject>(assetPath);
+                if (prefab == null)
+                    return CommandResult.Fail($"Prefab not found at: {assetPath}");
+                string nodeJson = Inspection.BuildGameObjectInfo(prefab, opts);
+                var json = SimpleJson.Object()
+                    .Put("assetPath", assetPath)
+                    .Put("guid", AssetDatabase.AssetPathToGUID(assetPath))
+                    .Put("source", "prefab")
+                    .PutRaw("root", nodeJson)
+                    .ToString();
+                return CommandResult.Ok(json);
+            }
+
             string sceneName = SimpleJson.GetString(args, "scene");
 
             Scene scene;
@@ -511,17 +543,18 @@ namespace Dreamer.AgentBridge
 
             foreach (var root in rootObjects)
             {
-                rootArr.AddRaw(BuildGameObjectInfo(root, includeChildren: true));
+                rootArr.AddRaw(Inspection.BuildGameObjectInfo(root, opts));
             }
 
-            var json = SimpleJson.Object()
+            var sceneJson = SimpleJson.Object()
                 .Put("scene", scene.name)
                 .Put("scenePath", scene.path)
+                .Put("source", "scene")
                 .Put("rootObjectCount", rootObjects.Length)
                 .PutRaw("rootObjects", rootArr.ToString())
                 .ToString();
 
-            return CommandResult.Ok(json);
+            return CommandResult.Ok(sceneJson);
         }
 
         /// <summary>
@@ -904,56 +937,8 @@ namespace Dreamer.AgentBridge
         }
 
         // ── Helpers ──
-
-        static string BuildGameObjectInfo(GameObject go, bool includeChildren)
-        {
-            var obj = SimpleJson.Object()
-                .Put("name", go.name)
-                .Put("instanceId", go.GetInstanceID())
-                .Put("active", go.activeSelf)
-                .Put("tag", go.tag)
-                .Put("layer", go.layer)
-                .Put("isStatic", go.isStatic);
-
-            // Components
-            var comps = SimpleJson.Array();
-            foreach (var comp in go.GetComponents<Component>())
-            {
-                if (comp == null) continue; // Missing script
-                comps.AddRaw(SimpleJson.Object()
-                    .Put("type", comp.GetType().Name)
-                    .Put("fullType", comp.GetType().FullName)
-                    .Put("enabled", IsEnabled(comp))
-                    .ToString());
-            }
-            obj.PutRaw("components", comps.ToString());
-
-            // Children (1 level deep)
-            if (includeChildren && go.transform.childCount > 0)
-            {
-                var children = SimpleJson.Array();
-                for (int i = 0; i < go.transform.childCount; i++)
-                {
-                    var child = go.transform.GetChild(i).gameObject;
-                    children.AddRaw(BuildGameObjectInfo(child, includeChildren: false));
-                }
-                obj.PutRaw("children", children.ToString());
-            }
-            else
-            {
-                obj.Put("childCount", go.transform.childCount);
-            }
-
-            return obj.ToString();
-        }
-
-        static bool IsEnabled(Component comp)
-        {
-            if (comp is Behaviour b) return b.enabled;
-            if (comp is Renderer r) return r.enabled;
-            if (comp is Collider c) return c.enabled;
-            return true;
-        }
+        // (BuildGameObjectInfo + IsEnabled moved to the shared Inspection class —
+        // both inspect_asset and inspect_hierarchy now produce identical node shape.)
 
         // Note: scene-object path resolution is shared via PropertyOps.FindSceneObject,
         // which supports multi-scene, recursive descendant search, and ambiguity detection.

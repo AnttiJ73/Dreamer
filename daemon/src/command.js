@@ -7,11 +7,13 @@ const crypto = require('crypto');
 const KIND_DEFS = {
   find_assets:      { label: 'Find Assets',       requirements: null },
   inspect_asset:    { label: 'Inspect Asset',      requirements: null },
+  inspect_assets:   { label: 'Inspect Assets',     requirements: null },
   create_script:    { label: 'Create Script',      requirements: { compilation: true } },
   add_component:    { label: 'Add Component',      requirements: { compilation: true } },
   remove_component: { label: 'Remove Component',   requirements: { compilation: true } },
   remove_missing_scripts: { label: 'Remove Missing Scripts', requirements: null },
   set_property:     { label: 'Set Property',       requirements: null },
+  read_property:    { label: 'Read Property',      requirements: null },
   create_prefab:    { label: 'Create Prefab',      requirements: null },
   create_gameobject:{ label: 'Create GameObject',  requirements: null },
   delete_gameobject:{ label: 'Delete GameObject',  requirements: null },
@@ -77,10 +79,12 @@ const TERMINAL_STATES = new Set(['succeeded', 'failed', 'blocked', 'cancelled'])
 const COMPILE_SAFE_KINDS = new Set([
   'find_assets',
   'inspect_asset',
+  'inspect_assets',
   'inspect_hierarchy',
   'inspect_material',
   'inspect_shader',
   'shader_status',
+  'read_property',
   'create_scene',
   'open_scene',
 ]);

@@ -27,6 +27,95 @@ namespace Dreamer.AgentBridge
         ///   value { "_size": N, "24": val }   — resize + sparse assignment (append-safe: leaves
         ///                                       existing elements at other indices untouched)
         /// </summary>
+        // Read a serialized property; mirror of SetProperty's targeting logic.
+        public static CommandResult ReadProperty(Dictionary<string, object> args)
+        {
+            string propertyPath = SimpleJson.GetString(args, "propertyPath");
+            if (string.IsNullOrEmpty(propertyPath))
+                return CommandResult.Fail("'propertyPath' is required.");
+
+            string componentTypeName = SimpleJson.GetString(args, "componentType");
+
+            // Scene-object target
+            string sceneObjectPath = SimpleJson.GetString(args, "sceneObjectPath");
+            if (!string.IsNullOrEmpty(sceneObjectPath))
+            {
+                var go = FindSceneObject(sceneObjectPath, out string findError);
+                if (go == null)
+                    return CommandResult.Fail(findError ?? $"Scene object not found at path: {sceneObjectPath}");
+                Component target = FindComponent(go, componentTypeName);
+                if (target == null)
+                    return CommandResult.Fail(string.IsNullOrEmpty(componentTypeName)
+                        ? $"No components found on scene object: {sceneObjectPath}"
+                        : $"Component '{componentTypeName}' not found on scene object: {sceneObjectPath}");
+                return BuildReadResult(target, propertyPath, sceneObjectPath: sceneObjectPath, assetPath: null);
+            }
+
+            // Asset target (prefab or generic asset)
+            string assetPath = AssetOps.ResolveAssetPath(args);
+            if (assetPath == null)
+                return CommandResult.Fail("Target not found. Provide 'assetPath', 'guid', or 'sceneObjectPath'.");
+
+            string childPath = SimpleJson.GetString(args, "childPath");
+            bool isPrefab = assetPath.EndsWith(".prefab", StringComparison.OrdinalIgnoreCase);
+            if (isPrefab)
+            {
+                var prefabAsset = AssetDatabase.LoadMainAssetAtPath(assetPath) as GameObject;
+                if (prefabAsset == null)
+                    return CommandResult.Fail($"Failed to load prefab: {assetPath}");
+                GameObject targetObj = prefabAsset;
+                if (!string.IsNullOrEmpty(childPath))
+                {
+                    Transform child = prefabAsset.transform.Find(childPath);
+                    if (child == null)
+                        return CommandResult.Fail($"Child '{childPath}' not found in prefab '{assetPath}'.");
+                    targetObj = child.gameObject;
+                }
+                Component target = FindComponent(targetObj, componentTypeName);
+                if (target == null)
+                    return CommandResult.Fail(string.IsNullOrEmpty(componentTypeName)
+                        ? $"No components found on '{targetObj.name}'"
+                        : $"Component '{componentTypeName}' not found on '{targetObj.name}'");
+                return BuildReadResult(target, propertyPath, sceneObjectPath: null, assetPath: assetPath, childPath: childPath);
+            }
+            else
+            {
+                var asset = AssetDatabase.LoadMainAssetAtPath(assetPath);
+                if (asset == null)
+                    return CommandResult.Fail($"Failed to load asset: {assetPath}");
+                var so = new SerializedObject(asset);
+                var sp = FindPropertyWithAlias(so, propertyPath, out string resolvedPath);
+                if (sp == null)
+                    return CommandResult.Fail(PropertyNotFoundMessage(asset.GetType().Name, propertyPath));
+                var json = SimpleJson.Object()
+                    .PutRaw("value", Inspection.SerializeValue(sp))
+                    .Put("propertyType", sp.propertyType.ToString())
+                    .Put("resolvedPath", resolvedPath)
+                    .Put("componentType", asset.GetType().FullName)
+                    .Put("assetPath", assetPath)
+                    .ToString();
+                return CommandResult.Ok(json);
+            }
+        }
+
+        static CommandResult BuildReadResult(Component target, string propertyPath, string sceneObjectPath, string assetPath, string childPath = null)
+        {
+            var so = new SerializedObject(target);
+            var sp = FindPropertyWithAlias(so, propertyPath, out string resolvedPath);
+            if (sp == null)
+                return CommandResult.Fail(PropertyNotFoundMessage(target.GetType().Name, propertyPath));
+
+            var b = SimpleJson.Object()
+                .PutRaw("value", Inspection.SerializeValue(sp))
+                .Put("propertyType", sp.propertyType.ToString())
+                .Put("resolvedPath", resolvedPath)
+                .Put("componentType", target.GetType().FullName);
+            if (!string.IsNullOrEmpty(sceneObjectPath)) b.Put("sceneObjectPath", sceneObjectPath);
+            if (!string.IsNullOrEmpty(assetPath)) b.Put("assetPath", assetPath);
+            if (!string.IsNullOrEmpty(childPath)) b.Put("childPath", childPath);
+            return CommandResult.Ok(b.ToString());
+        }
+
         public static CommandResult SetProperty(Dictionary<string, object> args)
         {
             string propertyPath = SimpleJson.GetString(args, "propertyPath");
