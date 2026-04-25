@@ -384,7 +384,7 @@ async function run(argv) {
         'create-gameobject --name NAME [--parent PATH] [--scene SCENE]',
         'delete-gameobject (--scene-object PATH | --asset PATH --child-path PATH)',
         'rename (--scene-object PATH | --asset PATH [--child-path PATH]) --name NEW_NAME',
-        'reparent --scene-object PATH [--new-parent PATH] [--keep-world-space true|false] [--sibling-index N]   (omit --new-parent to move to scene root)',
+        'reparent (--scene-object PATH | --asset PREFAB --child-path SOURCE) [--new-parent PATH] [--keep-world-space true|false] [--sibling-index N]   (omit --new-parent to move to root; prefab paths are relative to the prefab root)',
         'save-assets    (writes both dirty open scenes AND ScriptableObjects/prefabs/materials)',
         'reimport-script --path FILE_OR_FOLDER [--non-recursive]   (force re-import of .cs files Unity misclassified as unknown)',
         'create-material --name NAME [--path FOLDER] [--shader "Shader/Name"]',
@@ -612,9 +612,23 @@ async function run(argv) {
       }
 
       case 'reparent': {
-        if (!flags['scene-object']) fail('--scene-object PATH is required for reparent (the GameObject to move)');
-        const rpArgs = { sceneObjectPath: flags['scene-object'] };
-        // Empty / unset --new-parent → move to scene root (handled Unity-side).
+        // Two modes:
+        //   Scene  : --scene-object PATH [--new-parent PATH]
+        //   Prefab : --asset PATH --child-path SOURCE [--new-parent PARENT_REL]
+        // In prefab mode --new-parent is interpreted RELATIVE TO THE PREFAB ROOT
+        // (matching --child-path's existing semantics elsewhere). Omit for prefab root.
+        const rpArgs = {};
+        if (flags['scene-object']) {
+          rpArgs.sceneObjectPath = flags['scene-object'];
+        } else if (flags.asset) {
+          if (!flags['child-path']) fail('--child-path SOURCE is required when reparenting inside a prefab (the GameObject to move, relative to prefab root)');
+          const isGuidRP = /^[0-9a-f]{32}$/i.test(flags.asset);
+          Object.assign(rpArgs, isGuidRP ? { guid: flags.asset } : { assetPath: flags.asset });
+          rpArgs.childPath = flags['child-path'];
+        } else {
+          fail('reparent needs either --scene-object PATH (scene) or --asset PATH --child-path SOURCE (prefab)');
+        }
+        // Empty / unset --new-parent → move to scene root (scene mode) or prefab root (prefab mode).
         if (flags['new-parent']) rpArgs.newParentPath = flags['new-parent'];
         if (flags['keep-world-space'] === true || flags['keep-world-space'] === 'true') {
           rpArgs.keepWorldSpace = true;

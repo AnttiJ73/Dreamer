@@ -236,24 +236,41 @@ namespace Dreamer.AgentBridge
         }
 
         /// <summary>
-        /// Reparent a scene GameObject under a new parent (or to scene root).
-        /// Args:
+        /// Reparent a GameObject under a new parent. Two modes:
+        ///
+        /// Scene mode:
         ///   { sceneObjectPath: "/Old/Path/Target",
         ///     newParentPath?: "/New/Parent",   // omit / null / "" → move to scene root
         ///     keepWorldSpace?: bool,           // default false (preserve local transform under new parent)
         ///     siblingIndex?: int }             // optional: place at this sibling slot under new parent
         ///
-        /// Concrete use: take a GameObject that owns a SpriteRenderer (or any
-        /// other component) and move it under a different parent in the same
-        /// scene without losing its components or wiring. Equivalent to
-        /// drag-and-drop in the Unity Hierarchy window, but driven from the CLI.
+        /// Prefab mode (paths are relative to the prefab root):
+        ///   { assetPath: "Assets/Prefabs/Enemy.prefab",
+        ///     childPath: "Visuals/Body",       // the GO to move (required for prefab mode)
+        ///     newParentPath?: "Bones/Root",    // new parent inside prefab; omit / "" → prefab root
+        ///     keepWorldSpace?: bool,           // default false
+        ///     siblingIndex?: int }
+        ///
+        /// Use case: take a GameObject that owns a SpriteRenderer and move it
+        /// under a different parent without losing its components or wiring.
+        /// Equivalent to drag-and-drop in Unity's Hierarchy/Prefab Mode window,
+        /// but driven from the CLI.
         /// </summary>
         public static CommandResult ReparentGameObject(Dictionary<string, object> args)
         {
             string sceneObjectPath = SimpleJson.GetString(args, "sceneObjectPath");
-            if (string.IsNullOrEmpty(sceneObjectPath))
-                return CommandResult.Fail("'sceneObjectPath' is required.");
+            if (!string.IsNullOrEmpty(sceneObjectPath))
+                return ReparentInScene(sceneObjectPath, args);
 
+            string assetPath = AssetOps.ResolveAssetPath(args);
+            if (!string.IsNullOrEmpty(assetPath))
+                return ReparentInPrefab(assetPath, args);
+
+            return CommandResult.Fail("Provide 'sceneObjectPath' (scene mode) or 'assetPath' + 'childPath' (prefab mode).");
+        }
+
+        static CommandResult ReparentInScene(string sceneObjectPath, Dictionary<string, object> args)
+        {
             var go = PropertyOps.FindSceneObject(sceneObjectPath, out string findError);
             if (go == null)
                 return CommandResult.Fail(findError ?? $"Scene object not found at path: {sceneObjectPath}");
@@ -268,7 +285,6 @@ namespace Dreamer.AgentBridge
                     return CommandResult.Fail(parentError ?? $"New parent not found at path: {newParentPath}");
                 newParent = parentGo.transform;
 
-                // Cycle guard: refuse to reparent under self or any descendant.
                 if (parentGo == go)
                     return CommandResult.Fail("Cannot reparent a GameObject under itself.");
                 for (var t = newParent; t != null; t = t.parent)
@@ -287,29 +303,107 @@ namespace Dreamer.AgentBridge
             // expose that flag in all Unity versions.
             go.transform.SetParent(newParent, keepWorldSpace);
 
-            // Optional sibling-index placement under the new parent.
-            if (args.TryGetValue("siblingIndex", out object siRaw))
-            {
-                int idx;
-                try { idx = Convert.ToInt32(siRaw); }
-                catch { idx = -1; }
-                if (idx >= 0)
-                {
-                    int max = newParent != null ? newParent.childCount - 1 : 0;
-                    go.transform.SetSiblingIndex(Mathf.Clamp(idx, 0, max));
-                }
-            }
-
+            ApplySiblingIndex(go.transform, newParent, args);
             EditorUtility.SetDirty(go);
 
             return CommandResult.Ok(SimpleJson.Object()
                 .Put("reparented", true)
+                .Put("mode", "scene")
                 .Put("name", go.name)
                 .Put("oldParentPath", oldParentPath)
                 .Put("newParentPath", newParent != null ? GetGameObjectPath(newParent.gameObject) : null)
                 .Put("keepWorldSpace", keepWorldSpace)
                 .Put("path", GetGameObjectPath(go))
                 .ToString());
+        }
+
+        static CommandResult ReparentInPrefab(string assetPath, Dictionary<string, object> args)
+        {
+            if (!assetPath.EndsWith(".prefab", StringComparison.OrdinalIgnoreCase))
+                return CommandResult.Fail($"Asset is not a prefab: {assetPath}");
+
+            string childPath = SimpleJson.GetString(args, "childPath");
+            if (string.IsNullOrEmpty(childPath))
+                return CommandResult.Fail("'childPath' is required for prefab reparent (the path of the GameObject to move, relative to the prefab root).");
+
+            string newParentPath = SimpleJson.GetString(args, "newParentPath");
+            bool keepWorldSpace = SimpleJson.GetBool(args, "keepWorldSpace", false);
+
+            // Edit prefab contents in isolation, save back via SaveAsPrefabAsset.
+            var prefabRoot = PrefabUtility.LoadPrefabContents(assetPath);
+            if (prefabRoot == null)
+                return CommandResult.Fail($"Failed to load prefab contents: {assetPath}");
+
+            try
+            {
+                Transform target = prefabRoot.transform.Find(childPath);
+                if (target == null)
+                    return CommandResult.Fail($"Child '{childPath}' not found in prefab '{assetPath}'.");
+
+                Transform newParent;
+                if (string.IsNullOrEmpty(newParentPath))
+                {
+                    // Move to the prefab root.
+                    newParent = prefabRoot.transform;
+                }
+                else
+                {
+                    Transform candidate = prefabRoot.transform.Find(newParentPath);
+                    if (candidate == null)
+                        return CommandResult.Fail($"New parent '{newParentPath}' not found in prefab '{assetPath}'.");
+                    newParent = candidate;
+                }
+
+                if (newParent == target)
+                    return CommandResult.Fail("Cannot reparent a GameObject under itself.");
+                for (var t = newParent; t != null; t = t.parent)
+                {
+                    if (t == target)
+                        return CommandResult.Fail($"Cannot reparent '{target.name}' under its own descendant '{newParent.name}'.");
+                }
+
+                string oldParentRel = GetPrefabRelativePath(target.parent, prefabRoot.transform);
+                target.SetParent(newParent, keepWorldSpace);
+                ApplySiblingIndex(target, newParent, args);
+
+                PrefabUtility.SaveAsPrefabAsset(prefabRoot, assetPath);
+
+                return CommandResult.Ok(SimpleJson.Object()
+                    .Put("reparented", true)
+                    .Put("mode", "prefab")
+                    .Put("assetPath", assetPath)
+                    .Put("childPath", GetPrefabRelativePath(target, prefabRoot.transform))
+                    .Put("oldParentPath", oldParentRel)
+                    .Put("newParentPath", string.IsNullOrEmpty(newParentPath) ? "" : newParentPath)
+                    .Put("keepWorldSpace", keepWorldSpace)
+                    .ToString());
+            }
+            finally
+            {
+                PrefabOps.SafeUnloadPrefabContents(prefabRoot);
+            }
+        }
+
+        static void ApplySiblingIndex(Transform target, Transform newParent, Dictionary<string, object> args)
+        {
+            if (!args.TryGetValue("siblingIndex", out object siRaw)) return;
+            int idx;
+            try { idx = Convert.ToInt32(siRaw); }
+            catch { idx = -1; }
+            if (idx < 0) return;
+            int max = newParent != null ? newParent.childCount - 1 : 0;
+            target.SetSiblingIndex(Mathf.Clamp(idx, 0, max));
+        }
+
+        /// <summary>Path of <paramref name="t"/> relative to <paramref name="root"/>, or "" if t == root.</summary>
+        static string GetPrefabRelativePath(Transform t, Transform root)
+        {
+            if (t == null || t == root) return "";
+            var stack = new System.Collections.Generic.List<string>();
+            for (var cur = t; cur != null && cur != root; cur = cur.parent)
+                stack.Add(cur.name);
+            stack.Reverse();
+            return string.Join("/", stack);
         }
 
         /// <summary>

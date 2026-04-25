@@ -130,9 +130,10 @@ function mutatesScene(kind, args) {
     case 'remove_missing_scripts':
       return !!a.sceneObjectPath;
 
-    // Reparent only ever takes a scene path — there's no asset-mode reparent.
+    // Reparent has two modes: scene (sceneObjectPath) and prefab asset
+    // (assetPath/guid + childPath). Only scene mode mutates the scene.
     case 'reparent_gameobject':
-      return true;
+      return !!a.sceneObjectPath;
 
     // UGUI add-on: tree builder always writes to scene (or within a scene's
     // canvas). Prefab-scoped UI editing goes through existing set-property /
