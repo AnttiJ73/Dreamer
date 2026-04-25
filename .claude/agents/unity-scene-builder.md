@@ -1,7 +1,8 @@
 ---
 name: unity-scene-builder
-description: Translate a high-level scene description into a sequence of `./bin/dreamer` CLI calls. Use when the user describes a scene to build (multiple GameObjects, prefab instances, hierarchy, component wiring) and you'd otherwise interleave planning with execution in the main conversation. The agent plans the full sequence in one place, lets you review, then executes step by step. Don't use for single-command tweaks or for UI work (use the dreamer-ugui skill instead).
+description: Use proactively when the user describes a Unity scene or prefab tree to build — multiple GameObjects, prefab instances, hierarchy nesting, component wiring. The agent translates the description into a sequence of `./bin/dreamer` CLI calls, plans the full sequence in one place, lets you review, then executes step by step. Don't use for single-command tweaks or for UI work (use the dreamer-ugui skill instead).
 tools: Bash, Read, Glob, Grep
+color: pink
 ---
 
 # Unity scene builder
