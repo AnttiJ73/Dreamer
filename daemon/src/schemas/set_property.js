@@ -57,9 +57,43 @@ module.exports = {
       args: { sceneObjectPath: 'Player', componentType: 'Game.PlayerController', propertyPath: 'mainCamera', value: { sceneRef: 'Main Camera' } },
     },
     {
-      title: 'Sparse list update (append at index 24 without clobbering 0..23)',
+      title: 'Sparse list update — append at index 24 without clobbering 0..23',
       cli: './bin/dreamer set-property --asset Assets/Data/Registry.asset --property entries --value \'{"_size":25,"24":{"id":"new","prefab":{"assetRef":"Assets/Prefabs/X.prefab"}}}\' --wait',
       args: { assetPath: 'Assets/Data/Registry.asset', propertyPath: 'entries', value: { _size: 25, 24: { id: 'new', prefab: { assetRef: 'Assets/Prefabs/X.prefab' } } } },
+      note: 'Inspect the asset first to find the current length. Setting `entries[24]` directly fails for indices ≥ current length — Unity\'s FindProperty returns null for non-existent positions. The sparse form RESIZES and ASSIGNS atomically.',
     },
+    {
+      title: 'Update one element of an existing list (bracket shorthand for an existing index)',
+      cli: './bin/dreamer set-property --asset Assets/Data/Registry.asset --property "entries[5].itemGuid" --value \'"new-guid"\' --wait',
+      args: { assetPath: 'Assets/Data/Registry.asset', propertyPath: 'entries[5].itemGuid', value: 'new-guid' },
+    },
+    {
+      title: 'Self-reference (sibling component on the same GameObject)',
+      cli: './bin/dreamer set-property --scene-object "/Player" --component Game.HUDBinder --property controller --value \'{"self":true,"component":"PlayerController"}\' --wait',
+      args: { sceneObjectPath: '/Player', componentType: 'Game.HUDBinder', propertyPath: 'controller', value: { self: true, component: 'PlayerController' } },
+    },
+    {
+      title: 'Descendant component (selfChild — prefab-relative path)',
+      cli: './bin/dreamer set-property --asset Assets/Prefabs/Player.prefab --component Game.PlayerController --property leftHandRenderer --value \'{"selfChild":"Visuals/LeftHand","component":"SpriteRenderer"}\' --wait',
+      args: { assetPath: 'Assets/Prefabs/Player.prefab', componentType: 'Game.PlayerController', propertyPath: 'leftHandRenderer', value: { selfChild: 'Visuals/LeftHand', component: 'SpriteRenderer' } },
+    },
+    {
+      title: 'Sub-asset (Sprite inside a sprite atlas — explicit subAsset to disambiguate)',
+      cli: './bin/dreamer set-property --asset Assets/Prefabs/Player.prefab --child-path Body --component SpriteRenderer --property sprite --value \'{"assetRef":"Assets/Sprites/Characters.png","subAsset":"PlayerIdle_0"}\' --wait',
+      args: { assetPath: 'Assets/Prefabs/Player.prefab', childPath: 'Body', componentType: 'SpriteRenderer', propertyPath: 'sprite', value: { assetRef: 'Assets/Sprites/Characters.png', subAsset: 'PlayerIdle_0' } },
+    },
+    {
+      title: 'Clear a reference',
+      cli: './bin/dreamer set-property --asset Assets/Prefabs/A.prefab --component Game.MyComponent --property target --value null --wait',
+      args: { assetPath: 'Assets/Prefabs/A.prefab', componentType: 'Game.MyComponent', propertyPath: 'target', value: null },
+    },
+  ],
+  pitfalls: [
+    'DO NOT use this to rename a GameObject. `--property m_Name` returns a directive error pointing at `rename`. m_Name lives on the GameObject anchor, not a Component.',
+    'Use a bare property name (e.g. `--property sprite`) for built-in Unity components — Dreamer auto-resolves to the m_Pascal form (`m_Sprite`). The result JSON\'s `resolvedPath` shows what was actually used.',
+    'For a list APPEND past current length, you MUST use the sparse `{"_size":N+1,"N":...}` form. `entries[24]` fails for non-existent indices because Unity\'s FindProperty returns null.',
+    'Passing a bare `entries: [...]` REPLACES the whole array. To leave existing elements untouched and update one, use the sparse form or bracket-indexed propertyPath (`entries[5]`).',
+    'Materials don\'t serialize properties through standard fields — `set-property` won\'t reach them. Use `set-material-property` for `.mat` assets.',
+    'When assigning a Sprite from a sprite atlas, pass `subAsset` to disambiguate. Without it Dreamer probes candidates and may error if multiple match.',
   ],
 };

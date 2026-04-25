@@ -54,9 +54,10 @@ Project-local CLI: `./bin/dreamer <command>` from the Unity project root (POSIX/
 # Canvas UI — see dreamer-ugui skill (auto-loads when UI keywords appear)
 ```
 
-**Authoritative discovery surface**: `./bin/dreamer help` covers all 38 commands with full schemas, CLI-flag annotations, and copy-pastable examples. Read `help conventions` once per session to internalize the cross-cutting rules; then `help <kind>` per command. Don't memorize from this skill doc — when in doubt, query `help`.
+**Authoritative discovery surface**: `./bin/dreamer help` covers all 38 commands with full schemas, CLI-flag annotations, copy-pastable examples, and per-kind pitfalls. Read `help conventions` once per session to internalize the cross-cutting rules (universal flags, target forms, value formats, **commonPitfalls**); then `help <kind>` per command. Don't memorize from this skill doc — when in doubt, query `help`.
 
-**Reference companions** — load these only when you need their topic, not every session:
+**Reference companions** — load these only when you need their topic:
+- [tasks.md](tasks.md) — **flat task → command index** (one screen, no prose). Use this as the primary lookup when you know what you want to do but don't remember the command.
 - [property-values.md](property-values.md) — `--value` format catalogue: arrays, structs, sub-asset references, `entries[N]` syntax, scene path rules, `m_Name` redirect.
 - [materials-shaders.md](materials-shaders.md) — `create-material`, `inspect-material`, `set-material-property` (incl. shader keywords), `set-material-shader`, `shader-status`, `inspect-shader`.
 

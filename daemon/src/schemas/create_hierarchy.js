@@ -52,5 +52,33 @@ module.exports = {
       cli: './bin/dreamer create-hierarchy --save-path Assets/Prefabs --json \'{"name":"Player","components":["UnityEngine.Rigidbody2D"],"children":[{"name":"Visuals","components":["UnityEngine.SpriteRenderer"]}]}\' --wait',
       args: { name: 'Player', savePath: 'Assets/Prefabs', components: ['UnityEngine.Rigidbody2D'], children: [{ name: 'Visuals', components: ['UnityEngine.SpriteRenderer'] }] },
     },
+    {
+      title: 'Spec from a file (better for big trees — quoting bash JSON inline is painful)',
+      cli: './bin/dreamer create-hierarchy --save-path Assets/Prefabs --json @specs/enemy.json --wait',
+      args: { name: '<from file>', savePath: 'Assets/Prefabs' },
+      note: 'The @file form reads the JSON from disk. Big multi-level hierarchies get unreadable inline.',
+    },
+    {
+      title: 'Deep tree with multiple component layers',
+      cli: './bin/dreamer create-hierarchy --json @specs/boss.json --wait',
+      args: {
+        name: 'Boss',
+        components: ['UnityEngine.Rigidbody2D', 'Game.BossAI'],
+        children: [
+          { name: 'Body', components: ['UnityEngine.SpriteRenderer', 'UnityEngine.BoxCollider2D'] },
+          { name: 'Head', components: ['UnityEngine.SpriteRenderer'], children: [
+            { name: 'EyeL', components: ['UnityEngine.SpriteRenderer'] },
+            { name: 'EyeR', components: ['UnityEngine.SpriteRenderer'] },
+          ]},
+        ],
+      },
+    },
+  ],
+  pitfalls: [
+    'ALWAYS check `compile-status` BEFORE create-hierarchy when the spec uses custom (Game.X) component types. If a script with the requested type has a compile error, ResolveType returns null and the component is silently skipped — the call still "succeeds" but the result\'s `warnings[]` lists what was dropped. INSPECT `warnings[]` after every call.',
+    'Use `parentPath` (canonical) — `parent` is accepted as an alias with a warning, but the canonical key is `parentPath`. Don\'t mix both.',
+    'For trees of more than ~3 nodes, write the JSON to a file and pass `@path/to/file.json` to --json. Inline shell-quoting of nested JSON is fragile.',
+    'When `--save-path` is given, the spec\'s root becomes the prefab root, and a temp scene object is created and destroyed during the save. The destination filename is `<spec.name>.prefab`.',
+    'Components on each node are added IN ORDER. If component A requires component B (RequireComponent), Unity will auto-add B; you don\'t need to list it.',
   ],
 };

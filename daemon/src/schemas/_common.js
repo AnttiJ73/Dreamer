@@ -183,6 +183,56 @@ const conventions = {
     ],
   },
 
+  commonPitfalls: {
+    summary: 'Anti-patterns Claude sessions have actually hit. Each entry: the wrong move + the right one. Reading these prevents the most common wasted-attempt cycles.',
+    rules: [
+      {
+        wrong: '`set-property --property m_Name --value \'"NewName"\'` to rename a GameObject.',
+        right: 'Use `./bin/dreamer rename --scene-object PATH --name NEW --wait` (or `--asset PREFAB.prefab [--child-path SUB]` for prefab mode). m_Name lives on the GameObject anchor, not a Component, so set-property can\'t reach it. The CLI now intercepts this with a directive error.',
+      },
+      {
+        wrong: 'Calling `save-scene` AFTER `save-assets`.',
+        right: '`save-assets` already writes both dirty open scenes (via EditorSceneManager.SaveOpenScenes) AND ScriptableObjects/prefabs/materials. One call, not two. Use `save-scene` only when you want save-as to a new path.',
+      },
+      {
+        wrong: 'Adding a component to a prefab CHILD by instantiating the prefab into the scene, configuring it, then save-as-prefab. Or: claiming the operation isn\'t supported and telling the user to do it manually.',
+        right: '`add-component --asset <prefab> --child-path "Visuals/Body" --type T --wait`. Same `--child-path` flag works on remove-component, set-property, reparent, rename, delete-gameobject. Save-as-prefab regenerates fileIDs and breaks references — don\'t use it as a workaround.',
+      },
+      {
+        wrong: 'Setting `entries[24]` to append a new element to a ScriptableObject list, OR replacing the entire `entries` array because indexed access "doesn\'t work."',
+        right: 'For an EXISTING index, `entries[24]` is fine (Dreamer rewrites it to Unity\'s `entries.Array.data[24]`). For APPENDING (index >= current length), use the sparse form: `--property entries --value \'{"_size":N+1,"<N>":<value>}\'`. This resizes AND assigns the new index without clobbering 0..N-1. Replacing `entries` outright is destructive.',
+      },
+      {
+        wrong: 'Treating `compile-status` raw `errors:[]` as proof of a clean compile.',
+        right: 'Read the synthesized `status` field. `idle` = "no compile observed yet" (run refresh-assets if you just wrote .cs). `stale` = "you edited assets after the last clean compile, errors are lying." `ok` = genuinely clean. Trust `summary`, don\'t derive your own verdict.',
+      },
+      {
+        wrong: 'Looping `refresh-assets --wait` + `focus-unity` more than 2x trying to clear a stuck `compile-status`.',
+        right: 'STOP after the second retry. Something structural is wrong: Auto Refresh disabled in Preferences, a file stuck on the wrong importer (run `reimport-script --path <FILE> --wait`), or a syntax error preventing parse. Ask the user — don\'t loop indefinitely.',
+      },
+      {
+        wrong: 'Reaching for `execute-menu-item` or `execute-method` to delete / rename / reparent a GameObject because "Dreamer doesn\'t have those commands."',
+        right: 'It does: `delete-gameobject`, `rename`, `reparent`. Run `./bin/dreamer help` to see all 38 documented kinds. Escape hatches are last resort, not first.',
+      },
+      {
+        wrong: 'Issuing mutation commands without `--wait` and assuming success because the CLI returned a command id.',
+        right: 'Always pass `--wait` on mutations. Without it, the CLI prints the queued command id and returns immediately — the actual Unity-side execution happens later, and any error surfaces only if you check `status --id <ID>` afterward. `--wait` blocks until terminal state and surfaces the result.',
+      },
+      {
+        wrong: 'Submitting a scene-edit during Play Mode and reporting success when it appears to work.',
+        right: 'Scene edits during Play Mode revert when Play Mode exits. Dreamer holds these commands in `waiting` with reason "Play Mode active — scene edits would be lost on exit." Either stop Play Mode in Unity (queue drains automatically), or pass `--allow-playmode` if you genuinely want a runtime mutation that won\'t persist.',
+      },
+      {
+        wrong: 'Trying to set a Material property via `set-property` (it returns "Property X not found").',
+        right: 'Use `set-material-property --asset <.mat> --property _BaseColor --value <JSON>` — Materials use Unity\'s MaterialProperty API, not standard serialization. Run `inspect-material` first to discover the real shader-defined property names (e.g. `_BaseColor`, NOT `baseColor`).',
+      },
+      {
+        wrong: 'Concluding a sub-asset assignment failed because Dreamer chose the wrong Sprite from a sprite atlas.',
+        right: 'Pass `--value \'{"assetRef":"Assets/Sheet.png","subAsset":"Idle_0"}\'` to disambiguate. For single-sprite imports, `{"assetRef":...}` alone auto-picks. When ambiguous and unspecified, Dreamer errors with the candidate list — read it and pick.',
+      },
+    ],
+  },
+
   seeAlso: [
     './bin/dreamer help            — list documented kinds',
     './bin/dreamer help <kind>     — full schema for one command',

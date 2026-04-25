@@ -41,5 +41,16 @@ module.exports = {
       cli: './bin/dreamer add-component --scene-object "Main Camera" --type UnityEngine.AudioListener --wait',
       args: { sceneObjectPath: 'Main Camera', typeName: 'UnityEngine.AudioListener' },
     },
+    {
+      title: 'Add a deeper-nested component (paths can have multiple segments)',
+      cli: './bin/dreamer add-component --asset Assets/Prefabs/Boss.prefab --child-path "Visuals/Armor/Helm" --type UnityEngine.SpriteRenderer --wait',
+      args: { assetPath: 'Assets/Prefabs/Boss.prefab', childPath: 'Visuals/Armor/Helm', typeName: 'UnityEngine.SpriteRenderer' },
+    },
+  ],
+  pitfalls: [
+    'YES, you can add a component to a prefab CHILD. Use `--child-path "RelPath"` together with `--asset PREFAB`. The same flag works on remove-component, set-property, reparent, rename, and delete-gameobject for prefab targets.',
+    'If `--type` errors with "Type not found", that almost always means Unity hasn\'t compiled the .cs that defines the type. Check `compile-status` first; if `stale`, run `refresh-assets --wait` (auto-prepended for compile-gated commands when the watcher has seen .cs changes).',
+    'Specify the FULLY-QUALIFIED type name including namespace: `Game.PlayerController`, NOT `PlayerController`. Built-in Unity types use their full namespace too: `UnityEngine.Rigidbody`, `UnityEngine.UI.Image`.',
+    'NEVER work around "can\'t add to a prefab child" by instantiate-into-scene + save-as-prefab. That regenerates fileIDs and breaks references. Use --child-path.',
   ],
 };

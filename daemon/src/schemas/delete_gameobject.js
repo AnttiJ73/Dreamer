@@ -28,4 +28,12 @@ module.exports = {
       args: { assetPath: 'Assets/Prefabs/Enemy.prefab', childPath: 'Visuals/Decorative' },
     },
   ],
+  pitfalls: [
+    'CHILDREN ARE DELETED WITH THE PARENT — Unity\'s default. The result\'s `childrenAlsoDeleted` field reports the immediate child count (descendants deeper went with them).',
+    'DO NOT try to "delete" a GameObject by setting `m_IsActive=false` — that just hides it. Delete actually removes it.',
+    'Don\'t use `remove-component` to "delete" a GameObject by stripping all components. Required components (Transform, RectTransform) refuse to remove. Use this command.',
+    'For prefab mode, you cannot delete the prefab ROOT via this command — pass `--child-path` to delete a child. To remove the prefab file itself, use Unity\'s asset operations or delete via filesystem (file-edit, then refresh-assets).',
+    'After deleting in scene mode, `save-assets --wait` to persist. Otherwise the deletion only exists in-memory.',
+    'Deleting a GO that\'s referenced elsewhere (other components\' fields, scene serialization) leaves dangling Missing references. If you intend a clean refactor, run `remove-missing-scripts` afterward to clean up.',
+  ],
 };

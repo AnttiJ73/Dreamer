@@ -40,5 +40,21 @@ module.exports = {
       cli: './bin/dreamer find-assets --type script --name "Player*" --path Assets/Scripts --wait',
       args: { type: 'script', name: 'Player*', path: 'Assets/Scripts' },
     },
+    {
+      title: 'Find an asset by exact name (any type)',
+      cli: './bin/dreamer find-assets --name "EnemyData" --wait',
+      args: { name: 'EnemyData' },
+    },
+    {
+      title: 'Discovery before set-property',
+      cli: '# 1) confirm the prefab exists at the expected path\n./bin/dreamer find-assets --type prefab --name "Player" --wait\n# 2) inspect to find the right component\n./bin/dreamer inspect Assets/Prefabs/Player.prefab --wait\n# 3) mutate\n./bin/dreamer set-property --asset Assets/Prefabs/Player.prefab --component PlayerCtl --property speed --value 5 --wait',
+      args: { type: 'prefab', name: 'Player' },
+    },
+  ],
+  pitfalls: [
+    'find-assets does NOT search names recursively across nested GameObjects inside scenes — that\'s `inspect-hierarchy`. find-assets searches ASSET FILES under Assets/.',
+    'Pattern matching is FILENAME-only. To match path segments, use `--path` to scope.',
+    'Returns up to 100 results by default. If you suspect there are more, narrow the filter.',
+    'Result entries include both `path` and `guid` — pass either to subsequent commands. GUID is more durable across renames/moves.',
   ],
 };

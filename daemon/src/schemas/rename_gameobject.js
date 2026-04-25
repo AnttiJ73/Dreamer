@@ -41,5 +41,18 @@ module.exports = {
       cli: './bin/dreamer rename --asset Assets/Prefabs/Enemy.prefab --child-path "Visuals/Body" --name "Torso" --wait',
       args: { assetPath: 'Assets/Prefabs/Enemy.prefab', childPath: 'Visuals/Body', newName: 'Torso' },
     },
+    {
+      title: 'Rename a non-prefab asset file (.asset, .mat, etc.)',
+      cli: './bin/dreamer rename --asset Assets/Data/EnemyData_Old.asset --name EnemyData --wait',
+      args: { assetPath: 'Assets/Data/EnemyData_Old.asset', newName: 'EnemyData' },
+    },
+  ],
+  pitfalls: [
+    'DO NOT try `set-property --property m_Name` to rename. m_Name lives on the GameObject anchor, not a Component, and set-property only routes through Components. The CLI now intercepts this with a directive error.',
+    'For a child INSIDE a prefab, use `--asset PREFAB.prefab --child-path SUBPATH`, NOT `--scene-object`. Scene-object resolution doesn\'t reach into prefab assets.',
+    'Renaming the prefab root file via `--asset Path.prefab --name NewName` renames BOTH the asset file AND the root GameObject inside. The path returned in the result reflects the new file location.',
+    'After renaming a scene GameObject, any other reference using the OLD path will break. If you have set-property calls queued with the old path, update them.',
+    '`newName` can contain spaces. Quote on the CLI: `--name "My Object"`. Names with `/` are NOT supported (they\'re parsed as path separators).',
+    'After renaming in scene mode, `save-assets --wait` to persist — until then the .unity file shows no diff.',
   ],
 };

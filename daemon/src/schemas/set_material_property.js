@@ -70,5 +70,18 @@ module.exports = {
       cli: './bin/dreamer set-material-property --asset Assets/Materials/PlayerMat.mat --keyword _EMISSION --enable true --wait',
       args: { assetPath: 'Assets/Materials/PlayerMat.mat', keyword: '_EMISSION', enable: true },
     },
+    {
+      title: 'Discover-then-set workflow (always run inspect-material first)',
+      cli: '# 1) inspect to find real property names + types\n./bin/dreamer inspect-material --asset Assets/Materials/PlayerMat.mat --wait\n# 2) set the discovered property\n./bin/dreamer set-material-property --asset Assets/Materials/PlayerMat.mat --property _Metallic --value 0.8 --wait',
+      args: { assetPath: 'Assets/Materials/PlayerMat.mat', property: '_Metallic', value: 0.8 },
+    },
+  ],
+  pitfalls: [
+    'DO NOT try `set-property` on a material — Materials use the MaterialProperty API, not standard serialized fields. Use this command (`set-material-property`).',
+    'ALWAYS run `inspect-material` first to discover real property names. They are SHADER-DEFINED, NOT camelCase: `_BaseColor` (URP) vs `_Color` (Standard) vs custom names. Guessing leads to "Property not found".',
+    'Color values are `{r,g,b,a}` (all 0-1). Vectors are `{x,y,z,w}`. Floats are bare numbers. Don\'t mix types — passing `[1,0,0,1]` for a Color won\'t work.',
+    'Texture assignments need `{"assetRef":"Path/To/Tex.png"}` — bare strings or `{guid}` also work but `{assetRef}` is the recommended form.',
+    'For sub-asset textures (e.g. one slot of a sprite atlas), include `subAsset`: `{"assetRef":"Sheet.png","subAsset":"Idle_0"}`.',
+    'Toggling a shader keyword affects compiled shader variants. The Unity Editor may briefly recompile shader variants on first use — that\'s normal, not an error.',
   ],
 };

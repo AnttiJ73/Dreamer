@@ -25,9 +25,20 @@ module.exports = {
   },
   examples: [
     {
-      title: 'Default — save scenes + assets',
+      title: 'Default — save scenes + assets in one call',
       cli: './bin/dreamer save-assets --wait',
       args: {},
     },
+    {
+      title: 'Routine after a scene mutation',
+      cli: '# After: set-property --scene-object Player --component PlayerCtl --property speed --value 7 --wait\n./bin/dreamer save-assets --wait',
+      args: {},
+    },
+  ],
+  pitfalls: [
+    'DO NOT follow `save-assets` with `save-scene`. `save-assets` already covers BOTH dirty scenes and asset files. Calling save-scene afterward is redundant.',
+    'Older Dreamer versions (pre-fix) only ran AssetDatabase.SaveAssets and DID NOT persist scene mutations. If you\'re on an old version and `git diff` shows no scene changes after a successful save-assets, run `./bin/dreamer update` and retry. Current behavior covers both.',
+    'Use `save-scene --path Assets/Scenes/X.unity` (NOT save-assets) when you need save-AS to a different path. save-assets only saves in-place.',
+    'If `savedScenes: 0` in the result, no scene was dirty — the call was a no-op for scenes. That\'s normal when only asset files (prefabs/materials) changed.',
   ],
 };

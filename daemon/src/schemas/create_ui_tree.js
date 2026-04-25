@@ -39,9 +39,28 @@ module.exports = {
       args: { mode: 'create', canvas: { name: 'MainMenu', renderMode: 'overlay' }, tree: { type: 'VStack', name: 'Menu', anchor: 'center', size: [400, 400], padding: 20, spacing: 10, children: [{ type: 'Text', text: 'My Game', fontSize: 32, size: [0, 48], alignment: 'middle-center' }, { type: 'Button', name: 'PlayBtn', text: 'Play', size: [0, 48] }] } },
     },
     {
-      title: 'Replace a panel\'s children',
+      title: 'Replace a panel\'s children (preserves the canvas envelope, rebuilds inside)',
       cli: './bin/dreamer create-ui-tree --wait --json @.tmp_ui/panel.json',
       args: { mode: 'replace-children', target: '/MainCanvas/Menu', tree: { type: 'VStack', children: [] } },
     },
+    {
+      title: 'Append into an existing canvas',
+      cli: './bin/dreamer create-ui-tree --wait --json \'{"mode":"append","target":"/GameUI","tree":{"type":"Panel","name":"Notifications","anchor":"top-stretch","size":[0,80],"children":[]}}\'',
+      args: { mode: 'append', target: '/GameUI', tree: { type: 'Panel', name: 'Notifications', anchor: 'top-stretch', size: [0, 80], children: [] } },
+    },
+    {
+      title: 'Iterate on existing UI: inspect → edit JSON → replace-children',
+      cli: '# 1) read current\n./bin/dreamer inspect-ui-tree --target /MainCanvas/Menu --wait > current.json\n# 2) edit current.json\n# 3) rebuild that subtree\n./bin/dreamer create-ui-tree --wait --json @current.json',
+      args: { mode: 'replace-children', target: '/MainCanvas/Menu', tree: { type: 'VStack' } },
+    },
+  ],
+  pitfalls: [
+    'On Git Bash (MSYS), --target paths starting with / get path-mangled by MSYS. Set MSYS_NO_PATHCONV=1 or use the // double-slash prefix to disable conversion.',
+    'ALWAYS check the result\'s `warnings[]` after every call — schema flags things that compile but render wrong (e.g. invalid anchor preset, missing required field on a widget).',
+    'Default to `ScrollList` for any list or growable content. Don\'t hand-roll a Mask + Content with a LayoutGroup; the schema\'s ScrollList does the right thing including the cross-axis fitter.',
+    'Pick `anchored` (fixed position via anchor preset) OR `LayoutGroup` (parent flex distribution) per container. Don\'t mix on the same node.',
+    'In a LayoutGroup, set `size` on every child. `[0, 0]` or omitted means "fill via flex"; `[w, h]` means "fixed". One flex child per axis (header fixed + content flex + footer fixed is the universal pattern).',
+    'Use `replace-children` to iterate on an existing canvas without losing the canvas object\'s wiring. `replace-self` deletes the target and puts the tree where it was.',
+    'For deeply-nested specs, write the JSON to a file and use `--json @file.json`. Inline shell-quoting of nested objects is fragile.',
   ],
 };

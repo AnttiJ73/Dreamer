@@ -58,5 +58,16 @@ module.exports = {
       cli: './bin/dreamer instantiate-prefab --asset Assets/Prefabs/Pickup.prefab --parent /Pickups --position \'{"x":2,"y":0,"z":0}\' --wait',
       args: { assetPath: 'Assets/Prefabs/Pickup.prefab', parentPath: '/Pickups', position: { x: 2, y: 0, z: 0 } },
     },
+    {
+      title: 'Three pickups at different positions (call instantiate-prefab three times)',
+      cli: '# Loop in your shell, OR three sequential calls; Dreamer doesn\'t batch instantiate.\n./bin/dreamer instantiate-prefab --asset Assets/Prefabs/Pickup.prefab --parent /Pickups --position \'{"x":0,"y":0,"z":0}\' --wait\n./bin/dreamer instantiate-prefab --asset Assets/Prefabs/Pickup.prefab --parent /Pickups --position \'{"x":2,"y":0,"z":0}\' --wait\n./bin/dreamer instantiate-prefab --asset Assets/Prefabs/Pickup.prefab --parent /Pickups --position \'{"x":4,"y":0,"z":0}\' --wait',
+      args: { assetPath: 'Assets/Prefabs/Pickup.prefab', parentPath: '/Pickups' },
+    },
+  ],
+  pitfalls: [
+    'After instantiating a scene-mutating instance, REMEMBER to `save-assets --wait` to persist to disk. Without it, `git diff` shows nothing and reopening the scene loses the change.',
+    'Instances are CONNECTED to the prefab — editing the prefab updates all instances. To detach (override-only), use Unity\'s "Unpack Prefab" workflow (no first-class Dreamer command yet — surface to user if needed).',
+    'For multiple instances, call instantiate-prefab once per instance. There\'s no batch flag. Consider create-hierarchy with components inline if the goal is "build a tree" rather than "drop several copies of one prefab."',
+    'If a prefab\'s root has a non-Transform component you want to override per-instance, instantiate first then `set-property --scene-object <new path>` on the instance.',
   ],
 };
