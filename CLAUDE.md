@@ -52,6 +52,14 @@ Unity side activates automatically when the package is loaded (InitializeOnLoad)
 - **Protocol**: JSON over HTTP. Daemon is server, Unity is polling client, CLI is request client
 - **Port**: 18710 default, configurable via `DREAMER_PORT` env var or EditorPrefs
 
+## Changelog
+
+When you commit a user-visible Dreamer change, append a bullet to `CHANGELOG.md` under `## [Unreleased]` in the same commit. User-visible = new commands, new flags, behavior changes, observable bug fixes. Refactors, comment-trims, and internal renames stay out (git log covers those).
+
+Format: `### Added` / `### Changed` / `### Fixed` sections, one bullet per logical change, dated and SHA-tagged when convenient.
+
+This isn't decorative. `./bin/dreamer update` diffs CHANGELOG.md between the previous and new install and emits `changelog.newEntries[]`; the dreamer skill instructs the running agent to read those entries to the downstream user. Skipping the changelog entry means the next person to update sees "no changes" even when there are.
+
 ## Code style — comments
 
 Default to **no comments**. The code is the source of truth.

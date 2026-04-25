@@ -9,6 +9,41 @@ tags, breaking changes bump the minor version (0.x.0), fixes bump patch.
 
 ## [Unreleased]
 
+### Added — `./bin/dreamer update` now lists what changed
+- `./bin/dreamer update` diffs `CHANGELOG.md` between the previous and new install and emits `changelog.newEntries[]` in the result JSON. The dreamer skill instructs Claude to read those entries to the user after a successful update — no more "the update worked" without knowing what changed.
+- `CHANGELOG.md` is now copied as part of `update`, so installs stay in sync with upstream changelogs.
+- `update` now copies the entire `.claude/skills/dreamer/` directory (was: only `SKILL.md`), so companion files like `tasks.md`, `property-values.md`, `materials-shaders.md` also stay current.
+
+### Added — inspect overhaul + read-property (2026-04-25, `2da53da`)
+- **`inspect-many --paths a,b,c`** — bulk-inspect N assets in one round-trip. Returns `{count, succeeded, failed, items[]}` in input order; per-item failures become `{path, error}` instead of aborting the batch.
+- **`read-property`** — inverse of `set-property`. Same target args (`--asset` / `--scene-object` / `--child-path` / `--component`), returns the property value as JSON. Vectors as `{x,y,z[,w]}`, colors as `{r,g,b,a}`, ObjectReference as `{name, type, assetPath, instanceId}`. No more YAML parsing for field reads.
+- **`--include-transforms`** on `inspect` / `inspect-hierarchy` / `inspect-many` — every node gets `transform: {localPosition, localEulerAngles, localScale}`.
+- **`--include-fields`** on the same commands — every component gets a `fields[]` array with serialized values (primitives, vectors, colors, refs). Heavier payload — opt-in.
+- **`--depth N`** on inspect commands — cap recursion. Default `-1` = unlimited; `0` = root only.
+- **`inspect-hierarchy --asset PREFAB.prefab`** — dump a prefab's full hierarchy via AssetDatabase. Was scene-only — agents had to fall back to YAML parsing for prefab structure.
+- **`execute-method --args '<JSON-array>'`** — pass arguments to the static method. Type-coerced against the resolved overload (`long → int`, `double → float`, enum names, primitive arrays). Escape hatch is now usable for tasks that need scratch logic.
+- **`help` accepts both kinds and CLI verbs** — `./bin/dreamer help inspect-many` now resolves (was: only `help inspect_assets` worked).
+
+### Changed — inspect shape (2026-04-25, `2da53da`)
+- `inspect` recurses ALL children by default. Was 1 level deep — deeper nodes only showed `childCount`.
+- `inspect_asset` and `inspect_hierarchy` now produce IDENTICAL node shape — `{type, fullType, enabled}` per component, same across root and children. Previously root used `{type, name}` and children used bare strings.
+- Every node exposes `instanceId, active, tag, layer, isStatic, childCount` (asset side previously only had components + 1-level children).
+
+### Fixed (2026-04-25, `2da53da`)
+- Schema validator recognizes the `integer` type (was: every schema field declared `integer` errored at validation time).
+- `save-assets` now also saves dirty open scenes via `EditorSceneManager.SaveOpenScenes`. Previously scene-object mutations stayed in-memory after a "successful" save-assets call — `git diff` showed nothing.
+
+### Added — scene/prefab editing (2026-04-19 → 2026-04-21)
+- **`reparent` command** (`677c883`) — works in both scenes (`--scene-object`) and prefabs (`--asset --child-path`). Flags: `--new-parent`, `--keep-world-space`, `--sibling-index`. Cycle guard refuses self-/descendant-parenting with a chain in the error.
+- **`set-property` rejects `m_Name` with a directive** (`6e90f88`) — points the caller at `rename` instead of returning a cryptic "Property not found on Component".
+
+### Added — documentation surface (2026-04-19 → 2026-04-25)
+- **All 38 command kinds have structured schemas** (`7c9dc3a`) — `./bin/dreamer help <kind>` returns args, examples, pitfalls, result shape.
+- **`help conventions`** — cross-cutting rules (target forms `--asset` / `--scene-object` / `--child-path`, value formats for refs / sub-assets / sparse arrays, play-mode gating, multi-agent rules, forbidden patterns) factored out so per-kind schemas don't repeat them.
+- **Per-schema `pitfalls[]` arrays** (`111390b`) — anti-patterns and "wrong → right" pairs surface inline next to the args.
+- **`unity-scene-builder` subagent** (`677c883`) — translates scene descriptions to a sequence of Dreamer CLI calls.
+- **`tasks.md` task→command index** (`111390b`) — flat lookup table for common workflows in the dreamer skill.
+
 ### Added — uGUI add-on (optional, shipped as `com.dreamer.agent-bridge.ugui`)
 - **Separate Unity package** with its own asmdef, auto-registered into core
   via a reflection-based plugin hook in `CommandDispatcher`. Core Dreamer

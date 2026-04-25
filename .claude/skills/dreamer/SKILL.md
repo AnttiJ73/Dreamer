@@ -169,10 +169,11 @@ No UI commands ship in core Dreamer by design — the UGUI surface is large and 
 
 When asked to update (e.g. "update Dreamer", "pull the latest"):
 
-1. Run `./bin/dreamer update`. Clones the recorded repo shallowly, stops the daemon, replaces `daemon/src`, `daemon/bin`, `daemon/package.json`, `Packages/com.dreamer.agent-bridge/`, `.claude/skills/dreamer/SKILL.md`, and the `bin/dreamer` / `bin/dreamer.cmd` wrappers. `daemon/.dreamer-config.json`, `daemon/.dreamer-source.json`, and queue state are preserved.
-2. Report the new commit SHA from the output.
-3. Tell the user Unity may reimport the package briefly. Run `./bin/dreamer status` to confirm the daemon restarted and Unity is still connected.
-4. If the CLI fails with "No daemon/.dreamer-source.json", the install pre-dates self-update — tell the user to rerun the installer.
+1. Run `./bin/dreamer update`. Clones the recorded repo shallowly, stops the daemon, replaces `daemon/src`, `daemon/bin`, `daemon/package.json`, `Packages/com.dreamer.agent-bridge/`, `.claude/skills/dreamer/`, `CHANGELOG.md`, and the `bin/dreamer` / `bin/dreamer.cmd` wrappers. `daemon/.dreamer-config.json`, `daemon/.dreamer-source.json`, and queue state are preserved.
+2. **List the new changes for the user.** The result JSON includes `changelog.newEntries[]` — bullets and headings from `CHANGELOG.md` that weren't there before. Quote each entry verbatim or paraphrase tightly. Don't summarize as "various improvements" — name actual additions/fixes. If the array is empty, say "no new changelog entries." This is REQUIRED — the user just pulled new code and needs to know what changed.
+3. Report the new commit SHA from the output.
+4. Tell the user Unity may reimport the package briefly. Run `./bin/dreamer status` to confirm the daemon restarted and Unity is still connected.
+5. If the CLI fails with "No daemon/.dreamer-source.json", the install pre-dates self-update — tell the user to rerun the installer.
 
 ## Self-update / port utilities
 

@@ -357,6 +357,26 @@ function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+// Diff old vs. new CHANGELOG.md content. Returns the headings + bullets that
+// appear in `new` but not in `old`. Used by `./bin/dreamer update` so the
+// agent can list new entries to the user after pulling the latest version.
+function computeChangelogDiff(oldText, newPath) {
+  let newText = null;
+  try { newText = require('fs').readFileSync(newPath, 'utf8'); } catch { return null; }
+  if (!newText) return null;
+  if (oldText === newText) return { unchanged: true, newEntries: [] };
+  const oldLines = new Set((oldText || '').split(/\r?\n/));
+  const isMeaningful = (l) =>
+    /^- /.test(l) || /^  - /.test(l) || /^### /.test(l) || /^## /.test(l);
+  const added = [];
+  for (const line of newText.split(/\r?\n/)) {
+    if (oldLines.has(line)) continue;
+    if (!isMeaningful(line)) continue;
+    added.push(line);
+  }
+  return { unchanged: false, newEntries: added };
+}
+
 // ── Command routing ──────────────────────────────────────────────────────────
 
 /**
@@ -1264,9 +1284,10 @@ async function run(argv) {
           { src: 'daemon/bin', dst: 'daemon/bin', type: 'dir' },
           { src: 'daemon/package.json', dst: 'daemon/package.json', type: 'file' },
           { src: 'Packages/com.dreamer.agent-bridge', dst: 'Packages/com.dreamer.agent-bridge', type: 'dir' },
-          { src: '.claude/skills/dreamer/SKILL.md', dst: '.claude/skills/dreamer/SKILL.md', type: 'file' },
+          { src: '.claude/skills/dreamer', dst: '.claude/skills/dreamer', type: 'dir' },
           { src: 'bin/dreamer', dst: 'bin/dreamer', type: 'file', chmod: 0o755 },
           { src: 'bin/dreamer.cmd', dst: 'bin/dreamer.cmd', type: 'file' },
+          { src: 'CHANGELOG.md', dst: 'CHANGELOG.md', type: 'file', optional: true },
         ];
         const installedAddons = Array.isArray(source.addons) ? source.addons : [];
         if (installedAddons.includes('ugui')) {
@@ -1276,11 +1297,22 @@ async function run(argv) {
           );
         }
 
-        const missing = targets.filter((t) => !fs.existsSync(path.join(cloneDir, t.src)));
+        const missing = targets.filter((t) => !t.optional && !fs.existsSync(path.join(cloneDir, t.src)));
         if (missing.length > 0) {
           try { fs.rmSync(tmpBase, { recursive: true, force: true }); } catch { /* ignore */ }
           fail(`Source repo missing expected paths at ref '${ref}': ${missing.map((m) => m.src).join(', ')}`);
         }
+        // Drop optional targets that aren't present in the clone.
+        for (let i = targets.length - 1; i >= 0; i--) {
+          if (targets[i].optional && !fs.existsSync(path.join(cloneDir, targets[i].src))) {
+            targets.splice(i, 1);
+          }
+        }
+
+        // Snapshot CHANGELOG.md before swap so we can show new entries.
+        const changelogPath = path.join(projectRoot, 'CHANGELOG.md');
+        let oldChangelog = null;
+        try { oldChangelog = fs.readFileSync(changelogPath, 'utf8'); } catch { /* fresh install */ }
 
         if (dryRun) {
           try { fs.rmSync(tmpBase, { recursive: true, force: true }); } catch { /* ignore */ }
@@ -1337,6 +1369,9 @@ async function run(argv) {
           fs.writeFileSync(SOURCE_PATH, JSON.stringify(updatedSource, null, 2) + '\n', 'utf8');
         } catch { /* non-fatal: next update will re-stamp */ }
 
+        // Diff CHANGELOG.md so the agent can read out new entries.
+        const changelog = computeChangelogDiff(oldChangelog, changelogPath);
+
         out({
           updated: true,
           repo: source.repo,
@@ -1346,6 +1381,10 @@ async function run(argv) {
           migrated,
           addons: installedAddons,
           preserved: ['daemon/.dreamer-config.json', 'daemon/.dreamer-source.json', 'daemon/.dreamer-queue.json'],
+          changelog,
+          directive: changelog && changelog.newEntries && changelog.newEntries.length > 0
+            ? 'IMPORTANT: After this update, the agent MUST list the new changelog entries (under `changelog.newEntries`) to the user — quote each entry verbatim or paraphrase tightly. The user just pulled new code and needs to know what changed. Do NOT skip this step or summarize "various improvements" — name the actual additions/fixes. If `changelog.newEntries` is empty (no diff), just confirm the update succeeded.'
+            : 'No CHANGELOG.md entries are new since the previous version. Confirm the update succeeded and the SHA changed.',
           note: 'Daemon stopped; it will auto-restart on the next dreamer command. Unity may need a moment to reimport the updated package.',
         });
         break;
