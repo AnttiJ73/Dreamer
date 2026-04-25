@@ -236,6 +236,83 @@ namespace Dreamer.AgentBridge
         }
 
         /// <summary>
+        /// Reparent a scene GameObject under a new parent (or to scene root).
+        /// Args:
+        ///   { sceneObjectPath: "/Old/Path/Target",
+        ///     newParentPath?: "/New/Parent",   // omit / null / "" → move to scene root
+        ///     keepWorldSpace?: bool,           // default false (preserve local transform under new parent)
+        ///     siblingIndex?: int }             // optional: place at this sibling slot under new parent
+        ///
+        /// Concrete use: take a GameObject that owns a SpriteRenderer (or any
+        /// other component) and move it under a different parent in the same
+        /// scene without losing its components or wiring. Equivalent to
+        /// drag-and-drop in the Unity Hierarchy window, but driven from the CLI.
+        /// </summary>
+        public static CommandResult ReparentGameObject(Dictionary<string, object> args)
+        {
+            string sceneObjectPath = SimpleJson.GetString(args, "sceneObjectPath");
+            if (string.IsNullOrEmpty(sceneObjectPath))
+                return CommandResult.Fail("'sceneObjectPath' is required.");
+
+            var go = PropertyOps.FindSceneObject(sceneObjectPath, out string findError);
+            if (go == null)
+                return CommandResult.Fail(findError ?? $"Scene object not found at path: {sceneObjectPath}");
+
+            // Resolve the new parent. Empty/null → scene root.
+            string newParentPath = SimpleJson.GetString(args, "newParentPath");
+            Transform newParent = null;
+            if (!string.IsNullOrEmpty(newParentPath))
+            {
+                var parentGo = PropertyOps.FindSceneObject(newParentPath, out string parentError);
+                if (parentGo == null)
+                    return CommandResult.Fail(parentError ?? $"New parent not found at path: {newParentPath}");
+                newParent = parentGo.transform;
+
+                // Cycle guard: refuse to reparent under self or any descendant.
+                if (parentGo == go)
+                    return CommandResult.Fail("Cannot reparent a GameObject under itself.");
+                for (var t = newParent; t != null; t = t.parent)
+                {
+                    if (t == go.transform)
+                        return CommandResult.Fail($"Cannot reparent '{go.name}' under its own descendant '{parentGo.name}'.");
+                }
+            }
+
+            bool keepWorldSpace = SimpleJson.GetBool(args, "keepWorldSpace", false);
+            string oldParentPath = go.transform.parent != null ? GetGameObjectPath(go.transform.parent.gameObject) : null;
+
+            Undo.SetTransformParent(go.transform, newParent, $"Reparent {go.name}");
+            // SetTransformParent's worldPositionStays defaults to true; explicitly enforce
+            // the user's choice via SetParent right after, since SetTransformParent doesn't
+            // expose that flag in all Unity versions.
+            go.transform.SetParent(newParent, keepWorldSpace);
+
+            // Optional sibling-index placement under the new parent.
+            if (args.TryGetValue("siblingIndex", out object siRaw))
+            {
+                int idx;
+                try { idx = Convert.ToInt32(siRaw); }
+                catch { idx = -1; }
+                if (idx >= 0)
+                {
+                    int max = newParent != null ? newParent.childCount - 1 : 0;
+                    go.transform.SetSiblingIndex(Mathf.Clamp(idx, 0, max));
+                }
+            }
+
+            EditorUtility.SetDirty(go);
+
+            return CommandResult.Ok(SimpleJson.Object()
+                .Put("reparented", true)
+                .Put("name", go.name)
+                .Put("oldParentPath", oldParentPath)
+                .Put("newParentPath", newParent != null ? GetGameObjectPath(newParent.gameObject) : null)
+                .Put("keepWorldSpace", keepWorldSpace)
+                .Put("path", GetGameObjectPath(go))
+                .ToString());
+        }
+
+        /// <summary>
         /// Delete a GameObject from the scene or from within a prefab.
         /// Scene: { sceneObjectPath: "Canvas/Panel/OldButton" }
         /// Prefab: { assetPath: "X.prefab", childPath: "OldChild" }

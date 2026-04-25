@@ -3,7 +3,9 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using UnityEditor;
+using UnityEditor.SceneManagement;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 
 namespace Dreamer.AgentBridge
 {
@@ -142,13 +144,67 @@ namespace Dreamer.AgentBridge
         }
 
         /// <summary>
-        /// Save all assets and refresh the database.
+        /// Persist editor state to disk. Covers BOTH:
+        ///   - <c>AssetDatabase.SaveAssets()</c>: writes dirty ScriptableObjects,
+        ///     prefab assets, materials, etc.
+        ///   - <c>EditorSceneManager.SaveOpenScenes()</c> / <c>SaveScene</c>:
+        ///     writes dirty open scenes — without this, scene-object mutations
+        ///     queued via set-property / add-component / create-gameobject etc.
+        ///     stay in-memory only and "git diff" shows no scene changes after a
+        ///     successful-looking save-assets call.
+        ///
+        /// Args (optional):
+        ///   { skipScenes: true } — only save assets, not scenes (legacy behaviour)
+        ///   { skipAssets: true } — only save scenes, not assets (rare)
+        ///   default: save both.
+        ///
+        /// Returns counts so callers can verify something actually changed.
         /// </summary>
         public static CommandResult SaveAssets(Dictionary<string, object> args)
         {
-            AssetDatabase.SaveAssets();
-            AssetDatabase.Refresh();
-            return CommandResult.Ok(SimpleJson.Object().Put("saved", true).ToString());
+            bool skipAssets = SimpleJson.GetBool(args, "skipAssets", false);
+            bool skipScenes = SimpleJson.GetBool(args, "skipScenes", false);
+
+            int dirtyScenes = 0;
+            var savedScenePaths = new List<string>();
+
+            if (!skipScenes)
+            {
+                // Snapshot dirty count before save so the result reflects the
+                // ones we actually wrote — SaveOpenScenes clears the dirty bit.
+                int sceneCount = SceneManager.sceneCount;
+                for (int i = 0; i < sceneCount; i++)
+                {
+                    var s = SceneManager.GetSceneAt(i);
+                    if (s.IsValid() && s.isDirty)
+                    {
+                        dirtyScenes++;
+                        if (!string.IsNullOrEmpty(s.path)) savedScenePaths.Add(s.path);
+                    }
+                }
+                if (dirtyScenes > 0)
+                {
+                    EditorSceneManager.SaveOpenScenes();
+                }
+            }
+
+            if (!skipAssets)
+            {
+                AssetDatabase.SaveAssets();
+                AssetDatabase.Refresh();
+            }
+
+            var json = SimpleJson.Object()
+                .Put("saved", true)
+                .Put("savedScenes", dirtyScenes)
+                .Put("savedAssets", !skipAssets);
+            if (savedScenePaths.Count > 0)
+            {
+                var arr = SimpleJson.Array();
+                foreach (var p in savedScenePaths) arr.Add(p);
+                json.PutRaw("scenePaths", arr.ToString());
+            }
+            return CommandResult.Ok(json.ToString());
         }
 
         /// <summary>

@@ -33,6 +33,20 @@ namespace Dreamer.AgentBridge
             if (string.IsNullOrEmpty(propertyPath))
                 return CommandResult.Fail("'propertyPath' is required.");
 
+            // Common pitfall: agents try to rename a GameObject by setting m_Name
+            // on it — but m_Name lives on the GameObject anchor, not a Component,
+            // and set-property only routes through Components. Catch that early
+            // with a directive error instead of returning the cryptic "Property
+            // 'm_Name' not found on '<ComponentType>'".
+            if (string.Equals(propertyPath, "m_Name", StringComparison.Ordinal) ||
+                string.Equals(propertyPath, "name",   StringComparison.Ordinal))
+            {
+                return CommandResult.Fail(
+                    "set-property cannot rename a GameObject — m_Name lives on the GameObject anchor, not a component. " +
+                    "Use `./bin/dreamer rename --scene-object <path> --name <new-name> --wait` " +
+                    "(or for a prefab: `--asset <prefab.prefab> [--child-path <subpath>] --name <new-name>`).");
+            }
+
             object value = SimpleJson.GetValue(args, "value");
             string componentTypeName = SimpleJson.GetString(args, "componentType");
 

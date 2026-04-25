@@ -58,15 +58,24 @@ When you write .cs files directly to disk (not via `./bin/dreamer create-script`
 # Set scene object reference (e.g., assign Main Camera to a Camera field on a scene instance)
 ./bin/dreamer set-property --scene-object "MyPrefab" --component "Game.MyComponent" --property "mainCamera" --value '{"sceneRef":"Main Camera"}' --wait
 
-# Scene GameObject editing — delete, rename, duplicate by scene path.
-# Use these instead of trying to work around via execute-menu-item or set-property on m_Name.
+# Scene GameObject editing — delete, rename, reparent, duplicate by scene path.
+# Use these INSTEAD of execute-menu-item / set-property on m_Name (which doesn't work — m_Name lives on the GO anchor, not a component).
 ./bin/dreamer delete-gameobject --scene-object "/UICanvas/OldPanel" --wait
 ./bin/dreamer rename --scene-object "/UICanvas/TempName" --name "FinalName" --wait
+./bin/dreamer reparent --scene-object "/Visuals/SpriteHolder" --new-parent "/Body" --wait
+./bin/dreamer reparent --scene-object "/Body/Stray" --wait    # omit --new-parent → moves to scene root
+
+# Editing prefab assets at depth — add/remove/set-property on a child within a prefab via --child-path.
+# This is the cleanest path; do NOT instantiate-into-scene + save-as-prefab (regenerates fileIDs).
+./bin/dreamer add-component    --asset "Assets/Prefabs/Enemy.prefab" --child-path "Visuals/Body" --type "UnityEngine.SpriteRenderer" --wait
+./bin/dreamer remove-component --asset "Assets/Prefabs/Enemy.prefab" --child-path "Visuals/Body" --type "UnityEngine.SpriteRenderer" --wait
+./bin/dreamer set-property     --asset "Assets/Prefabs/Enemy.prefab" --child-path "Visuals/Body" --component "SpriteRenderer" --property "color" --value '{"r":1,"g":0,"b":0,"a":1}' --wait
 
 # Refresh (after writing files to disk externally)
 ./bin/dreamer refresh-assets --wait
 
-# Save
+# Save — writes BOTH dirty open scenes AND ScriptableObjects/prefabs/materials.
+# After any scene-object mutation (set-property/add-component/create-gameobject on a scene path), call this so the .unity file actually updates on disk.
 ./bin/dreamer save-assets --wait
 
 # Status

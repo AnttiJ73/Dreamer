@@ -16,6 +16,7 @@ const KIND_DEFS = {
   create_gameobject:{ label: 'Create GameObject',  requirements: null },
   delete_gameobject:{ label: 'Delete GameObject',  requirements: null },
   rename_gameobject:{ label: 'Rename',             requirements: null },
+  reparent_gameobject:{ label: 'Reparent GameObject', requirements: null },
   duplicate:        { label: 'Duplicate',           requirements: null },
   instantiate_prefab:{ label: 'Instantiate Prefab', requirements: null },
   inspect_hierarchy:{ label: 'Inspect Hierarchy',  requirements: null },
@@ -128,6 +129,10 @@ function mutatesScene(kind, args) {
     case 'remove_component':
     case 'remove_missing_scripts':
       return !!a.sceneObjectPath;
+
+    // Reparent only ever takes a scene path — there's no asset-mode reparent.
+    case 'reparent_gameobject':
+      return true;
 
     // UGUI add-on: tree builder always writes to scene (or within a scene's
     // canvas). Prefab-scoped UI editing goes through existing set-property /

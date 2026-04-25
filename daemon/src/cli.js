@@ -382,7 +382,10 @@ async function run(argv) {
         'create-prefab --name NAME [--path FOLDER]',
         'instantiate-prefab --asset PATH [--name NAME] [--parent /PATH] [--position {x,y,z}]',
         'create-gameobject --name NAME [--parent PATH] [--scene SCENE]',
-        'save-assets',
+        'delete-gameobject (--scene-object PATH | --asset PATH --child-path PATH)',
+        'rename (--scene-object PATH | --asset PATH [--child-path PATH]) --name NEW_NAME',
+        'reparent --scene-object PATH [--new-parent PATH] [--keep-world-space true|false] [--sibling-index N]   (omit --new-parent to move to scene root)',
+        'save-assets    (writes both dirty open scenes AND ScriptableObjects/prefabs/materials)',
         'reimport-script --path FILE_OR_FOLDER [--non-recursive]   (force re-import of .cs files Unity misclassified as unknown)',
         'create-material --name NAME [--path FOLDER] [--shader "Shader/Name"]',
         'inspect-material --asset PATH_OR_GUID',
@@ -605,6 +608,23 @@ async function run(argv) {
         if (flags['child-path']) dupArgs.childPath = flags['child-path'];
         if (flags.name) dupArgs.newName = flags.name;
         await submitCommand('duplicate', dupArgs, flags);
+        break;
+      }
+
+      case 'reparent': {
+        if (!flags['scene-object']) fail('--scene-object PATH is required for reparent (the GameObject to move)');
+        const rpArgs = { sceneObjectPath: flags['scene-object'] };
+        // Empty / unset --new-parent → move to scene root (handled Unity-side).
+        if (flags['new-parent']) rpArgs.newParentPath = flags['new-parent'];
+        if (flags['keep-world-space'] === true || flags['keep-world-space'] === 'true') {
+          rpArgs.keepWorldSpace = true;
+        }
+        if (flags['sibling-index'] != null) {
+          const idx = parseInt(flags['sibling-index'], 10);
+          if (!Number.isFinite(idx) || idx < 0) fail('--sibling-index must be a non-negative integer');
+          rpArgs.siblingIndex = idx;
+        }
+        await submitCommand('reparent_gameobject', rpArgs, flags);
         break;
       }
 
