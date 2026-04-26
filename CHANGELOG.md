@@ -9,6 +9,21 @@ tags, breaking changes bump the minor version (0.x.0), fixes bump patch.
 
 ## [Unreleased]
 
+### Added — AnimatorController authoring (Animation add-on)
+- **`create-animator-controller --name X [--path FOLDER]`** — creates a new `.controller` asset with one default layer.
+- **`add-animator-parameter --asset <.controller> --name X --type bool|int|float|trigger [--default V]`** — defines a parameter referenced by transition conditions. Names must be unique.
+- **`add-animator-state --asset <.controller> --name X [--motion <.anim>] [--speed N] [--layer N]`** — adds a state with an optional `Motion` clip binding. First state on an empty layer auto-becomes default.
+- **`add-animator-transition --asset <.controller> --from STATE --to STATE [--conditions JSON] [--has-exit-time true] [--exit-time N] [--duration N]`** — wires a transition. `--from AnyState` for AnyState transitions, `--to Exit` for exit transitions. Conditions: `{parameter, mode: If|IfNot|Greater|Less|Equals|NotEqual, threshold?}`. Multiple conditions = AND.
+- **`set-animator-default-state --asset <.controller> --state X [--layer N]`** — overrides the layer's default state.
+- **`inspect-animator-controller --asset <.controller>`** — full controller inspection: parameters, layers, states (with motion paths + speeds), transitions (with conditions).
+- v1 scope is state-machine root only. Sub-state machines, blend trees, and per-layer masks are out of scope (author them in the Unity Animator window if needed). `Entry` is not supported as a transition source — use `set-animator-default-state` instead, which Unity treats as the implicit entry connection.
+
+### Added — Sprite curves + Animation events (Animation add-on)
+- **`set-sprite-curve --asset <.anim> [--target SUB] [--component TYPENAME] [--property NAME] --keys JSON`** — write/replace an ObjectReferenceCurve for sprite-swap animation. Defaults to `SpriteRenderer.m_Sprite`. Each key: `{ "time": N, "sprite": "path.png" }` or `{ "time": N, "sprite": {"assetRef": "path.png", "subAsset": "Walk_0"} }` for multi-sprite atlas slices.
+- **`delete-sprite-curve --asset <.anim> [--target SUB] [--component TYPENAME] [--property NAME]`** — remove a sprite-swap curve.
+- **`set-animation-events --asset <.anim> --events JSON`** — replace ALL events on a clip. Each: `{ time, functionName, stringParameter?, floatParameter?, intParameter?, objectReferenceParameter? }`. Pass `[]` to clear.
+- `inspect-animation-clip` now also returns `events[]` and per-key sprite info on object-reference bindings.
+
 ### Added — Animation add-on (`com.dreamer.agent-bridge.animation`)
 - New optional package alongside `com.dreamer.agent-bridge.ugui`. Five new commands for AnimationClip authoring (AnimatorController state-machine commands forthcoming).
 - **`create-animation-clip --name X [--path FOLDER] [--frame-rate N] [--loop true|false]`** — creates a new `.anim` asset with the given frameRate (default 30) and loop setting.

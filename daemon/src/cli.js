@@ -424,6 +424,15 @@ async function run(argv) {
         'inspect-animation-clip --asset PATH_OR_GUID',
         'sample-animation-curve --asset PATH_OR_GUID [--target SUB] --component TYPENAME --property PATH [--samples N] [--t-start N] [--t-end N]',
         'delete-animation-curve --asset PATH_OR_GUID [--target SUB] --component TYPENAME --property PATH',
+        'set-sprite-curve --asset PATH_OR_GUID [--target SUB] [--component TYPENAME] [--property NAME] --keys JSON   (sprite-swap; defaults to SpriteRenderer.m_Sprite)',
+        'delete-sprite-curve --asset PATH_OR_GUID [--target SUB] [--component TYPENAME] [--property NAME]',
+        'set-animation-events --asset PATH_OR_GUID --events JSON   (replaces ALL events; pass [] to clear)',
+        'create-animator-controller --name NAME [--path FOLDER]',
+        'add-animator-parameter --asset PATH_OR_GUID --name NAME --type bool|int|float|trigger [--default V]',
+        'add-animator-state --asset PATH_OR_GUID --name NAME [--layer N] [--motion CLIP_PATH] [--speed N]',
+        'add-animator-transition --asset PATH_OR_GUID --from STATE --to STATE [--layer N] [--has-exit-time true|false] [--exit-time N] [--duration N] [--conditions JSON]',
+        'set-animator-default-state --asset PATH_OR_GUID --state NAME [--layer N]',
+        'inspect-animator-controller --asset PATH_OR_GUID',
         'status [--id CMD_ID]',
         'queue [--state STATE] [--task TASK_ID]',
         'compile-status',
@@ -628,7 +637,7 @@ async function run(argv) {
         try { parsedKeys = JSON.parse(flags.keys); }
         catch (e) { fail('--keys must be valid JSON: ' + e.message); }
         const sacArgs = {
-          target: flags.target || '',
+          target: typeof flags.target === 'string' ? flags.target : '',
           componentType: flags.component,
           propertyName: flags.property,
           keys: parsedKeys,
@@ -652,7 +661,7 @@ async function run(argv) {
         if (!flags.component) fail('--component TYPENAME is required');
         if (!flags.property) fail('--property NAME is required');
         const samACArgs = {
-          target: flags.target || '',
+          target: typeof flags.target === 'string' ? flags.target : '',
           componentType: flags.component,
           propertyName: flags.property,
         };
@@ -665,18 +674,142 @@ async function run(argv) {
         break;
       }
 
+      case 'set-sprite-curve': {
+        if (!flags.asset) fail('--asset PATH_OR_GUID is required for set-sprite-curve');
+        if (flags.keys === undefined) fail('--keys JSON is required (array of {time, sprite} objects)');
+        let parsedSCKeys;
+        try { parsedSCKeys = JSON.parse(flags.keys); }
+        catch (e) { fail('--keys must be valid JSON: ' + e.message); }
+        const scArgs = {
+          target: typeof flags.target === 'string' ? flags.target : '',
+          keys: parsedSCKeys,
+        };
+        if (flags.component) scArgs.componentType = flags.component;
+        if (flags.property)  scArgs.propertyName  = flags.property;
+        const isGuidSC = /^[0-9a-f]{32}$/i.test(flags.asset);
+        Object.assign(scArgs, isGuidSC ? { guid: flags.asset } : { assetPath: flags.asset });
+        await submitCommand('set_sprite_curve', scArgs, flags);
+        break;
+      }
+
+      case 'delete-sprite-curve': {
+        if (!flags.asset) fail('--asset PATH_OR_GUID is required for delete-sprite-curve');
+        const dscArgs = {
+          target: typeof flags.target === 'string' ? flags.target : '',
+        };
+        if (flags.component) dscArgs.componentType = flags.component;
+        if (flags.property)  dscArgs.propertyName  = flags.property;
+        const isGuidDSC = /^[0-9a-f]{32}$/i.test(flags.asset);
+        Object.assign(dscArgs, isGuidDSC ? { guid: flags.asset } : { assetPath: flags.asset });
+        await submitCommand('delete_sprite_curve', dscArgs, flags);
+        break;
+      }
+
+      case 'set-animation-events': {
+        if (!flags.asset) fail('--asset PATH_OR_GUID is required for set-animation-events');
+        if (flags.events === undefined) fail('--events JSON is required (array; pass [] to clear)');
+        let parsedEvents;
+        try { parsedEvents = JSON.parse(flags.events); }
+        catch (e) { fail('--events must be valid JSON: ' + e.message); }
+        const seArgs = { events: parsedEvents };
+        const isGuidSE = /^[0-9a-f]{32}$/i.test(flags.asset);
+        Object.assign(seArgs, isGuidSE ? { guid: flags.asset } : { assetPath: flags.asset });
+        await submitCommand('set_animation_events', seArgs, flags);
+        break;
+      }
+
       case 'delete-animation-curve': {
         if (!flags.asset) fail('--asset PATH_OR_GUID is required for delete-animation-curve');
         if (!flags.component) fail('--component TYPENAME is required');
         if (!flags.property) fail('--property NAME is required');
         const dacArgs = {
-          target: flags.target || '',
+          target: typeof flags.target === 'string' ? flags.target : '',
           componentType: flags.component,
           propertyName: flags.property,
         };
         const isGuidDAC = /^[0-9a-f]{32}$/i.test(flags.asset);
         Object.assign(dacArgs, isGuidDAC ? { guid: flags.asset } : { assetPath: flags.asset });
         await submitCommand('delete_animation_curve', dacArgs, flags);
+        break;
+      }
+
+      case 'create-animator-controller': {
+        if (!flags.name) fail('--name is required for create-animator-controller');
+        const cacArgs = { name: flags.name };
+        if (flags.path) cacArgs.path = flags.path;
+        await submitCommand('create_animator_controller', cacArgs, flags);
+        break;
+      }
+
+      case 'add-animator-parameter': {
+        if (!flags.asset) fail('--asset PATH_OR_GUID is required');
+        if (!flags.name) fail('--name is required');
+        const apArgs = { name: flags.name, type: flags.type || 'bool' };
+        if (flags.default !== undefined) {
+          let d = flags.default;
+          // Coerce common shorthand: "true"/"false" → bool, numerics → number.
+          if (d === 'true') d = true;
+          else if (d === 'false') d = false;
+          else if (typeof d === 'string' && /^-?\d+(\.\d+)?$/.test(d)) d = parseFloat(d);
+          apArgs.default = d;
+        }
+        const isGuidAP = /^[0-9a-f]{32}$/i.test(flags.asset);
+        Object.assign(apArgs, isGuidAP ? { guid: flags.asset } : { assetPath: flags.asset });
+        await submitCommand('add_animator_parameter', apArgs, flags);
+        break;
+      }
+
+      case 'add-animator-state': {
+        if (!flags.asset) fail('--asset PATH_OR_GUID is required');
+        if (!flags.name) fail('--name is required');
+        const asArgs = { name: flags.name };
+        if (flags.layer !== undefined) asArgs.layer = parseInt(flags.layer, 10);
+        if (flags.motion) asArgs.motion = flags.motion;
+        if (flags.speed !== undefined) asArgs.speed = parseFloat(flags.speed);
+        const isGuidAS = /^[0-9a-f]{32}$/i.test(flags.asset);
+        Object.assign(asArgs, isGuidAS ? { guid: flags.asset } : { assetPath: flags.asset });
+        await submitCommand('add_animator_state', asArgs, flags);
+        break;
+      }
+
+      case 'add-animator-transition': {
+        if (!flags.asset) fail('--asset PATH_OR_GUID is required');
+        if (!flags.from) fail('--from STATE is required');
+        if (!flags.to)   fail('--to STATE is required');
+        const atArgs = { from: flags.from, to: flags.to };
+        if (flags.layer !== undefined) atArgs.layer = parseInt(flags.layer, 10);
+        if (flags['has-exit-time'] !== undefined) atArgs.hasExitTime = flags['has-exit-time'] === 'true' || flags['has-exit-time'] === true;
+        if (flags['exit-time'] !== undefined) atArgs.exitTime = parseFloat(flags['exit-time']);
+        if (flags.duration !== undefined) atArgs.duration = parseFloat(flags.duration);
+        if (flags.offset !== undefined)   atArgs.offset   = parseFloat(flags.offset);
+        if (flags['can-self'] !== undefined) atArgs.canTransitionToSelf = flags['can-self'] === 'true' || flags['can-self'] === true;
+        if (flags.conditions) {
+          try { atArgs.conditions = JSON.parse(flags.conditions); }
+          catch (e) { fail('--conditions must be valid JSON: ' + e.message); }
+        }
+        const isGuidAT = /^[0-9a-f]{32}$/i.test(flags.asset);
+        Object.assign(atArgs, isGuidAT ? { guid: flags.asset } : { assetPath: flags.asset });
+        await submitCommand('add_animator_transition', atArgs, flags);
+        break;
+      }
+
+      case 'set-animator-default-state': {
+        if (!flags.asset) fail('--asset PATH_OR_GUID is required');
+        if (!flags.state) fail('--state STATE_NAME is required');
+        const sdsArgs = { state: flags.state };
+        if (flags.layer !== undefined) sdsArgs.layer = parseInt(flags.layer, 10);
+        const isGuidSDS = /^[0-9a-f]{32}$/i.test(flags.asset);
+        Object.assign(sdsArgs, isGuidSDS ? { guid: flags.asset } : { assetPath: flags.asset });
+        await submitCommand('set_animator_default_state', sdsArgs, flags);
+        break;
+      }
+
+      case 'inspect-animator-controller': {
+        if (!flags.asset) fail('--asset PATH_OR_GUID is required');
+        const iacArgs = {};
+        const isGuidIAC = /^[0-9a-f]{32}$/i.test(flags.asset);
+        Object.assign(iacArgs, isGuidIAC ? { guid: flags.asset } : { assetPath: flags.asset });
+        await submitCommand('inspect_animator_controller', iacArgs, flags);
         break;
       }
 

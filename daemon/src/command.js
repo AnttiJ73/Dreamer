@@ -64,6 +64,16 @@ const KIND_DEFS = {
   inspect_animation_clip: { label: 'Inspect AnimationClip', requirements: null },
   sample_animation_curve: { label: 'Sample Animation Curve', requirements: null },
   delete_animation_curve: { label: 'Delete Animation Curve', requirements: null },
+  set_sprite_curve:       { label: 'Set Sprite Curve',       requirements: null },
+  delete_sprite_curve:    { label: 'Delete Sprite Curve',    requirements: null },
+  set_animation_events:   { label: 'Set Animation Events',   requirements: null },
+
+  create_animator_controller: { label: 'Create Animator Controller', requirements: null },
+  add_animator_parameter:     { label: 'Add Animator Parameter',     requirements: null },
+  add_animator_state:         { label: 'Add Animator State',         requirements: null },
+  add_animator_transition:    { label: 'Add Animator Transition',    requirements: null },
+  set_animator_default_state: { label: 'Set Animator Default State', requirements: null },
+  inspect_animator_controller:{ label: 'Inspect Animator Controller',requirements: null },
 };
 
 // ── Valid states and allowed transitions ─────────────────────────────────────

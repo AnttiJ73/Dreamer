@@ -110,6 +110,21 @@ Flat lookup table. "I want to do X" → run command Y. For arg details and examp
 | List all curve bindings on a clip | `inspect-animation-clip --asset <.anim>` | `inspect_animation_clip` |
 | **Verify a curve numerically (sample [{t,v},...] table)** | `sample-animation-curve --asset <.anim> [--target SUB] --component <FQN> --property <m_Field.x> [--samples 30]` | `sample_animation_curve` |
 | Remove a curve binding | `delete-animation-curve --asset <.anim> [--target SUB] --component <FQN> --property <m_Field.x>` | `delete_animation_curve` |
+| Animate sprite swaps (SpriteRenderer or UI Image) | `set-sprite-curve --asset <.anim> [--target SUB] [--component <FQN>] --keys '[{"time":0,"sprite":{"assetRef":"...","subAsset":"..."}},...]'` | `set_sprite_curve` |
+| Drop a sprite curve | `delete-sprite-curve --asset <.anim> [--target SUB]` | `delete_sprite_curve` |
+| Set / replace animation events (callbacks at specific times) | `set-animation-events --asset <.anim> --events '[{"time":0.25,"functionName":"OnFootstep"},...]'` (pass `[]` to clear) | `set_animation_events` |
+
+## AnimatorController authoring — `com.dreamer.agent-bridge.animation` add-on
+
+| Task | Command | Kind |
+|---|---|---|
+| Create a new .controller asset | `create-animator-controller --name X [--path Assets/Animators]` | `create_animator_controller` |
+| Add a parameter | `add-animator-parameter --asset <.controller> --name isMoving --type bool [--default false]` | `add_animator_parameter` |
+| Add a state with optional clip | `add-animator-state --asset <.controller> --name Idle [--motion <.anim>] [--speed 1.0] [--layer 0]` | `add_animator_state` |
+| Wire a transition | `add-animator-transition --asset <.controller> --from Idle --to Walk --conditions '[{"parameter":"isMoving","mode":"If"}]' [--has-exit-time true] [--exit-time 0.95] [--duration 0.1]` | `add_animator_transition` |
+| AnyState transition | `add-animator-transition --asset <.controller> --from AnyState --to Attack --conditions '[{"parameter":"attack","mode":"If"}]'` | `add_animator_transition` |
+| Override default state | `set-animator-default-state --asset <.controller> --state Idle [--layer 0]` | `set_animator_default_state` |
+| Inspect (parameters, layers, states, transitions) | `inspect-animator-controller --asset <.controller>` | `inspect_animator_controller` |
 
 After every `set-animation-curve`, run `sample-animation-curve` with the same triple to read the curve back as numbers — that's how you verify the tangents do what you intended (especially for `interp:"auto"` which can overshoot).
 

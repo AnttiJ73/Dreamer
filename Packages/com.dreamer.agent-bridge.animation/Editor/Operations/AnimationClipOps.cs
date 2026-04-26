@@ -11,8 +11,8 @@ namespace Dreamer.AgentBridge.Animation
     /// inspect existing clips, and sample curves to a numeric (t, v) table that
     /// the agent can read to verify the curve evaluates as intended.
     ///
-    /// Float-curve bindings only for v1. ObjectReference curves (sprite swap,
-    /// active toggles) and AnimatorController state-machine commands ship later.
+    /// Also covers ObjectReferenceCurves (sprite-swap animation) and
+    /// AnimationEvents (callbacks fired at specific times).
     /// </summary>
     public static class AnimationClipOps
     {
@@ -159,20 +159,52 @@ namespace Dreamer.AgentBridge.Animation
                 bindingsJson.AddRaw(item.ToString());
             }
 
-            // Object-reference curves (sprite swaps etc.) — list separately.
+            // Object-reference curves (sprite swaps, etc.). Each is summarized
+            // with per-keyframe sprite name + asset path so the agent can
+            // verify the swap sequence without a separate read.
             var objBindings = AnimationUtility.GetObjectReferenceCurveBindings(clip);
             var objJson = SimpleJson.Array();
             foreach (var b in objBindings)
             {
                 var keys = AnimationUtility.GetObjectReferenceCurve(clip, b);
                 int n = keys != null ? keys.Length : 0;
-                var item = SimpleJson.Object()
+                var keysJson = SimpleJson.Array();
+                if (keys != null)
+                {
+                    foreach (var k in keys)
+                    {
+                        var nm = k.value != null ? k.value.name : null;
+                        var pp = k.value != null ? AssetDatabase.GetAssetPath(k.value) : null;
+                        var item = SimpleJson.Object()
+                            .Put("time", Math.Round(k.time, 4))
+                            .Put("name", nm)
+                            .Put("assetPath", pp);
+                        keysJson.AddRaw(item.ToString());
+                    }
+                }
+                var bItem = SimpleJson.Object()
                     .Put("target", string.IsNullOrEmpty(b.path) ? "" : b.path)
                     .Put("componentType", b.type != null ? b.type.FullName : null)
                     .Put("propertyName", b.propertyName)
                     .Put("keyCount", n)
-                    .Put("note", "object-reference curve (not editable via set-animation-curve in v1)");
-                objJson.AddRaw(item.ToString());
+                    .PutRaw("keys", keysJson.ToString());
+                objJson.AddRaw(bItem.ToString());
+            }
+
+            // Animation events (callbacks fired at specific times).
+            var events = AnimationUtility.GetAnimationEvents(clip);
+            var evJson = SimpleJson.Array();
+            foreach (var e in events)
+            {
+                var item = SimpleJson.Object()
+                    .Put("time", Math.Round(e.time, 4))
+                    .Put("functionName", e.functionName)
+                    .Put("stringParameter", e.stringParameter)
+                    .Put("floatParameter", e.floatParameter)
+                    .Put("intParameter", e.intParameter);
+                if (e.objectReferenceParameter != null)
+                    item.Put("objectReferenceParameterPath", AssetDatabase.GetAssetPath(e.objectReferenceParameter));
+                evJson.AddRaw(item.ToString());
             }
 
             var json = SimpleJson.Object()
@@ -187,6 +219,8 @@ namespace Dreamer.AgentBridge.Animation
                 .PutRaw("bindings", bindingsJson.ToString())
                 .Put("objectReferenceBindingCount", objBindings.Length)
                 .PutRaw("objectReferenceBindings", objJson.ToString())
+                .Put("eventCount", events.Length)
+                .PutRaw("events", evJson.ToString())
                 .ToString();
             return CommandResult.Ok(json);
         }
@@ -302,6 +336,168 @@ namespace Dreamer.AgentBridge.Animation
                 .Put("propertyName", propertyName)
                 .ToString();
             return CommandResult.Ok(json);
+        }
+
+        // ── set-sprite-curve (object-reference curve, for sprite swaps) ───
+
+        public static CommandResult SetSpriteCurve(Dictionary<string, object> args)
+        {
+            string assetPath = AssetOps.ResolveAssetPath(args);
+            if (string.IsNullOrEmpty(assetPath))
+                return CommandResult.Fail("'assetPath' or 'guid' is required.");
+
+            var clip = AssetDatabase.LoadAssetAtPath<AnimationClip>(assetPath);
+            if (clip == null)
+                return CommandResult.Fail($"Failed to load AnimationClip at '{assetPath}'.");
+
+            string target = NormalizeTargetPath(SimpleJson.GetString(args, "target") ?? "");
+            string componentTypeName = SimpleJson.GetString(args, "componentType", "UnityEngine.SpriteRenderer");
+            string propertyName = SimpleJson.GetString(args, "propertyName", "m_Sprite");
+
+            Type compType = ComponentOps.ResolveType(componentTypeName);
+            if (compType == null)
+                return CommandResult.Fail($"Component type '{componentTypeName}' not found.");
+
+            object keysRaw = SimpleJson.GetValue(args, "keys");
+            if (!(keysRaw is List<object> keysList) || keysList.Count == 0)
+                return CommandResult.Fail("'keys' must be a non-empty array of {time, sprite} objects.");
+
+            var kfs = new List<ObjectReferenceKeyframe>();
+            for (int i = 0; i < keysList.Count; i++)
+            {
+                if (!(keysList[i] is Dictionary<string, object> k))
+                    return CommandResult.Fail($"keys[{i}] must be an object with 'time' and 'sprite' fields.");
+
+                if (!TryGetFloat(k, "time", out float t) && !TryGetFloat(k, "t", out t))
+                    return CommandResult.Fail($"keys[{i}].time is required (number).");
+
+                UnityEngine.Object spriteAsset = ResolveSpriteRef(k, out string err);
+                if (err != null) return CommandResult.Fail($"keys[{i}].sprite: {err}");
+
+                kfs.Add(new ObjectReferenceKeyframe { time = t, value = spriteAsset });
+            }
+
+            var binding = new EditorCurveBinding { path = target, type = compType, propertyName = propertyName };
+            AnimationUtility.SetObjectReferenceCurve(clip, binding, kfs.ToArray());
+
+            EditorUtility.SetDirty(clip);
+            AssetDatabase.SaveAssets();
+
+            var keysJson = SimpleJson.Array();
+            foreach (var k in kfs)
+            {
+                var name = k.value != null ? k.value.name : null;
+                var path = k.value != null ? AssetDatabase.GetAssetPath(k.value) : null;
+                var item = SimpleJson.Object()
+                    .Put("time", Math.Round(k.time, 4))
+                    .Put("sprite", name)
+                    .Put("assetPath", path);
+                keysJson.AddRaw(item.ToString());
+            }
+
+            var json = SimpleJson.Object()
+                .Put("set", true)
+                .Put("assetPath", assetPath)
+                .Put("target", target)
+                .Put("componentType", compType.FullName)
+                .Put("propertyName", propertyName)
+                .Put("keyCount", kfs.Count)
+                .PutRaw("keys", keysJson.ToString())
+                .ToString();
+            return CommandResult.Ok(json);
+        }
+
+        public static CommandResult DeleteSpriteCurve(Dictionary<string, object> args)
+        {
+            string assetPath = AssetOps.ResolveAssetPath(args);
+            if (string.IsNullOrEmpty(assetPath))
+                return CommandResult.Fail("'assetPath' or 'guid' is required.");
+
+            var clip = AssetDatabase.LoadAssetAtPath<AnimationClip>(assetPath);
+            if (clip == null)
+                return CommandResult.Fail($"Failed to load AnimationClip at '{assetPath}'.");
+
+            string target = NormalizeTargetPath(SimpleJson.GetString(args, "target") ?? "");
+            string componentTypeName = SimpleJson.GetString(args, "componentType", "UnityEngine.SpriteRenderer");
+            string propertyName = SimpleJson.GetString(args, "propertyName", "m_Sprite");
+
+            Type compType = ComponentOps.ResolveType(componentTypeName);
+            if (compType == null)
+                return CommandResult.Fail($"Component type '{componentTypeName}' not found.");
+
+            var binding = new EditorCurveBinding { path = target, type = compType, propertyName = propertyName };
+            var existing = AnimationUtility.GetObjectReferenceCurve(clip, binding);
+            if (existing == null)
+                return CommandResult.Fail($"No object-reference curve at target='{target}', component='{componentTypeName}', property='{propertyName}'.");
+
+            AnimationUtility.SetObjectReferenceCurve(clip, binding, null);
+            EditorUtility.SetDirty(clip);
+            AssetDatabase.SaveAssets();
+
+            return CommandResult.Ok(SimpleJson.Object()
+                .Put("deleted", true).Put("assetPath", assetPath).Put("target", target)
+                .Put("componentType", compType.FullName).Put("propertyName", propertyName)
+                .ToString());
+        }
+
+        // ── set-animation-events ──────────────────────────────────────────
+
+        public static CommandResult SetAnimationEvents(Dictionary<string, object> args)
+        {
+            string assetPath = AssetOps.ResolveAssetPath(args);
+            if (string.IsNullOrEmpty(assetPath))
+                return CommandResult.Fail("'assetPath' or 'guid' is required.");
+
+            var clip = AssetDatabase.LoadAssetAtPath<AnimationClip>(assetPath);
+            if (clip == null)
+                return CommandResult.Fail($"Failed to load AnimationClip at '{assetPath}'.");
+
+            object eventsRaw = SimpleJson.GetValue(args, "events");
+            if (!(eventsRaw is List<object> eventsList))
+                return CommandResult.Fail("'events' must be a JSON array (pass [] to clear all events).");
+
+            var built = new List<AnimationEvent>();
+            for (int i = 0; i < eventsList.Count; i++)
+            {
+                if (!(eventsList[i] is Dictionary<string, object> e))
+                    return CommandResult.Fail($"events[{i}] must be an object.");
+
+                if (!TryGetFloat(e, "time", out float t))
+                    return CommandResult.Fail($"events[{i}].time is required (number).");
+                string fn = SimpleJson.GetString(e, "functionName");
+                if (string.IsNullOrEmpty(fn))
+                    return CommandResult.Fail($"events[{i}].functionName is required.");
+
+                var ev = new AnimationEvent
+                {
+                    time = t,
+                    functionName = fn,
+                    stringParameter = SimpleJson.GetString(e, "stringParameter") ?? "",
+                    floatParameter = TryGetFloat(e, "floatParameter", out float fp) ? fp : 0f,
+                    intParameter = TryGetInt(e, "intParameter", out int ip) ? ip : 0,
+                    messageOptions = SendMessageOptions.DontRequireReceiver,
+                };
+
+                // Optional object reference parameter — accepts {assetRef, subAsset?}.
+                if (e.ContainsKey("objectReferenceParameter") && e["objectReferenceParameter"] is Dictionary<string, object> orpDict)
+                {
+                    var obj = ResolveAssetRef(orpDict, out string err);
+                    if (err != null) return CommandResult.Fail($"events[{i}].objectReferenceParameter: {err}");
+                    ev.objectReferenceParameter = obj;
+                }
+
+                built.Add(ev);
+            }
+
+            AnimationUtility.SetAnimationEvents(clip, built.ToArray());
+            EditorUtility.SetDirty(clip);
+            AssetDatabase.SaveAssets();
+
+            return CommandResult.Ok(SimpleJson.Object()
+                .Put("set", true)
+                .Put("assetPath", assetPath)
+                .Put("eventCount", built.Count)
+                .ToString());
         }
 
         // ── helpers ───────────────────────────────────────────────────────
@@ -438,6 +634,78 @@ namespace Dreamer.AgentBridge.Animation
                 return Convert.ToDouble(args[key], System.Globalization.CultureInfo.InvariantCulture);
             }
             catch { return fallback; }
+        }
+
+        static bool TryGetInt(Dictionary<string, object> args, string key, out int v)
+        {
+            v = 0;
+            if (args == null || !args.ContainsKey(key) || args[key] == null) return false;
+            try
+            {
+                v = Convert.ToInt32(args[key], System.Globalization.CultureInfo.InvariantCulture);
+                return true;
+            }
+            catch { return false; }
+        }
+
+        // Resolve a {assetRef, subAsset?} dict OR a bare path string to a UnityEngine.Object.
+        // Used by SetSpriteCurve and SetAnimationEvents.
+        static UnityEngine.Object ResolveAssetRef(Dictionary<string, object> dict, out string error)
+        {
+            error = null;
+            string assetRef = SimpleJson.GetString(dict, "assetRef");
+            string subAsset = SimpleJson.GetString(dict, "subAsset");
+            if (string.IsNullOrEmpty(assetRef))
+            {
+                error = "missing 'assetRef' field";
+                return null;
+            }
+            if (!string.IsNullOrEmpty(subAsset))
+            {
+                var subs = AssetDatabase.LoadAllAssetsAtPath(assetRef);
+                var named = System.Array.Find(subs, s => s != null && s.name == subAsset);
+                if (named == null)
+                {
+                    var avail = string.Join(", ", System.Array.ConvertAll(
+                        System.Array.FindAll(subs, s => s != null), s => s.name));
+                    error = $"sub-asset '{subAsset}' not found at '{assetRef}'. Available: {avail}";
+                    return null;
+                }
+                return named;
+            }
+            var main = AssetDatabase.LoadMainAssetAtPath(assetRef);
+            if (main == null) { error = $"asset not found at '{assetRef}'"; return null; }
+            return main;
+        }
+
+        // Resolve a sprite reference — accepts:
+        //   { "sprite": "Assets/Sprites/Walk.png", "subAsset": "Walk_0" }
+        //   { "sprite": { "assetRef": "Assets/X.png", "subAsset": "Walk_0" } }
+        //   { "assetRef": "...", "subAsset": "..." }      (no nested 'sprite' key)
+        static UnityEngine.Object ResolveSpriteRef(Dictionary<string, object> key, out string error)
+        {
+            error = null;
+            // Case A: nested object under 'sprite'
+            if (key.ContainsKey("sprite") && key["sprite"] is Dictionary<string, object> nested)
+                return ResolveAssetRef(nested, out error);
+            // Case B: 'sprite' is a path string
+            string spritePath = SimpleJson.GetString(key, "sprite");
+            string subAsset = SimpleJson.GetString(key, "subAsset");
+            if (!string.IsNullOrEmpty(spritePath))
+            {
+                if (!string.IsNullOrEmpty(subAsset))
+                {
+                    var probe = new Dictionary<string, object> { { "assetRef", spritePath }, { "subAsset", subAsset } };
+                    return ResolveAssetRef(probe, out error);
+                }
+                var probe2 = new Dictionary<string, object> { { "assetRef", spritePath } };
+                return ResolveAssetRef(probe2, out error);
+            }
+            // Case C: no nested 'sprite' — assume key itself is an assetRef dict
+            if (key.ContainsKey("assetRef"))
+                return ResolveAssetRef(key, out error);
+            error = "expected 'sprite' (path or {assetRef, subAsset?}) or top-level 'assetRef'";
+            return null;
         }
 
         static bool TryGetFloat(Dictionary<string, object> args, string key, out float v)
