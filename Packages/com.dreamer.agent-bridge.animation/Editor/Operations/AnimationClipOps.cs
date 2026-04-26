@@ -682,6 +682,14 @@ namespace Dreamer.AgentBridge.Animation
         //   { "sprite": "Assets/Sprites/Walk.png", "subAsset": "Walk_0" }
         //   { "sprite": { "assetRef": "Assets/X.png", "subAsset": "Walk_0" } }
         //   { "assetRef": "...", "subAsset": "..." }      (no nested 'sprite' key)
+        //
+        // For the "just a path string" case, we PREFER the Sprite sub-asset
+        // over the Texture2D main asset — most callers pass a .png path
+        // expecting it to bind as a Sprite, and Unity rejects Texture2D at
+        // runtime for SpriteRenderer.m_Sprite. LoadAssetAtPath<Sprite>(path)
+        // returns the Single-mode Sprite; for Multiple-mode atlases it
+        // returns the first slice. To pick a specific slice on Multiple,
+        // pass subAsset.
         static UnityEngine.Object ResolveSpriteRef(Dictionary<string, object> key, out string error)
         {
             error = null;
@@ -698,8 +706,13 @@ namespace Dreamer.AgentBridge.Animation
                     var probe = new Dictionary<string, object> { { "assetRef", spritePath }, { "subAsset", subAsset } };
                     return ResolveAssetRef(probe, out error);
                 }
-                var probe2 = new Dictionary<string, object> { { "assetRef", spritePath } };
-                return ResolveAssetRef(probe2, out error);
+                // Single-mode sprite: pull the Sprite sub-asset out of the .png.
+                var sprite = AssetDatabase.LoadAssetAtPath<Sprite>(spritePath);
+                if (sprite != null) return sprite;
+                // Fallback (caller might be passing a non-png Sprite asset).
+                var any = AssetDatabase.LoadMainAssetAtPath(spritePath);
+                if (any == null) { error = $"asset not found at '{spritePath}'"; return null; }
+                return any;
             }
             // Case C: no nested 'sprite' — assume key itself is an assetRef dict
             if (key.ContainsKey("assetRef"))
