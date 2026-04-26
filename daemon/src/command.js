@@ -56,6 +56,14 @@ const KIND_DEFS = {
   set_rect_transform:  { label: 'Set RectTransform',  requirements: null },
   create_ui_tree:      { label: 'Build UI Tree',      requirements: null },
   inspect_ui_tree:     { label: 'Inspect UI Tree',    requirements: null },
+
+  // Animation add-on — provided by `com.dreamer.agent-bridge.animation`.
+  // Same install-conditional model as ugui.
+  create_animation_clip:  { label: 'Create AnimationClip',  requirements: null },
+  set_animation_curve:    { label: 'Set Animation Curve',   requirements: null },
+  inspect_animation_clip: { label: 'Inspect AnimationClip', requirements: null },
+  sample_animation_curve: { label: 'Sample Animation Curve', requirements: null },
+  delete_animation_curve: { label: 'Delete Animation Curve', requirements: null },
 };
 
 // ── Valid states and allowed transitions ─────────────────────────────────────

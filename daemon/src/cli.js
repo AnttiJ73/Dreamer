@@ -418,6 +418,12 @@ async function run(argv) {
         'create-ui-tree --json JSON_OR_@file.json    (declarative tree: mode=create|append|replace-children|replace-self)',
         'inspect-ui-tree --target PATH [--depth N] [--include-raw true|false] [--include-rect true|false]',
         'set-rect-transform (--scene-object PATH | --asset PATH) [--anchor PRESET] [--size WxH] [--pivot X,Y] [--offset X,Y]',
+        '── Animation add-on (install com.dreamer.agent-bridge.animation separately) ──',
+        'create-animation-clip --name NAME [--path FOLDER] [--frame-rate N] [--loop true|false]',
+        'set-animation-curve --asset PATH_OR_GUID [--target SUB] --component TYPENAME --property PATH --keys JSON',
+        'inspect-animation-clip --asset PATH_OR_GUID',
+        'sample-animation-curve --asset PATH_OR_GUID [--target SUB] --component TYPENAME --property PATH [--samples N] [--t-start N] [--t-end N]',
+        'delete-animation-curve --asset PATH_OR_GUID [--target SUB] --component TYPENAME --property PATH',
         'status [--id CMD_ID]',
         'queue [--state STATE] [--task TASK_ID]',
         'compile-status',
@@ -600,6 +606,77 @@ async function run(argv) {
         }
         if (flags['child-path']) spArgs.childPath = flags['child-path'];
         await submitCommand('set_property', spArgs, flags);
+        break;
+      }
+
+      case 'create-animation-clip': {
+        if (!flags.name) fail('--name is required for create-animation-clip');
+        const cacArgs = { name: flags.name };
+        if (flags.path) cacArgs.path = flags.path;
+        if (flags['frame-rate'] !== undefined) cacArgs.frameRate = parseFloat(flags['frame-rate']);
+        if (flags.loop !== undefined) cacArgs.loop = flags.loop === 'true' || flags.loop === true;
+        await submitCommand('create_animation_clip', cacArgs, flags);
+        break;
+      }
+
+      case 'set-animation-curve': {
+        if (!flags.asset) fail('--asset PATH_OR_GUID is required for set-animation-curve');
+        if (!flags.component) fail('--component TYPENAME is required');
+        if (!flags.property) fail('--property NAME is required');
+        if (flags.keys === undefined) fail('--keys JSON is required (array of {t, v, interp?, ...})');
+        let parsedKeys;
+        try { parsedKeys = JSON.parse(flags.keys); }
+        catch (e) { fail('--keys must be valid JSON: ' + e.message); }
+        const sacArgs = {
+          target: flags.target || '',
+          componentType: flags.component,
+          propertyName: flags.property,
+          keys: parsedKeys,
+        };
+        const isGuidSAC = /^[0-9a-f]{32}$/i.test(flags.asset);
+        Object.assign(sacArgs, isGuidSAC ? { guid: flags.asset } : { assetPath: flags.asset });
+        await submitCommand('set_animation_curve', sacArgs, flags);
+        break;
+      }
+
+      case 'inspect-animation-clip': {
+        if (!flags.asset) fail('--asset PATH_OR_GUID is required for inspect-animation-clip');
+        const isGuidIAC = /^[0-9a-f]{32}$/i.test(flags.asset);
+        const iacArgs = isGuidIAC ? { guid: flags.asset } : { assetPath: flags.asset };
+        await submitCommand('inspect_animation_clip', iacArgs, flags);
+        break;
+      }
+
+      case 'sample-animation-curve': {
+        if (!flags.asset) fail('--asset PATH_OR_GUID is required for sample-animation-curve');
+        if (!flags.component) fail('--component TYPENAME is required');
+        if (!flags.property) fail('--property NAME is required');
+        const samACArgs = {
+          target: flags.target || '',
+          componentType: flags.component,
+          propertyName: flags.property,
+        };
+        if (flags.samples !== undefined) samACArgs.samples = parseInt(flags.samples, 10);
+        if (flags['t-start'] !== undefined) samACArgs.tStart = parseFloat(flags['t-start']);
+        if (flags['t-end']   !== undefined) samACArgs.tEnd   = parseFloat(flags['t-end']);
+        const isGuidSamAC = /^[0-9a-f]{32}$/i.test(flags.asset);
+        Object.assign(samACArgs, isGuidSamAC ? { guid: flags.asset } : { assetPath: flags.asset });
+        await submitCommand('sample_animation_curve', samACArgs, flags);
+        break;
+      }
+
+      case 'delete-animation-curve': {
+        if (!flags.asset) fail('--asset PATH_OR_GUID is required for delete-animation-curve');
+        if (!flags.component) fail('--component TYPENAME is required');
+        if (!flags.property) fail('--property NAME is required');
+        const dacArgs = {
+          target: flags.target || '',
+          componentType: flags.component,
+          propertyName: flags.property,
+        };
+        const isGuidDAC = /^[0-9a-f]{32}$/i.test(flags.asset);
+        Object.assign(dacArgs, isGuidDAC ? { guid: flags.asset } : { assetPath: flags.asset });
+        await submitCommand('delete_animation_curve', dacArgs, flags);
         break;
       }
 

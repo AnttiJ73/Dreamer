@@ -1,0 +1,15 @@
+{
+  "name": "com.dreamer.agent-bridge.animation",
+  "version": "0.1.0",
+  "displayName": "Dreamer - Animation Add-on",
+  "description": "Optional AnimationClip + AnimatorController authoring add-on for the Dreamer agent bridge. Adds create-animation-clip, set-animation-curve, inspect-animation-clip, sample-animation-curve commands so an agent can edit clip curves directly. AnimatorController state-machine commands are forthcoming.",
+  "unity": "6000.0",
+  "dependencies": {
+    "com.dreamer.agent-bridge": "0.2.0"
+  },
+  "keywords": ["agent", "automation", "ai", "bridge", "animation", "animator"],
+  "author": {
+    "name": "Dreamer"
+  },
+  "type": "library"
+}

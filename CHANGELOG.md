@@ -9,6 +9,15 @@ tags, breaking changes bump the minor version (0.x.0), fixes bump patch.
 
 ## [Unreleased]
 
+### Added — Animation add-on (`com.dreamer.agent-bridge.animation`)
+- New optional package alongside `com.dreamer.agent-bridge.ugui`. Five new commands for AnimationClip authoring (AnimatorController state-machine commands forthcoming).
+- **`create-animation-clip --name X [--path FOLDER] [--frame-rate N] [--loop true|false]`** — creates a new `.anim` asset with the given frameRate (default 30) and loop setting.
+- **`set-animation-curve --asset <.anim> [--target SUB] --component <FQN> --property <m_Field.x> --keys '[{...}]'`** — write or replace one float-curve binding. `--target` is relative to the animated GO root (empty = root). Each key: `{ t, v, interp?, inTangent?, outTangent?, inWeight?, outWeight? }`. Supported `interp` modes: `linear`, `constant`, `auto`, `clamped`, `free` (free = use explicit tangent values).
+- **`inspect-animation-clip --asset <.anim>`** — list all curve bindings with per-curve summary (keyCount, time/value range). Object-reference bindings are listed but not editable in v1.
+- **`sample-animation-curve --asset <.anim> [--target SUB] --component <FQN> --property <m_Field.x> [--samples 30] [--t-start N] [--t-end N]`** — evaluate one curve at N evenly-spaced times and return `[{t, v}, ...]`. **The agent's primary tool for verifying curves numerically** — read back after every set-animation-curve to catch tangent surprises and overshoot.
+- **`delete-animation-curve --asset <.anim> [--target SUB] --component <FQN> --property <m_Field.x>`** — remove one binding by triple.
+- Add-on plugin discovery: same reflection-based pattern as the ugui add-on. If the package isn't installed, dispatcher returns "Unknown command kind" and the schema docs hint at the install command.
+
 ### Added — `set-particle-property` command
 - New first-class command: `./bin/dreamer set-particle-property (--scene-object PATH | --asset PATH [--child-path SUB]) --property MODULE.FIELD --value JSON`. Reaches ParticleSystem module fields (`main.startLifetime`, `emission.rateOverTime`, `shape.angle`, `noise.strength`, etc.) that the generic `set-property` couldn't touch — modules are exposed via wrapper-struct property accessors, not direct serialized fields, and the underlying serialized names also don't match the API (`main` → `InitialModule`, `limitVelocityOverLifetime` → `ClampVelocityModule`, `textureSheetAnimation` → `UVModule`, …). The handler does the API-name → serialized-name rewrite for the 23 known modules.
 - MinMaxCurve scalar shorthand: a bare number (`--value 5`) auto-sets `scalar` + `minScalar` + `minMaxState=Constant`. `{"min":N,"max":M}` sets TwoConstants mode. For curve-mode (animated over particle lifetime), drill into sub-fields explicitly: `main.startLifetime.scalar`, `.minMaxState`, `.maxCurve`.

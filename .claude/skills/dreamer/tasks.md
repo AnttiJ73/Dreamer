@@ -101,6 +101,18 @@ Flat lookup table. "I want to do X" → run command Y. For arg details and examp
 | Build / replace a Canvas UI tree | `create-ui-tree --json '{...}'` (modes: create/append/replace-children/replace-self) | `create_ui_tree` |
 | Inspect a Canvas tree | `inspect-ui-tree --target <scene path>` | `inspect_ui_tree` |
 
+## AnimationClip authoring — `com.dreamer.agent-bridge.animation` add-on
+
+| Task | Command | Kind |
+|---|---|---|
+| Create a new .anim clip | `create-animation-clip --name X [--path Assets/Animations] [--frame-rate 30] [--loop true]` | `create_animation_clip` |
+| Add / replace a float curve | `set-animation-curve --asset <.anim> [--target SUB] --component <FQN> --property <m_Field.x> --keys '[{"t":0,"v":0,"interp":"linear"},{"t":1,"v":1,"interp":"linear"}]'` | `set_animation_curve` |
+| List all curve bindings on a clip | `inspect-animation-clip --asset <.anim>` | `inspect_animation_clip` |
+| **Verify a curve numerically (sample [{t,v},...] table)** | `sample-animation-curve --asset <.anim> [--target SUB] --component <FQN> --property <m_Field.x> [--samples 30]` | `sample_animation_curve` |
+| Remove a curve binding | `delete-animation-curve --asset <.anim> [--target SUB] --component <FQN> --property <m_Field.x>` | `delete_animation_curve` |
+
+After every `set-animation-curve`, run `sample-animation-curve` with the same triple to read the curve back as numbers — that's how you verify the tangents do what you intended (especially for `interp:"auto"` which can overshoot).
+
 ## Diagnostics
 
 | Task | Command | Kind |
