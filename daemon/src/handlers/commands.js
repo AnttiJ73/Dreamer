@@ -26,9 +26,22 @@ function createCommandHandlers(queue, scheduler, unityState, assetWatcher) {
       }
 
       if (!isKnownKind(body.kind)) {
+        // Daemon-side rejection — kind not in KIND_DEFS. Most common cause:
+        // a newly-added kind in command.js but the daemon process is still
+        // running with stale in-memory definitions. The hint is verbose by
+        // design — debugging this without it took hours.
         return {
           status: 400,
-          body: { error: `Unknown command kind: '${body.kind}'` },
+          body: {
+            error: `Unknown command kind: '${body.kind}'`,
+            source: 'daemon',
+            hint:
+              "Rejected by the daemon (kind not in KIND_DEFS). " +
+              "If you just added this kind to daemon/src/command.js, restart the daemon: " +
+              "kill the PID in daemon/.dreamer-daemon.pid and re-run any `./bin/dreamer` command. " +
+              "If the kind is from an add-on, that add-on must register the same kind in its " +
+              "Registration.cs AND core daemon must list it in KIND_DEFS.",
+          },
         };
       }
 
@@ -42,6 +55,8 @@ function createCommandHandlers(queue, scheduler, unityState, assetWatcher) {
             status: 400,
             body: {
               error: `Invalid args for '${body.kind}'`,
+              source: 'daemon',
+              hint: 'Rejected by the daemon schema validator. See `details` for per-arg errors and `schema` for the expected shape.',
               details: result.errors,
               kind: body.kind,
               schema: schema.args || {},

@@ -149,7 +149,19 @@ namespace Dreamer.AgentBridge
             {
                 if (!_handlers.TryGetValue(command.kind, out var handler))
                 {
-                    result = CommandResult.Fail($"Unknown command kind: {command.kind}");
+                    // Unity-side rejection — handler not registered. Distinct
+                    // from the daemon-side "Unknown command kind" rejection
+                    // (which never reaches Unity). The "[unity-bridge]" tag
+                    // is the disambiguator: if you see this exact prefix,
+                    // it's a registration / domain-reload problem on Unity's
+                    // side; if you see "source: daemon" in a 400 response,
+                    // restart the daemon process instead.
+                    result = CommandResult.Fail(
+                        $"Unknown command kind '{command.kind}' [unity-bridge]. " +
+                        "The daemon accepted this kind but the Unity-side dispatcher has no handler registered. " +
+                        "Likely causes: (1) the add-on package providing this kind isn't installed, " +
+                        "(2) a domain reload is pending and Initialize() hasn't run with the new code yet, " +
+                        "(3) the add-on's Registration.cs failed silently — check the Editor.log for plugin discovery errors.");
                 }
                 else if (CompilationMonitor.IsCompiling && !IsCompileSafe(command.kind))
                 {

@@ -244,7 +244,18 @@ async function submitCommand(kind, args, flags = {}) {
 
   const resp = await httpRequest('POST', '/api/commands', { kind, args, options });
   if (resp.status >= 400) {
-    fail(resp.data.error || `HTTP ${resp.status}`);
+    // Compose a richer message when the daemon includes source/hint/details.
+    // Pre-existing 400 responses just had {error}; new ones may add
+    // source: "daemon" + hint + details (e.g. for "Unknown command kind"
+    // rejections that need a daemon restart hint). Surface the lot.
+    const e = (resp.data && resp.data.error) || `HTTP ${resp.status}`;
+    const parts = [e];
+    if (resp.data && resp.data.source) parts.push(`(source: ${resp.data.source})`);
+    if (resp.data && resp.data.hint) parts.push(`hint: ${resp.data.hint}`);
+    if (resp.data && Array.isArray(resp.data.details) && resp.data.details.length) {
+      parts.push(`details: ${resp.data.details.join('; ')}`);
+    }
+    fail(parts.join('\n'));
   }
 
   const cmd = resp.data;
