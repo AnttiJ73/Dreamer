@@ -74,6 +74,10 @@ namespace Dreamer.AgentBridge
             _handlers["set_material_property"]   = MaterialOps.SetMaterialProperty;
             _handlers["set_material_shader"]     = MaterialOps.SetMaterialShader;
 
+            // ParticleSystem operations (config exposed via wrapper structs that
+            // generic set-property can't reach — see ParticleOps for details).
+            _handlers["set_particle_property"]   = ParticleOps.SetParticleProperty;
+
             // Shader operations
             _handlers["shader_status"]           = ShaderOps.ShaderStatus;
             _handlers["inspect_shader"]          = ShaderOps.InspectShader;

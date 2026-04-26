@@ -63,6 +63,7 @@ Flat lookup table. "I want to do X" → run command Y. For arg details and examp
 | Update one element in a list | `--property entries[N] --value <JSON>` (Unity-internal `entries.Array.data[N]` rewrite) | `set_property` |
 | Set a Material color/float/texture/keyword | `set-material-property --asset <.mat> (--property NAME --value JSON \| --keyword K --enable bool)` | `set_material_property` |
 | Reassign a Material's shader | `set-material-shader --asset <.mat> --shader "URP/Unlit"` | `set_material_shader` |
+| Set a ParticleSystem module field (`main.startLifetime`, `emission.rateOverTime`, `shape.angle`, …) | `set-particle-property (--scene-object <p> \| --asset <prefab> [--child-path <SUB>]) --property MODULE.FIELD --value <JSON>` | `set_particle_property` |
 | Adjust a uGUI element's RectTransform | `set-rect-transform (--scene-object <p> \| --asset <prefab> [--child-path <SUB>]) [--anchor X] [--size WxH]` | `set_rect_transform` |
 
 ## Edit — GameObject lifecycle

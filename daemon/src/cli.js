@@ -411,6 +411,7 @@ async function run(argv) {
         'inspect-material --asset PATH_OR_GUID',
         'set-material-property --asset PATH_OR_GUID (--property NAME --value JSON | --keyword NAME [--enable true|false])',
         'set-material-shader --asset PATH_OR_GUID --shader "Shader/Name"',
+        'set-particle-property (--scene-object PATH | --asset PATH [--child-path SUBPATH]) --property MODULE.FIELD --value JSON   (ParticleSystem module fields: main.startLifetime, emission.rateOverTime, shape.angle, …)',
         'shader-status [--asset PATH_OR_GUID]    (no arg = project-wide scan)',
         'inspect-shader (--asset PATH_OR_GUID | --shader "Shader/Name")',
         '── uGUI add-on (install com.dreamer.agent-bridge.ugui separately) ──',
@@ -599,6 +600,24 @@ async function run(argv) {
         }
         if (flags['child-path']) spArgs.childPath = flags['child-path'];
         await submitCommand('set_property', spArgs, flags);
+        break;
+      }
+
+      case 'set-particle-property': {
+        if (!flags.asset && !flags['scene-object']) fail('--asset or --scene-object is required for set-particle-property');
+        if (!flags.property) fail('--property is required for set-particle-property');
+        if (flags.value === undefined) fail('--value is required for set-particle-property');
+        let pvalue;
+        try { pvalue = JSON.parse(flags.value); } catch { pvalue = flags.value; }
+        const ppArgs = { propertyPath: flags.property, value: pvalue };
+        if (flags['scene-object']) {
+          ppArgs.sceneObjectPath = flags['scene-object'];
+        } else {
+          const isGuidPP = /^[0-9a-f]{32}$/i.test(flags.asset);
+          Object.assign(ppArgs, isGuidPP ? { guid: flags.asset } : { assetPath: flags.asset });
+        }
+        if (flags['child-path']) ppArgs.childPath = flags['child-path'];
+        await submitCommand('set_particle_property', ppArgs, flags);
         break;
       }
 

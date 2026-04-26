@@ -9,6 +9,10 @@ tags, breaking changes bump the minor version (0.x.0), fixes bump patch.
 
 ## [Unreleased]
 
+### Added — `set-particle-property` command
+- New first-class command: `./bin/dreamer set-particle-property (--scene-object PATH | --asset PATH [--child-path SUB]) --property MODULE.FIELD --value JSON`. Reaches ParticleSystem module fields (`main.startLifetime`, `emission.rateOverTime`, `shape.angle`, `noise.strength`, etc.) that the generic `set-property` couldn't touch — modules are exposed via wrapper-struct property accessors, not direct serialized fields, and the underlying serialized names also don't match the API (`main` → `InitialModule`, `limitVelocityOverLifetime` → `ClampVelocityModule`, `textureSheetAnimation` → `UVModule`, …). The handler does the API-name → serialized-name rewrite for the 23 known modules.
+- MinMaxCurve scalar shorthand: a bare number (`--value 5`) auto-sets `scalar` + `minScalar` + `minMaxState=Constant`. `{"min":N,"max":M}` sets TwoConstants mode. For curve-mode (animated over particle lifetime), drill into sub-fields explicitly: `main.startLifetime.scalar`, `.minMaxState`, `.maxCurve`.
+
 ### Added — `./bin/dreamer update` now lists what changed
 - `./bin/dreamer update` diffs `CHANGELOG.md` between the previous and new install and emits `changelog.newEntries[]` in the result JSON. The dreamer skill instructs Claude to read those entries to the user after a successful update — no more "the update worked" without knowing what changed.
 - `CHANGELOG.md` is now copied as part of `update`, so installs stay in sync with upstream changelogs.

@@ -45,6 +45,9 @@ const KIND_DEFS = {
   shader_status:         { label: 'Shader Status',         requirements: null },
   inspect_shader:        { label: 'Inspect Shader',        requirements: null },
 
+  // ParticleSystem (modules access pattern that generic set_property can't reach)
+  set_particle_property: { label: 'Set Particle Property', requirements: null },
+
   // UI Canvas (uGUI) add-on — kinds are known here so the CLI + scheduler
   // treat them uniformly, but the bridge-side handlers only exist when
   // the add-on package is installed. If the add-on is missing, the
@@ -129,6 +132,7 @@ function mutatesScene(kind, args) {
     case 'rename_gameobject':
     case 'duplicate':
     case 'set_property':
+    case 'set_particle_property':
     case 'add_component':
     case 'remove_component':
     case 'remove_missing_scripts':

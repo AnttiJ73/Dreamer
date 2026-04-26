@@ -307,7 +307,7 @@ namespace Dreamer.AgentBridge
         ///   3. Bracket-rewritten: <c>[N]</c> → <c>.Array.data[N]</c>
         ///   4. Both transformations combined
         /// </summary>
-        static SerializedProperty FindPropertyWithAlias(SerializedObject so, string propertyPath, out string resolvedPath)
+        internal static SerializedProperty FindPropertyWithAlias(SerializedObject so, string propertyPath, out string resolvedPath)
         {
             resolvedPath = propertyPath;
             if (so == null || string.IsNullOrEmpty(propertyPath)) return null;
@@ -417,7 +417,7 @@ namespace Dreamer.AgentBridge
         }
 
         /// <summary>Apply a JSON value to a SerializedProperty. Returns error string or null on success.</summary>
-        static string ApplyValue(SerializedProperty sp, object value, Component context)
+        internal static string ApplyValue(SerializedProperty sp, object value, Component context)
         {
             try
             {
