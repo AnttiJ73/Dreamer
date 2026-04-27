@@ -9,6 +9,23 @@ tags, breaking changes bump the minor version (0.x.0), fixes bump patch.
 
 ## [Unreleased]
 
+### Added — PlayerSettings + Build Settings authoring
+PlayerSettings fields that go through the static `UnityEditor.PlayerSettings` API (icons, per-platform identifiers, cursor) don't round-trip through the generic SerializedObject editor. Added wrappers:
+
+- **`inspect-player-settings [--target standalone|android|ios|webgl|...]`** — common fields via static API: company/product/version, screen, color space, scripting backend, API compatibility, default cursor + hotspot, default icons, per-platform icons. Default target is `standalone`.
+- **`set-app-id --target NAME --id com.foo.bar`** — per-platform application/bundle identifier (`PlayerSettings.SetApplicationIdentifier(NamedBuildTarget, string)`). Targets: standalone, android, ios, webgl, tvos, windowsstore, ps4, ps5, xboxone, switch.
+- **`set-default-icon --texture Assets/path.png`** — Default Icon slot (`PlayerSettings.SetIcons(NamedBuildTarget.Unknown, [tex], IconKind.Application)`). Unity scales to all platforms.
+- **`set-app-icons --target NAME --textures '[...]'`** — per-platform icon array. Result includes `expectedCount` so you can verify against Unity's required slot count for that target.
+- **`set-cursor-icon --texture Assets/path.png [--hotspot [x,y]]`** — Default Cursor + click-point hotspot (`PlayerSettings.defaultCursor` / `cursorHotspot`).
+
+EditorBuildSettings.scenes (the build-scenes list) similarly needs its own command surface — it's a `EditorBuildSettingsScene[]` setter, not a SerializedObject array:
+- **`inspect-build-scenes`** — list `{index, path, enabled, guid}` for each scene in the list.
+- **`set-build-scenes --scenes JSON`** — replace the whole list. Items are either string paths (enabled by default) or `{path, enabled}`. All scenes must exist on disk.
+- **`add-build-scene --scene PATH [--enabled false]`** — append; updates the enabled flag in place if already present.
+- **`remove-build-scene --scene PATH`** — remove by path.
+
+For other PlayerSettings fields not yet wrapped (companyName, productName, bundleVersion, defaultScreenWidth, etc.), the existing generic command works: `set-project-setting --file ProjectSettings --property companyName --value '"AnttiCo"'` — the SerializedObject reaches them.
+
 ### Added — Project Settings authoring (full coverage)
 ProjectSettings/*.asset files live outside Assets/, so the existing `set-property`/`inspect-asset` commands (which use `LoadAssetAtPath`) couldn't reach them. Two layers of new commands address this:
 

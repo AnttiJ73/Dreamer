@@ -465,6 +465,15 @@ async function run(argv) {
         'set-physics-gravity --value [x,y,z] [--2d]',
         'set-project-setting --file NAME --property PATH --value JSON   (generic editor for any ProjectSettings/*.asset file)',
         'inspect-project-setting --file NAME [--property PATH] [--depth N]',
+        'inspect-player-settings [--target standalone|android|ios|webgl|...]   (PlayerSettings via static API: identity, screen, cursor, icons, scripting)',
+        'set-app-id --target NAME --id com.foo.bar   (per-platform application/bundle identifier)',
+        'set-default-icon --texture Assets/path.png   (Default Icon slot — Unity scales to all platforms)',
+        'set-app-icons --target NAME --textures \'["p1","p2",...]\'   (per-platform icon array, sized as Unity expects)',
+        'set-cursor-icon --texture Assets/path.png [--hotspot [x,y]]   (Default Cursor + click-point hotspot)',
+        'inspect-build-scenes',
+        'set-build-scenes --scenes JSON   (replace whole list; items are paths or {path, enabled})',
+        'add-build-scene --scene PATH [--enabled false]   (append; updates enabled flag if already present)',
+        'remove-build-scene --scene PATH',
         'create-scene --name NAME [--path FOLDER] [--set-active]',
         'open-scene PATH [--mode single|additive]',
         'save-scene [--path PATH]',
@@ -1493,6 +1502,88 @@ async function run(argv) {
         if (flags.property) args.propertyPath = String(flags.property);
         if (flags.depth !== undefined) args.depth = parseInt(flags.depth, 10);
         await submitCommand('inspect_project_setting', args, flags);
+        break;
+      }
+
+      case 'inspect-player-settings': {
+        const args = {};
+        if (flags.target) args.target = String(flags.target);
+        await submitCommand('inspect_player_settings', args, flags);
+        break;
+      }
+
+      case 'set-app-id': {
+        if (!flags.target) fail('--target is required for set-app-id (e.g. android, ios, standalone)');
+        if (!flags.id) fail('--id is required for set-app-id');
+        await submitCommand('set_app_id', {
+          target: String(flags.target),
+          id: String(flags.id),
+        }, flags);
+        break;
+      }
+
+      case 'set-default-icon': {
+        if (!flags.texture) fail('--texture is required for set-default-icon');
+        await submitCommand('set_default_icon', { texture: String(flags.texture) }, flags);
+        break;
+      }
+
+      case 'set-app-icons': {
+        if (!flags.target) fail('--target is required for set-app-icons');
+        if (!flags.textures) fail("--textures is required for set-app-icons (JSON array of asset paths)");
+        let parsed;
+        try { parsed = JSON.parse(flags.textures); }
+        catch (e) { fail(`--textures must be a JSON array: ${e.message}`); }
+        if (!Array.isArray(parsed)) fail('--textures must be a JSON array');
+        await submitCommand('set_app_icons', {
+          target: String(flags.target),
+          textures: parsed,
+        }, flags);
+        break;
+      }
+
+      case 'set-cursor-icon': {
+        if (!flags.texture) fail('--texture is required for set-cursor-icon');
+        const args = { texture: String(flags.texture) };
+        if (flags.hotspot !== undefined) {
+          let hs;
+          try { hs = JSON.parse(flags.hotspot); }
+          catch (e) { fail(`--hotspot must be a JSON array: ${e.message}`); }
+          if (!Array.isArray(hs) || hs.length !== 2) fail('--hotspot must be a 2-element array [x,y]');
+          args.hotspot = hs;
+        }
+        await submitCommand('set_cursor_icon', args, flags);
+        break;
+      }
+
+      case 'inspect-build-scenes': {
+        await submitCommand('inspect_build_scenes', {}, flags);
+        break;
+      }
+
+      case 'set-build-scenes': {
+        if (!flags.scenes) fail('--scenes is required for set-build-scenes (JSON array)');
+        let parsed;
+        try { parsed = JSON.parse(flags.scenes); }
+        catch (e) { fail(`--scenes must be valid JSON: ${e.message}`); }
+        if (!Array.isArray(parsed)) fail('--scenes must be a JSON array');
+        await submitCommand('set_build_scenes', { scenes: parsed }, flags);
+        break;
+      }
+
+      case 'add-build-scene': {
+        if (!flags.scene) fail('--scene is required for add-build-scene');
+        const args = { scene: String(flags.scene) };
+        if (flags.enabled !== undefined) {
+          args.enabled = !(flags.enabled === false || flags.enabled === 'false');
+        }
+        await submitCommand('add_build_scene', args, flags);
+        break;
+      }
+
+      case 'remove-build-scene': {
+        if (!flags.scene) fail('--scene is required for remove-build-scene');
+        await submitCommand('remove_build_scene', { scene: String(flags.scene) }, flags);
         break;
       }
 

@@ -79,6 +79,19 @@ namespace Dreamer.AgentBridge
             _handlers["set_project_setting"]      = ProjectSettingsOps.SetProjectSetting;
             _handlers["inspect_project_setting"]  = ProjectSettingsOps.InspectProjectSetting;
 
+            // PlayerSettings (static API path — for fields that don't round-trip via SerializedObject).
+            _handlers["inspect_player_settings"]  = PlayerSettingsOps.InspectPlayerSettings;
+            _handlers["set_app_id"]               = PlayerSettingsOps.SetAppId;
+            _handlers["set_default_icon"]         = PlayerSettingsOps.SetDefaultIcon;
+            _handlers["set_app_icons"]            = PlayerSettingsOps.SetAppIcons;
+            _handlers["set_cursor_icon"]          = PlayerSettingsOps.SetCursorIcon;
+
+            // EditorBuildSettings.scenes — the build-scenes list.
+            _handlers["inspect_build_scenes"]     = BuildSettingsOps.InspectBuildScenes;
+            _handlers["set_build_scenes"]         = BuildSettingsOps.SetBuildScenes;
+            _handlers["add_build_scene"]          = BuildSettingsOps.AddBuildScene;
+            _handlers["remove_build_scene"]       = BuildSettingsOps.RemoveBuildScene;
+
             // ScriptableObject operations
             _handlers["create_scriptable_object"] = AssetOps.CreateScriptableObject;
 
@@ -218,7 +231,9 @@ namespace Dreamer.AgentBridge
                 || kind == "create_scene"
                 || kind == "open_scene"
                 || kind == "inspect_project_settings"
-                || kind == "inspect_project_setting";
+                || kind == "inspect_project_setting"
+                || kind == "inspect_player_settings"
+                || kind == "inspect_build_scenes";
         }
 
         public class CommandRecord

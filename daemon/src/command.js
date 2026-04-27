@@ -45,6 +45,19 @@ const KIND_DEFS = {
   set_physics_gravity:   { label: 'Set Physics Gravity',   requirements: null },
   set_project_setting:   { label: 'Set Project Setting',   requirements: null },
   inspect_project_setting:{ label: 'Inspect Project Setting',requirements: null },
+
+  // PlayerSettings static-API wrappers (icons, cursor, per-platform app id).
+  inspect_player_settings: { label: 'Inspect PlayerSettings', requirements: null },
+  set_app_id:              { label: 'Set Application Id',     requirements: null },
+  set_default_icon:        { label: 'Set Default Icon',       requirements: null },
+  set_app_icons:           { label: 'Set App Icons',          requirements: null },
+  set_cursor_icon:         { label: 'Set Cursor Icon',        requirements: null },
+
+  // EditorBuildSettings build-scenes.
+  inspect_build_scenes:    { label: 'Inspect Build Scenes',   requirements: null },
+  set_build_scenes:        { label: 'Set Build Scenes',       requirements: null },
+  add_build_scene:         { label: 'Add Build Scene',        requirements: null },
+  remove_build_scene:      { label: 'Remove Build Scene',     requirements: null },
   create_scene:        { label: 'Create Scene',        requirements: null },
   open_scene:          { label: 'Open Scene',          requirements: null },
   save_scene:          { label: 'Save Scene',          requirements: null },
@@ -124,6 +137,8 @@ const COMPILE_SAFE_KINDS = new Set([
   'open_scene',
   'inspect_project_settings',
   'inspect_project_setting',
+  'inspect_player_settings',
+  'inspect_build_scenes',
 ]);
 
 function isCompileSafe(kind) {
