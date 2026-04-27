@@ -64,6 +64,7 @@ namespace Dreamer.AgentBridge
             // Editor operations
             _handlers["execute_menu_item"]       = EditorOps.ExecuteMenuItem;
             _handlers["execute_method"]          = EditorOps.ExecuteMethod;
+            _handlers["set_play_mode"]           = PlayModeOps.SetPlayMode;
 
             // ScriptableObject operations
             _handlers["create_scriptable_object"] = AssetOps.CreateScriptableObject;

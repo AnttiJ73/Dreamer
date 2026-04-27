@@ -9,6 +9,11 @@ tags, breaking changes bump the minor version (0.x.0), fixes bump patch.
 
 ## [Unreleased]
 
+### Added — `set-play-mode` command + per-machine policy gate
+- **`./bin/dreamer set-play-mode --state enter|exit|toggle|pause|unpause|toggle-pause`** — first-class play-mode control via `EditorApplication.EnterPlaymode()` / `ExitPlaymode()` / `isPaused`. Replaces the `execute-menu-item Edit/Play` workaround, which silently failed because Unity's `ExecuteMenuItem` returns false for menu items with validation handlers (Play and Pause among them).
+- `execute-menu-item Edit/Play` and `execute-menu-item Edit/Pause` are now auto-routed to the new command on the bridge side, so existing agent code that targeted the menu paths keeps working.
+- **Per-machine policy gate** — on first bridge start after this update, the developer is asked once via a Unity dialog whether agents may toggle play mode. Default ON. The choice is stored in EditorPrefs (`Dreamer.AllowPlayModeToggle`) and can be flipped at any time in `Tools > Dreamer` under "Agent Policy". When OFF, all agent attempts (including auto-routed Edit/Play) return a clear "disabled by the project owner" error so agents surface the issue rather than retrying.
+
 ### Added — AnimatorController authoring (Animation add-on)
 - **`create-animator-controller --name X [--path FOLDER]`** — creates a new `.controller` asset with one default layer.
 - **`add-animator-parameter --asset <.controller> --name X --type bool|int|float|trigger [--default V]`** — defines a parameter referenced by transition conditions. Names must be unique.

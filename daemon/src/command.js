@@ -31,6 +31,7 @@ const KIND_DEFS = {
   save_as_prefab:      { label: 'Save As Prefab',      requirements: null },
   execute_menu_item:   { label: 'Execute Menu Item',   requirements: null },
   execute_method:      { label: 'Execute Method',      requirements: null },
+  set_play_mode:       { label: 'Set Play Mode',       requirements: null },
   create_scene:        { label: 'Create Scene',        requirements: null },
   open_scene:          { label: 'Open Scene',          requirements: null },
   save_scene:          { label: 'Save Scene',          requirements: null },

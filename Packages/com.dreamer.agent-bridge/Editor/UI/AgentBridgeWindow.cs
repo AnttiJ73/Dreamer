@@ -39,6 +39,8 @@ namespace Dreamer.AgentBridge
             EditorGUILayout.Space(8);
             DrawConnectionSettings();
             EditorGUILayout.Space(8);
+            DrawAgentPolicy();
+            EditorGUILayout.Space(8);
             DrawStatus();
             EditorGUILayout.Space(8);
             DrawCompilationStatus();
@@ -115,6 +117,26 @@ namespace Dreamer.AgentBridge
                     Repaint();
                 }
                 EditorGUILayout.EndHorizontal();
+            }
+        }
+
+        void DrawAgentPolicy()
+        {
+            EditorGUILayout.LabelField("Agent Policy", EditorStyles.boldLabel);
+
+            using (new EditorGUI.IndentLevelScope())
+            {
+                EditorGUI.BeginChangeCheck();
+                bool allow = EditorGUILayout.Toggle(
+                    new GUIContent(
+                        "Allow play-mode toggle",
+                        "When ON, agents can call set-play-mode (and Edit/Play menu items) to enter, exit, or pause play mode. " +
+                        "When OFF, all such requests are refused with a clear error."),
+                    PlayModePolicy.IsAllowed);
+                if (EditorGUI.EndChangeCheck())
+                {
+                    PlayModePolicy.IsAllowed = allow;
+                }
             }
         }
 

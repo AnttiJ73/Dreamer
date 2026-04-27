@@ -50,6 +50,11 @@ namespace Dreamer.AgentBridge
         {
             if (IsEnabled)
                 Start();
+
+            // First-run prompt: ask the developer once whether agents are
+            // allowed to toggle play mode. Default ON if they accept. Stored
+            // per-machine so it follows the developer, not the project.
+            PlayModePolicy.PromptIfUnconfigured();
         }
 
         // ── Lifecycle ──

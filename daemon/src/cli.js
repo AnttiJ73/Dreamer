@@ -453,6 +453,7 @@ async function run(argv) {
         'save-as-prefab --scene-object NAME [--path FOLDER] [--name PREFABNAME]',
         'execute-menu-item "MenuItem/Path"',
         'execute-method --type TYPENAME --method METHODNAME',
+        'set-play-mode --state enter|exit|toggle|pause|unpause|toggle-pause   (use this instead of execute-menu-item Edit/Play; gated by per-machine policy set on first bridge start)',
         'create-scene --name NAME [--path FOLDER] [--set-active]',
         'open-scene PATH [--mode single|additive]',
         'save-scene [--path PATH]',
@@ -1367,6 +1368,12 @@ async function run(argv) {
         const menuItem = positional[1];
         if (!menuItem) fail('Usage: dreamer execute-menu-item "GameObject/UI/Canvas"');
         await submitCommand('execute_menu_item', { menuItem }, flags);
+        break;
+      }
+
+      case 'set-play-mode': {
+        if (!flags.state) fail('Usage: dreamer set-play-mode --state enter|exit|toggle|pause|unpause|toggle-pause');
+        await submitCommand('set_play_mode', { state: flags.state }, flags);
         break;
       }
 

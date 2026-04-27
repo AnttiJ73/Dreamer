@@ -19,6 +19,19 @@ namespace Dreamer.AgentBridge
             if (string.IsNullOrEmpty(menuItem))
                 return CommandResult.Fail("'menuItem' is required.");
 
+            // Auto-route play-mode menu items. EditorApplication.ExecuteMenuItem
+            // silently returns false for items with validation handlers, which
+            // includes Edit/Play and Edit/Pause — so calling them via the menu
+            // path simply doesn't work. Forward to the proper API instead so
+            // existing agent code that does `execute-menu-item Edit/Play`
+            // gets the same behavior as `set-play-mode --state toggle`.
+            string routedState = TryRedirectPlayMenu(menuItem);
+            if (routedState != null)
+            {
+                var routedArgs = new Dictionary<string, object> { { "state", routedState } };
+                return PlayModeOps.SetPlayMode(routedArgs);
+            }
+
             // Validate the menu item exists by checking if it's enabled
             // EditorApplication.ExecuteMenuItem returns false if the item doesn't exist
             bool executed = EditorApplication.ExecuteMenuItem(menuItem);
@@ -98,6 +111,19 @@ namespace Dreamer.AgentBridge
             {
                 return CommandResult.Fail($"Failed to invoke method: {ex.Message}");
             }
+        }
+
+        static string TryRedirectPlayMenu(string menuItem)
+        {
+            if (string.IsNullOrEmpty(menuItem)) return null;
+            string m = menuItem.Trim();
+            if (string.Equals(m, "Edit/Play", StringComparison.OrdinalIgnoreCase)) return "toggle";
+            if (string.Equals(m, "Edit/Pause", StringComparison.OrdinalIgnoreCase)) return "toggle-pause";
+            // Edit/Step is "advance one frame while paused" — no equivalent in
+            // PlayModeOps. Let it fall through (it'll likely also be silently
+            // rejected, but the agent will see the menu-item failure and can
+            // pivot to set-play-mode unpause/pause to single-step manually).
+            return null;
         }
 
         static MethodInfo ResolveStaticMethod(Type type, string name, BindingFlags flags, int arity)
