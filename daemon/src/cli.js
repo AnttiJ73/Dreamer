@@ -454,6 +454,17 @@ async function run(argv) {
         'execute-menu-item "MenuItem/Path"',
         'execute-method --type TYPENAME --method METHODNAME',
         'set-play-mode --state enter|exit|toggle|pause|unpause|toggle-pause   (use this instead of execute-menu-item Edit/Play; gated by per-machine policy set on first bridge start)',
+        'inspect-project-settings [--file NAME]   (overview of layers/tags/sorting layers/physics; per-file field listing when --file is set)',
+        'set-layer-name --index N --name NAME [--force]',
+        'clear-layer --index N [--force]',
+        'add-tag --name NAME',
+        'remove-tag --name NAME',
+        'add-sorting-layer --name NAME',
+        'remove-sorting-layer --name NAME',
+        'set-layer-collision --layer-a A --layer-b B [--collide true|false] [--2d]',
+        'set-physics-gravity --value [x,y,z] [--2d]',
+        'set-project-setting --file NAME --property PATH --value JSON   (generic editor for any ProjectSettings/*.asset file)',
+        'inspect-project-setting --file NAME [--property PATH] [--depth N]',
         'create-scene --name NAME [--path FOLDER] [--set-active]',
         'open-scene PATH [--mode single|additive]',
         'save-scene [--path PATH]',
@@ -1374,6 +1385,114 @@ async function run(argv) {
       case 'set-play-mode': {
         if (!flags.state) fail('Usage: dreamer set-play-mode --state enter|exit|toggle|pause|unpause|toggle-pause');
         await submitCommand('set_play_mode', { state: flags.state }, flags);
+        break;
+      }
+
+      case 'inspect-project-settings': {
+        const args = {};
+        if (flags.file) args.file = flags.file;
+        await submitCommand('inspect_project_settings', args, flags);
+        break;
+      }
+
+      case 'set-layer-name': {
+        if (flags.index === undefined) fail('--index is required for set-layer-name');
+        if (flags.name === undefined) fail('--name is required for set-layer-name');
+        await submitCommand('set_layer_name', {
+          index: parseInt(flags.index, 10),
+          name: String(flags.name),
+          force: flags.force === true || flags.force === 'true',
+        }, flags);
+        break;
+      }
+
+      case 'clear-layer': {
+        if (flags.index === undefined) fail('--index is required for clear-layer');
+        await submitCommand('clear_layer', {
+          index: parseInt(flags.index, 10),
+          force: flags.force === true || flags.force === 'true',
+        }, flags);
+        break;
+      }
+
+      case 'add-tag': {
+        if (!flags.name) fail('--name is required for add-tag');
+        await submitCommand('add_tag', { name: String(flags.name) }, flags);
+        break;
+      }
+
+      case 'remove-tag': {
+        if (!flags.name) fail('--name is required for remove-tag');
+        await submitCommand('remove_tag', { name: String(flags.name) }, flags);
+        break;
+      }
+
+      case 'add-sorting-layer': {
+        if (!flags.name) fail('--name is required for add-sorting-layer');
+        await submitCommand('add_sorting_layer', { name: String(flags.name) }, flags);
+        break;
+      }
+
+      case 'remove-sorting-layer': {
+        if (!flags.name) fail('--name is required for remove-sorting-layer');
+        await submitCommand('remove_sorting_layer', { name: String(flags.name) }, flags);
+        break;
+      }
+
+      case 'set-layer-collision': {
+        if (!flags['layer-a']) fail('--layer-a is required for set-layer-collision');
+        if (!flags['layer-b']) fail('--layer-b is required for set-layer-collision');
+        // --collide defaults to true if not passed; explicit false disables.
+        let collide = true;
+        if (flags.collide !== undefined) {
+          collide = !(flags.collide === false || flags.collide === 'false');
+        }
+        await submitCommand('set_layer_collision', {
+          layerA: String(flags['layer-a']),
+          layerB: String(flags['layer-b']),
+          collide,
+          twoD: flags['2d'] === true || flags['2d'] === 'true',
+        }, flags);
+        break;
+      }
+
+      case 'set-physics-gravity': {
+        if (flags.value === undefined) fail("--value is required for set-physics-gravity (e.g. --value '[0,-9.81,0]')");
+        let parsed;
+        try { parsed = JSON.parse(flags.value); }
+        catch (e) { fail(`--value must be a JSON array: ${e.message}`); }
+        if (!Array.isArray(parsed)) fail('--value must be a JSON array');
+        await submitCommand('set_physics_gravity', {
+          value: parsed,
+          twoD: flags['2d'] === true || flags['2d'] === 'true',
+        }, flags);
+        break;
+      }
+
+      case 'set-project-setting': {
+        if (!flags.file) fail('--file is required for set-project-setting');
+        if (!flags.property) fail('--property is required for set-project-setting');
+        if (flags.value === undefined) fail('--value is required for set-project-setting');
+        let parsedVal;
+        try { parsedVal = JSON.parse(flags.value); }
+        catch (e) {
+          // Allow bare strings without JSON quoting for ergonomics.
+          parsedVal = flags.value;
+        }
+        await submitCommand('set_project_setting', {
+          file: String(flags.file),
+          propertyPath: String(flags.property),
+          value: parsedVal,
+        }, flags);
+        break;
+      }
+
+      case 'inspect-project-setting': {
+        if (!flags.file) fail('--file is required for inspect-project-setting');
+        const args = { file: String(flags.file) };
+        if (flags.property) args.propertyPath = String(flags.property);
+        if (flags.depth !== undefined) args.depth = parseInt(flags.depth, 10);
+        await submitCommand('inspect_project_setting', args, flags);
         break;
       }
 

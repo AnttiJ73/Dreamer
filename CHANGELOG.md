@@ -9,6 +9,23 @@ tags, breaking changes bump the minor version (0.x.0), fixes bump patch.
 
 ## [Unreleased]
 
+### Added — Project Settings authoring (full coverage)
+ProjectSettings/*.asset files live outside Assets/, so the existing `set-property`/`inspect-asset` commands (which use `LoadAssetAtPath`) couldn't reach them. Two layers of new commands address this:
+
+**Phase 1 — first-class wrappers for the common cases:**
+- **`inspect-project-settings [--file NAME]`** — overview: 32 layers (with name/builtin flag), tags, sorting layers, 3D + 2D physics summary (gravity + disabled-collision pairs), and a list of every `.asset` in `ProjectSettings/`. With `--file X`: per-field listing for that one file.
+- **`set-layer-name --index N --name X [--force]`**, **`clear-layer --index N [--force]`** — name a physics/rendering layer; builtin slots (0-7) require `--force`.
+- **`add-tag --name X`**, **`remove-tag --name X`** — TagManager tags (uses `InternalEditorUtility.AddTag`/`RemoveTag`).
+- **`add-sorting-layer --name X`**, **`remove-sorting-layer --name X`** — 2D sorting layers (Default is protected).
+- **`set-layer-collision --layer-a A --layer-b B [--collide true|false] [--2d]`** — physics layer collision matrix (3D + 2D). Names or numeric indices accepted; matrix is symmetric.
+- **`set-physics-gravity --value [x,y,z] [--2d]`** — global gravity. 3D = `Physics.gravity`, 2D = `Physics2D.gravity` (requires `--2d`).
+
+**Phase 2 — generic SerializedObject editor for the long tail:**
+- **`set-project-setting --file NAME --property PATH --value JSON`** — edit any field on any `ProjectSettings/*.asset` (PlayerSettings build target overrides, GraphicsSettings, TimeManager, AudioManager, QualitySettings, EditorSettings, …). Same value semantics as `set-property` (arrays, sparse `{_size, N: val}`, asset/scene refs, struct objects). Bracket shorthand `field[N]` is rewritten to `field.Array.data[N]`.
+- **`inspect-project-setting --file NAME [--property PATH] [--depth N]`** — inspect a single file's full field listing or drill into a sub-tree.
+
+Discovery flow: `inspect-project-settings` lists files → `inspect-project-setting --file X` lists fields on one → `set-project-setting --file X --property m_Y --value V` edits. No gate; project settings are normal authoring operations.
+
 ### Added — `set-play-mode` command + per-machine policy gate
 - **`./bin/dreamer set-play-mode --state enter|exit|toggle|pause|unpause|toggle-pause`** — first-class play-mode control via `EditorApplication.EnterPlaymode()` / `ExitPlaymode()` / `isPaused`. Replaces the `execute-menu-item Edit/Play` workaround, which silently failed because Unity's `ExecuteMenuItem` returns false for menu items with validation handlers (Play and Pause among them).
 - `execute-menu-item Edit/Play` and `execute-menu-item Edit/Pause` are now auto-routed to the new command on the bridge side, so existing agent code that targeted the menu paths keeps working.

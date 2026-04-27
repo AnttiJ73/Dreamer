@@ -66,6 +66,19 @@ namespace Dreamer.AgentBridge
             _handlers["execute_method"]          = EditorOps.ExecuteMethod;
             _handlers["set_play_mode"]           = PlayModeOps.SetPlayMode;
 
+            // Project Settings — convenience commands + generic editor.
+            _handlers["inspect_project_settings"] = ProjectSettingsOps.InspectProjectSettings;
+            _handlers["set_layer_name"]           = ProjectSettingsOps.SetLayerName;
+            _handlers["clear_layer"]              = ProjectSettingsOps.ClearLayer;
+            _handlers["add_tag"]                  = ProjectSettingsOps.AddTag;
+            _handlers["remove_tag"]               = ProjectSettingsOps.RemoveTag;
+            _handlers["add_sorting_layer"]        = ProjectSettingsOps.AddSortingLayer;
+            _handlers["remove_sorting_layer"]     = ProjectSettingsOps.RemoveSortingLayer;
+            _handlers["set_layer_collision"]      = ProjectSettingsOps.SetLayerCollision;
+            _handlers["set_physics_gravity"]      = ProjectSettingsOps.SetPhysicsGravity;
+            _handlers["set_project_setting"]      = ProjectSettingsOps.SetProjectSetting;
+            _handlers["inspect_project_setting"]  = ProjectSettingsOps.InspectProjectSetting;
+
             // ScriptableObject operations
             _handlers["create_scriptable_object"] = AssetOps.CreateScriptableObject;
 
@@ -203,7 +216,9 @@ namespace Dreamer.AgentBridge
                 || kind == "shader_status"
                 || kind == "read_property"
                 || kind == "create_scene"
-                || kind == "open_scene";
+                || kind == "open_scene"
+                || kind == "inspect_project_settings"
+                || kind == "inspect_project_setting";
         }
 
         public class CommandRecord

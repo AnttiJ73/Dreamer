@@ -32,6 +32,19 @@ const KIND_DEFS = {
   execute_menu_item:   { label: 'Execute Menu Item',   requirements: null },
   execute_method:      { label: 'Execute Method',      requirements: null },
   set_play_mode:       { label: 'Set Play Mode',       requirements: null },
+
+  // Project Settings — convenience commands + generic editor for the long tail.
+  inspect_project_settings: { label: 'Inspect Project Settings', requirements: null },
+  set_layer_name:        { label: 'Set Layer Name',        requirements: null },
+  clear_layer:           { label: 'Clear Layer',           requirements: null },
+  add_tag:               { label: 'Add Tag',               requirements: null },
+  remove_tag:            { label: 'Remove Tag',            requirements: null },
+  add_sorting_layer:     { label: 'Add Sorting Layer',     requirements: null },
+  remove_sorting_layer:  { label: 'Remove Sorting Layer',  requirements: null },
+  set_layer_collision:   { label: 'Set Layer Collision',   requirements: null },
+  set_physics_gravity:   { label: 'Set Physics Gravity',   requirements: null },
+  set_project_setting:   { label: 'Set Project Setting',   requirements: null },
+  inspect_project_setting:{ label: 'Inspect Project Setting',requirements: null },
   create_scene:        { label: 'Create Scene',        requirements: null },
   open_scene:          { label: 'Open Scene',          requirements: null },
   save_scene:          { label: 'Save Scene',          requirements: null },
@@ -109,6 +122,8 @@ const COMPILE_SAFE_KINDS = new Set([
   'read_property',
   'create_scene',
   'open_scene',
+  'inspect_project_settings',
+  'inspect_project_setting',
 ]);
 
 function isCompileSafe(kind) {
