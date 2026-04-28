@@ -86,6 +86,9 @@ namespace Dreamer.AgentBridge
             _handlers["set_app_icons"]            = PlayerSettingsOps.SetAppIcons;
             _handlers["set_cursor_icon"]          = PlayerSettingsOps.SetCursorIcon;
 
+            // Visual feedback — render assets to PNG so agents can "see".
+            _handlers["screenshot_prefab"]        = PreviewOps.ScreenshotPrefab;
+
             // EditorBuildSettings.scenes — the build-scenes list.
             _handlers["inspect_build_scenes"]     = BuildSettingsOps.InspectBuildScenes;
             _handlers["set_build_scenes"]         = BuildSettingsOps.SetBuildScenes;

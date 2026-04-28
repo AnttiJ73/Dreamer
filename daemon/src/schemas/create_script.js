@@ -19,7 +19,7 @@ module.exports = {
     path: {
       type: 'string',
       cli: '--path',
-      description: 'Folder path relative to the project root, e.g. "Assets/Scripts". Defaults to "Assets/Scripts".',
+      description: 'Folder path relative to the project root, e.g. "Assets/Scripts". Defaults to "Assets/Scripts". If a full file path ending in .cs is passed, the folder is taken as its parent and (if --name is omitted) the filename becomes the class name.',
     },
     template: {
       type: 'string',

@@ -474,6 +474,7 @@ async function run(argv) {
         'set-build-scenes --scenes JSON   (replace whole list; items are paths or {path, enabled})',
         'add-build-scene --scene PATH [--enabled false]   (append; updates enabled flag if already present)',
         'remove-build-scene --scene PATH',
+        'screenshot-prefab --asset Assets/X.prefab [--width 512] [--height 512] [--angle iso|front|side|top|...] [--save-to PATH]   (renders to PNG; open with Read tool to view)',
         'create-scene --name NAME [--path FOLDER] [--set-active]',
         'open-scene PATH [--mode single|additive]',
         'save-scene [--path PATH]',
@@ -564,12 +565,27 @@ async function run(argv) {
       }
 
       case 'create-script': {
-        if (!flags.name) fail('--name is required for create-script');
+        let csName = flags.name;
+        let csPath = flags.path || null;
+        // Tolerate users passing a full file path in --path (e.g. "Assets/Scripts/Foo/Bar.cs").
+        // Split into parent folder + class name; reject if --name disagrees.
+        if (csPath && /\.cs$/i.test(csPath)) {
+          const norm = csPath.replace(/\\/g, '/').replace(/\/+$/, '');
+          const slash = norm.lastIndexOf('/');
+          const fileBase = (slash < 0 ? norm : norm.slice(slash + 1)).replace(/\.cs$/i, '');
+          const parent = slash < 0 ? '' : norm.slice(0, slash);
+          if (!csName) csName = fileBase;
+          else if (csName !== fileBase) {
+            fail(`--path ends in '${norm.slice(slash + 1)}' but --name is '${csName}'. Pass --path as a folder (e.g. '${parent}'), not a file path.`);
+          }
+          csPath = parent || 'Assets';
+        }
+        if (!csName) fail('--name is required for create-script');
         await submitCommand('create_script', {
-          name: flags.name,
+          name: csName,
           namespace: flags.namespace || null,
           template: flags.template || 'monobehaviour',
-          path: flags.path || null,
+          path: csPath,
         }, flags);
         break;
       }
@@ -1558,6 +1574,27 @@ async function run(argv) {
 
       case 'inspect-build-scenes': {
         await submitCommand('inspect_build_scenes', {}, flags);
+        break;
+      }
+
+      case 'screenshot-prefab': {
+        const target = flags.asset || positional[1];
+        if (!target) fail('Usage: dreamer screenshot-prefab --asset Assets/X.prefab [--width N] [--height N] [--angle iso|front|side|top|...] [--background-color #RRGGBB[AA]] [--transparent]');
+        const isGuid = /^[0-9a-f]{32}$/i.test(target);
+        const args = isGuid ? { guid: target } : { assetPath: target };
+        if (flags.width !== undefined) args.width = parseInt(flags.width, 10);
+        if (flags.height !== undefined) args.height = parseInt(flags.height, 10);
+        if (flags.angle) args.angle = String(flags.angle);
+        if (flags['save-to']) args.savePath = String(flags['save-to']);
+        if (flags['background-color'] !== undefined) {
+          // Accept hex string ("#aabbcc") or JSON array ("[0.1,0.2,0.3]"). Try JSON first.
+          let bg;
+          try { bg = JSON.parse(flags['background-color']); }
+          catch { bg = String(flags['background-color']); }
+          args.backgroundColor = bg;
+        }
+        if (flags.transparent === true || flags.transparent === 'true') args.transparent = true;
+        await submitCommand('screenshot_prefab', args, flags);
         break;
       }
 

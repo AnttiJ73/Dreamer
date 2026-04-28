@@ -53,6 +53,9 @@ const KIND_DEFS = {
   set_app_icons:           { label: 'Set App Icons',          requirements: null },
   set_cursor_icon:         { label: 'Set Cursor Icon',        requirements: null },
 
+  // Visual feedback — render assets to PNG.
+  screenshot_prefab:       { label: 'Screenshot Prefab',      requirements: null },
+
   // EditorBuildSettings build-scenes.
   inspect_build_scenes:    { label: 'Inspect Build Scenes',   requirements: null },
   set_build_scenes:        { label: 'Set Build Scenes',       requirements: null },

@@ -17,12 +17,30 @@ namespace Dreamer.AgentBridge
         public static CommandResult CreateScript(Dictionary<string, object> args)
         {
             string name = SimpleJson.GetString(args, "name");
-            if (string.IsNullOrEmpty(name))
-                return CommandResult.Fail("'name' is required.");
-
             string ns = SimpleJson.GetString(args, "namespace");
             string template = SimpleJson.GetString(args, "template", "monobehaviour").ToLowerInvariant();
             string folder = SimpleJson.GetString(args, "path", "Assets/Scripts");
+
+            // Normalize separators; tolerate users passing a full file path in --path
+            // (e.g. "Assets/Scripts/Foo/Bar.cs") instead of a folder.
+            folder = (folder ?? string.Empty).Replace('\\', '/').TrimEnd('/');
+            if (folder.EndsWith(".cs", StringComparison.OrdinalIgnoreCase))
+            {
+                string fileBase = Path.GetFileNameWithoutExtension(folder);
+                string parent = Path.GetDirectoryName(folder)?.Replace('\\', '/') ?? string.Empty;
+
+                if (string.IsNullOrEmpty(name))
+                    name = fileBase;
+                else if (!string.Equals(name, fileBase, StringComparison.Ordinal))
+                    return CommandResult.Fail(
+                        $"--path ends in '{Path.GetFileName(folder)}' but --name is '{name}'. " +
+                        $"Pass --path as a folder (e.g. '{parent}'), not a file path.");
+
+                folder = string.IsNullOrEmpty(parent) ? "Assets" : parent;
+            }
+
+            if (string.IsNullOrEmpty(name))
+                return CommandResult.Fail("'name' is required.");
 
             // Sanitize
             name = SanitizeClassName(name);

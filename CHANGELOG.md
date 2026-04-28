@@ -9,6 +9,20 @@ tags, breaking changes bump the minor version (0.x.0), fixes bump patch.
 
 ## [Unreleased]
 
+### Added — `screenshot-prefab` (visual feedback for agents)
+- **`./bin/dreamer screenshot-prefab --asset Assets/X.prefab [--width 512] [--height 512] [--angle iso|front|back|side|right|left|top|bottom] [--background-color "#RRGGBB[AA]"|JSON-rgba] [--transparent] [--save-to PATH]`** — renders a prefab to a PNG using Unity's `PreviewRenderUtility`. Camera auto-frames the prefab's combined mesh bounds (computed from `MeshFilter.sharedMesh.bounds` / `SkinnedMeshRenderer.localBounds` / `Sprite.bounds` and transformed to world-space, NOT from `Renderer.bounds` — the latter is uninitialized for objects in a PreviewScene that haven't rendered yet). Two-light rim setup, configurable background.
+- **Custom `--background-color`** accepts hex (`#1a3a8a`, `#1a3a8a80`) or JSON RGB(A) array of 0..1 floats (`[1.0, 0.95, 0.7]`). Default neutral gray.
+- **`--transparent` flag** — outputs PNG with full alpha channel (color type 6 / RGBA). Skips PreviewRenderUtility's `BeginStaticPreview`/`EndStaticPreview` (which uses an RGB-only internal RenderTexture and silently drops alpha) in favor of a custom ARGB32 RT bound to the preview camera, then `ReadPixels` into an RGBA32 Texture2D. PNGs are now always RGBA regardless of background opacity, so transparency is ready when you need it.
+- Output goes to `Library/DreamerScreenshots/<stem>-<guid8>-<ticks>.png` by default (Library/ is gitignored). Override with `--save-to`.
+- Result includes `path`, `boundsCenter`, `boundsSize`, `byteCount`. Open the PNG with the Read tool — Claude Code is multimodal, Read returns the image inline so the agent can see what it built.
+- Known limitations (documented in the schema's `pitfalls`):
+  - UI/Canvas prefabs render blank (no Canvas set up in the preview scene). Use Game-view screenshots on a scene that hosts the prefab — that command isn't built yet.
+  - Logic-only prefabs (no MeshFilter/SkinnedMeshRenderer/SpriteRenderer) come back as an empty gray frame; the `boundsSize: [1,1,1]` fallback is the tell.
+  - Particles, trails, lines, lights, and post-processing don't contribute to bounds — camera frames static-mesh extent only.
+
+### Fixed — `create-script --path` accepting a `.cs` file path
+If `--path` ended in `.cs` (e.g. `Assets/Scripts/Foo/Bar.cs`), Dreamer treated the whole string as a folder, `mkdir`'d `Bar.cs/`, and wrote `Bar.cs/Bar.cs` inside it. Now: a `.cs`-suffixed `--path` is split into parent folder + class name. If `--name` is also given and disagrees with the filename, the command fails fast with a clear message instead of silently nesting.
+
 ### Added — PlayerSettings + Build Settings authoring
 PlayerSettings fields that go through the static `UnityEditor.PlayerSettings` API (icons, per-platform identifiers, cursor) don't round-trip through the generic SerializedObject editor. Added wrappers:
 
