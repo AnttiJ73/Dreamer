@@ -68,10 +68,23 @@ Project-local CLI: `./bin/dreamer <command>` from the Unity project root (POSIX/
 3. **Create**: scripts → prefabs → components → properties → scene instances.
 4. **Always pass `--wait`** for mutation commands so you see the result before proceeding.
 5. **Persist**: `./bin/dreamer save-assets --wait` after scene-object mutations (it writes both scenes and assets).
+6. **Validate shaders**: after editing any `.shader` / `.shadergraph` / `.compute` file, run `shader-status --asset PATH --wait`. Shaders fail silently — Unity's C# compile system doesn't catch shader errors, so without this step a broken shader will render pink at runtime with no agent-visible signal. See "Writing shaders externally" below.
 
 ## Writing scripts externally
 
 When you write `.cs` files directly to disk (not via `create-script`), the daemon's asset watcher sees the change and the next compile-gated command (`add-component`, `set-property`, `create-prefab`, etc.) auto-prepends `refresh-assets`. You don't need to manage this — just write files and run commands.
+
+## Writing shaders externally
+
+Shader files (`.shader`, `.shadergraph`, `.compute`) work the same way as `.cs` for refresh, BUT shaders fail silently — a broken shader doesn't trigger Unity's C# compile error system. Always validate after editing:
+
+```bash
+# After writing/editing a .shader file:
+./bin/dreamer refresh-assets --wait
+./bin/dreamer shader-status --asset Assets/Shaders/MyEffect.shader --wait
+```
+
+`shader-status` calls `ShaderUtil.GetShaderMessages()` and surfaces compile errors with file + line + platform, including GPU-side errors that don't reach the Unity console. This is the only way to catch the "shader looks pink in scene" silent-fail case. **Run it every time you modify a shader file.** If you don't pass `--asset`, it scans every user shader project-wide.
 
 If you only wrote scripts and don't immediately have a follow-up command, force the import yourself:
 
