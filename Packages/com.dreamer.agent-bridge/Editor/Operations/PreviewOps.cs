@@ -36,6 +36,16 @@ namespace Dreamer.AgentBridge
             string angleArg = SimpleJson.GetString(args, "angle");
             string angle = angleArg ?? "iso";
             bool angleExplicit = !string.IsNullOrEmpty(angleArg);
+
+            // Optional UI-mode size override: --size [w,h] sets the prefab
+            // RectTransform's sizeDelta after instantiation. Useful for prefabs
+            // that are designed to be sized by a parent layout group at runtime
+            // and have zero/tiny size in standalone form.
+            Vector2? sizeOverride = null;
+            if (args.TryGetValue("size", out object sizeObj) && sizeObj is List<object> sizeArr && sizeArr.Count >= 2)
+            {
+                sizeOverride = new Vector2(ToFloat(sizeArr[0]), ToFloat(sizeArr[1]));
+            }
             bool transparent = SimpleJson.GetBool(args, "transparent", false);
             Color background;
             if (transparent)
@@ -58,6 +68,7 @@ namespace Dreamer.AgentBridge
 
             PreviewRenderUtility pru = null;
             GameObject instance = null;
+            GameObject wrapperCanvasGO = null;
             try
             {
                 pru = new PreviewRenderUtility();
@@ -97,10 +108,26 @@ namespace Dreamer.AgentBridge
                 instance.hideFlags = HideFlags.HideAndDontSave;
 
                 Canvas rootCanvas = FindCanvas(instance);
-                bool uiMode = rootCanvas != null;
+                bool isFragment = rootCanvas == null && IsUIFragment(instance);
+                bool uiMode = rootCanvas != null || isFragment;
+
+                if (isFragment)
+                {
+                    // Wrap the fragment in a temporary WorldSpace canvas so it
+                    // has a render target. Layout-group-driven prefabs come
+                    // back at their authored size — usually small or zero —
+                    // so we also resize the prefab's RectTransform here.
+                    wrapperCanvasGO = CreateWrappingCanvas();
+                    var wrapperRT = wrapperCanvasGO.GetComponent<RectTransform>();
+                    instance.transform.SetParent(wrapperCanvasGO.transform, worldPositionStays: false);
+                    SizeFragment(instance, sizeOverride);
+                    rootCanvas = wrapperCanvasGO.GetComponent<Canvas>();
+                }
+
                 if (uiMode)
                 {
-                    SetupCanvasForPreview(instance, rootCanvas, pru.camera);
+                    var setupRoot = isFragment ? wrapperCanvasGO : instance;
+                    SetupCanvasForPreview(setupRoot, rootCanvas, pru.camera);
                     if (!angleExplicit) angle = "front";
                 }
 
@@ -111,7 +138,8 @@ namespace Dreamer.AgentBridge
                 if (!uiMode) pru.AddSingleGO(instance);
 
                 // Frame the camera on combined bounds.
-                Bounds bounds = uiMode ? ComputeUIBounds(instance) : ComputeBounds(instance);
+                GameObject uiRoot = isFragment ? wrapperCanvasGO : instance;
+                Bounds bounds = uiMode ? ComputeUIBounds(uiRoot) : ComputeBounds(instance);
                 Vector3 dirLocal = AngleToCameraDir(angle);
                 if (uiMode)
                 {
@@ -155,7 +183,7 @@ namespace Dreamer.AgentBridge
                     // Workaround: render via a temporary camera in the active
                     // scene, with the prefab parked off-screen briefly. We
                     // reset all the temporary state in the finally block.
-                    rendered = RenderUIOffscreen(instance, rootCanvas, width, height, background, dirLocal, bounds);
+                    rendered = RenderUIOffscreen(uiRoot, rootCanvas, width, height, background, dirLocal, bounds);
                 }
                 else
                 {
@@ -246,7 +274,10 @@ namespace Dreamer.AgentBridge
             }
             finally
             {
-                if (instance != null) UnityEngine.Object.DestroyImmediate(instance);
+                // Destroy wrapper first — if instance is parented under it,
+                // DestroyImmediate(wrapper) takes the instance with it.
+                if (wrapperCanvasGO != null) UnityEngine.Object.DestroyImmediate(wrapperCanvasGO);
+                if (instance != null && instance) UnityEngine.Object.DestroyImmediate(instance);
                 if (pru != null) pru.Cleanup();
             }
         }
@@ -314,6 +345,80 @@ namespace Dreamer.AgentBridge
         static Bounds Encapsulate(Bounds a, Bounds b) { a.Encapsulate(b); return a; }
 
         // ── UI / Canvas mode ─────────────────────────────────────────────
+
+        static bool IsUIFragment(GameObject root)
+        {
+            // A "UI fragment" is a prefab that uses uGUI components but doesn't
+            // wrap them in its own Canvas — typically a list-item / row / button
+            // meant to be parented under an existing Canvas at runtime. We can
+            // still render it by wrapping in a temporary Canvas of our own.
+            if (root.GetComponent<RectTransform>() == null) return false;
+            if (root.GetComponent<Graphic>() != null) return true;
+            if (root.GetComponentInChildren<Graphic>(includeInactive: true) != null) return true;
+            // Also accept LayoutElement-only roots — sometimes a fragment is
+            // a wrapper with LayoutElement and the Graphics live in children.
+            if (root.GetComponent<LayoutElement>() != null) return true;
+            return false;
+        }
+
+        static GameObject CreateWrappingCanvas()
+        {
+            var go = new GameObject("DreamerPreviewWrapperCanvas");
+            go.hideFlags = HideFlags.HideAndDontSave;
+            go.transform.position = Vector3.zero;
+            var canvas = go.AddComponent<Canvas>();
+            canvas.renderMode = RenderMode.WorldSpace;
+            canvas.sortingOrder = 0;
+            // CanvasScaler in ConstantPixelSize keeps the world-space units
+            // matching pixels, so a 200×80 RectTransform sizeDelta means
+            // 200×80 world units — predictable framing.
+            var scaler = go.AddComponent<CanvasScaler>();
+            scaler.uiScaleMode = CanvasScaler.ScaleMode.ConstantPixelSize;
+            scaler.scaleFactor = 1f;
+            // Give the wrapping canvas RT a generous size — children can
+            // anchor however they want, the camera frames the actual content
+            // bounds (not the canvas rect).
+            var rt = go.GetComponent<RectTransform>();
+            if (rt != null) rt.sizeDelta = new Vector2(2000f, 2000f);
+            return go;
+        }
+
+        static void SizeFragment(GameObject instance, Vector2? sizeOverride)
+        {
+            var rt = instance.GetComponent<RectTransform>();
+            if (rt == null) return;
+
+            // Explicit override always wins.
+            if (sizeOverride.HasValue)
+            {
+                rt.sizeDelta = sizeOverride.Value;
+                rt.anchorMin = new Vector2(0.5f, 0.5f);
+                rt.anchorMax = new Vector2(0.5f, 0.5f);
+                rt.anchoredPosition = Vector2.zero;
+                return;
+            }
+
+            // Use LayoutElement preferred/min hints if the prefab has them.
+            var le = instance.GetComponent<LayoutElement>();
+            Vector2 size = rt.sizeDelta;
+            if (le != null)
+            {
+                if (le.preferredWidth > 0) size.x = le.preferredWidth;
+                else if (le.minWidth > 0) size.x = le.minWidth;
+                if (le.preferredHeight > 0) size.y = le.preferredHeight;
+                else if (le.minHeight > 0) size.y = le.minHeight;
+            }
+            // Fallback for genuinely zero-sized prefabs (no hints, no authored
+            // size). 400×100 is a plausible "list item" footprint that fits
+            // most fragments without being silly.
+            if (size.x < 1f) size.x = 400f;
+            if (size.y < 1f) size.y = 100f;
+
+            rt.sizeDelta = size;
+            rt.anchorMin = new Vector2(0.5f, 0.5f);
+            rt.anchorMax = new Vector2(0.5f, 0.5f);
+            rt.anchoredPosition = Vector2.zero;
+        }
 
         static Canvas FindCanvas(GameObject root)
         {

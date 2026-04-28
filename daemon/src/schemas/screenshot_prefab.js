@@ -36,6 +36,15 @@ module.exports = {
       cli: '--transparent',
       description: 'Render with a transparent background (alpha=0). Overrides `backgroundColor`. Output PNG preserves alpha.',
     },
+    size: {
+      type: 'array',
+      cli: '--size',
+      description:
+        'UI-only. Override the prefab\'s RectTransform sizeDelta as `[width,height]`. ' +
+        'Useful for fragments designed to be sized by a parent layout group at runtime — without this, ' +
+        'they render at their authored (often zero or tiny) size. ' +
+        'When unset: LayoutElement.preferredWidth/Height hints are used; falls back to 400×100.',
+    },
   },
   constraints: [
     { rule: 'atLeastOne', fields: ['assetPath', 'guid'] },
@@ -65,9 +74,16 @@ module.exports = {
       cli: './bin/dreamer screenshot-prefab --asset Assets/Prefabs/MainMenu.prefab --angle front --width 1024 --height 768 --wait',
       args: { assetPath: 'Assets/Prefabs/MainMenu.prefab', angle: 'front', width: 1024, height: 768 },
     },
+    {
+      title: 'List-item fragment with explicit size',
+      cli: "./bin/dreamer screenshot-prefab --asset Assets/Prefabs/UI/RowItem.prefab --size '[400,80]' --wait",
+      args: { assetPath: 'Assets/Prefabs/UI/RowItem.prefab', size: [400, 80] },
+    },
   ],
   pitfalls: [
-    'UI/Canvas prefabs render via a separate code path (auto-detected when the prefab has a Canvas at root or as a descendant): result includes `mode: "ui"`, camera switches to orthographic, default angle becomes `front`. The Canvas is temporarily flipped to WorldSpace + bound to a temp camera in the active scene, the LayoutRebuilder is forced, and graphics are dirtied. Standard uGUI (Image, Text, Button, Slider, Toggle, Panel) renders correctly. **TextMeshProUGUI (TMP) text often comes back invisible** — TMP has its own mesh-build pipeline that doesn\'t tick from `Canvas.ForceUpdateCanvases`. UI fragments without a root Canvas (button-only prefabs meant to be parented under an existing Canvas) fall through to 3D mode and render blank.',
+    'UI/Canvas prefabs render via a separate code path (auto-detected when the prefab has a Canvas at root, a Canvas descendant, OR is a fragment with uGUI components but no Canvas). Result includes `mode: "ui"`, camera switches to orthographic, default angle becomes `front`. Standard uGUI (Image, Text, Button, Slider, Toggle, Dropdown, Panel) renders correctly.',
+    'Fragment prefabs (no Canvas — list items, button rows, slot prefabs etc) are wrapped in a temporary WorldSpace Canvas. Their RectTransform is sized from `LayoutElement.preferredWidth/Height` if present, else 400×100. Override with `--size [w,h]` for prefabs whose authored size is wrong (zero-sized layout-driven prefabs are common).',
+    '**TextMeshProUGUI (TMP) text often comes back invisible** — TMP has its own mesh-build pipeline that doesn\'t tick from `Canvas.ForceUpdateCanvases`. Standard `UnityEngine.UI.Text` works.',
     'Prefabs with no MeshRenderer/SkinnedMeshRenderer/SpriteRenderer/Canvas (logic-only prefabs, scripts + Rigidbody, etc.) render an empty scene. The result\'s `boundsSize` will be `[1,1,1]` (the fallback) — that\'s the signal.',
     'Larger images consume more multimodal tokens when read. Default 512 is a good balance; go smaller (256) for batch overviews, larger (1024+) when you need detail.',
     'On Windows, Unity must have focus or the render may come back black on some GPU/driver combos. If you get an all-black PNG, run `dreamer focus-unity` first.',

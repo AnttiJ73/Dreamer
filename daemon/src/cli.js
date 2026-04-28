@@ -1594,6 +1594,13 @@ async function run(argv) {
           args.backgroundColor = bg;
         }
         if (flags.transparent === true || flags.transparent === 'true') args.transparent = true;
+        if (flags.size !== undefined) {
+          let sz;
+          try { sz = JSON.parse(flags.size); }
+          catch (e) { fail(`--size must be a JSON array [w,h]: ${e.message}`); }
+          if (!Array.isArray(sz) || sz.length !== 2) fail('--size must be a 2-element array [w,h]');
+          args.size = sz;
+        }
         await submitCommand('screenshot_prefab', args, flags);
         break;
       }
