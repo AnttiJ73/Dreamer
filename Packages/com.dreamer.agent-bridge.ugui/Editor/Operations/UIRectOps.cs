@@ -4,28 +4,12 @@ using UnityEngine;
 
 namespace Dreamer.AgentBridge
 {
-    /// <summary>
-    /// Tier 1 of the UI support — a single command that configures a
-    /// RectTransform via named anchor presets + size + pivot in one call.
-    /// Replaces ~6 set-property calls (anchorMin, anchorMax, pivot, sizeDelta,
-    /// offsetMin, offsetMax) that agents frequently got wrong one-at-a-time.
-    /// </summary>
+    /// <summary>Configure a RectTransform via named anchor preset + size + pivot in one call.</summary>
     public static class UIRectOps
     {
-        /// <summary>
-        /// Args: {
-        ///   sceneObjectPath? | assetPath? | guid? : target (must be a UI GO)
-        ///   childPath? : navigate into a prefab's child
-        ///   anchor: "center" | "top-left" | ... (see UIHelpers.AnchorPresetNames)
-        ///   size? : [w,h] | "WxH" | {w,h}
-        ///   pivot? : [x,y] | "X,Y" | {x,y}
-        ///   anchoredPosition? / offset? : [x,y]
-        ///   offsetMin?, offsetMax? : [x,y] (for fine control on stretched axes)
-        /// }
-        /// </summary>
+        /// <summary>Apply anchor/size/pivot/offset args to a scene or prefab RectTransform.</summary>
         public static CommandResult SetRectTransform(Dictionary<string, object> args)
         {
-            // ── Target resolution: scene object, asset prefab, or prefab-child ──
             string sceneObjectPath = SimpleJson.GetString(args, "sceneObjectPath");
             if (!string.IsNullOrEmpty(sceneObjectPath))
             {

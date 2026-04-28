@@ -6,15 +6,9 @@ using UnityEngine;
 
 namespace Dreamer.AgentBridge.Animation
 {
-    /// <summary>
-    /// AvatarMask asset authoring. Masks select which bones / humanoid body
-    /// parts an animator layer applies to — used for upper-body / lower-body
-    /// layering, wave-while-running, etc.
-    /// </summary>
+    /// <summary>AvatarMask asset authoring — selects bones / humanoid body parts an animator layer applies to.</summary>
     public static class AvatarMaskOps
     {
-        // ── create-avatar-mask ────────────────────────────────────────────
-
         public static CommandResult CreateAvatarMask(Dictionary<string, object> args)
         {
             string name = SimpleJson.GetString(args, "name");
@@ -34,7 +28,6 @@ namespace Dreamer.AgentBridge.Animation
             var mask = new AvatarMask { name = name };
             AssetDatabase.CreateAsset(mask, assetPath);
 
-            // Apply humanoid + transforms in the same call.
             ApplyMaskUpdate(mask, args, out string applyErr);
             if (!string.IsNullOrEmpty(applyErr)) return CommandResult.Fail(applyErr);
 
@@ -49,9 +42,6 @@ namespace Dreamer.AgentBridge.Animation
                 .Put("transformCount", mask.transformCount)
                 .ToString());
         }
-
-        // ── set-avatar-mask ───────────────────────────────────────────────
-        // Update an existing AvatarMask asset.
 
         public static CommandResult SetAvatarMask(Dictionary<string, object> args)
         {
@@ -73,8 +63,6 @@ namespace Dreamer.AgentBridge.Animation
                 .ToString());
         }
 
-        // ── inspect-avatar-mask ───────────────────────────────────────────
-
         public static CommandResult InspectAvatarMask(Dictionary<string, object> args)
         {
             string assetPath = AssetOps.ResolveAssetPath(args);
@@ -82,7 +70,6 @@ namespace Dreamer.AgentBridge.Animation
             var mask = AssetDatabase.LoadAssetAtPath<AvatarMask>(assetPath);
             if (mask == null) return CommandResult.Fail($"AvatarMask not found at '{assetPath}'.");
 
-            // Humanoid body parts.
             var humanoid = SimpleJson.Object();
             for (int i = 0; i < (int)AvatarMaskBodyPart.LastBodyPart; i++)
             {
@@ -90,7 +77,6 @@ namespace Dreamer.AgentBridge.Animation
                 humanoid.Put(part.ToString(), mask.GetHumanoidBodyPartActive(part));
             }
 
-            // Transforms.
             var transforms = SimpleJson.Array();
             for (int i = 0; i < mask.transformCount; i++)
             {
@@ -109,16 +95,10 @@ namespace Dreamer.AgentBridge.Animation
                 .ToString());
         }
 
-        // ── shared apply ──────────────────────────────────────────────────
-
         static void ApplyMaskUpdate(AvatarMask mask, Dictionary<string, object> args, out string error)
         {
             error = null;
 
-            // Humanoid parts: { "Body": true, "Head": false, ... }. Names
-            // match AvatarMaskBodyPart enum: Root, Body, Head, LeftLeg,
-            // RightLeg, LeftArm, RightArm, LeftFingers, RightFingers,
-            // LeftFootIK, RightFootIK, LeftHandIK, RightHandIK.
             object humanoidRaw = SimpleJson.GetValue(args, "humanoid");
             if (humanoidRaw is Dictionary<string, object> humanoidDict)
             {
@@ -134,8 +114,6 @@ namespace Dreamer.AgentBridge.Animation
                 }
             }
 
-            // Transforms: [{path: "Hips/Spine/...", active: true}, ...].
-            // Replaces the whole list when provided.
             object transformsRaw = SimpleJson.GetValue(args, "transforms");
             if (transformsRaw is List<object> transformsList)
             {

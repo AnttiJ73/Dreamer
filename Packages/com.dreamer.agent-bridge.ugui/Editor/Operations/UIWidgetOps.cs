@@ -10,27 +10,18 @@ using TMPro;
 
 namespace Dreamer.AgentBridge
 {
-    /// <summary>
-    /// Tier 2 of the UI support — one command per common Canvas UI widget.
-    /// Each command handles the full composite structure (e.g. Button =
-    /// Image + Button + child Text GameObject) and applies sensible defaults.
-    /// Goal: a working scaffold the user can refine visually, not pixel-
-    /// perfect output.
-    /// </summary>
+    /// <summary>One command per common Canvas UI widget; each builds the full composite structure with sensible defaults.</summary>
     public static class UIWidgetOps
     {
         // ────────────────────────────────────────────────────────────────
         //  Common entry helpers
         // ────────────────────────────────────────────────────────────────
 
-        /// <summary>Resolve the parent Transform for a new UI element, or null for scene root.</summary>
+        /// <summary>Resolve parent Transform for a new UI element; null = scene root.</summary>
         static Transform ResolveParent(Dictionary<string, object> args, out string error)
         {
             error = null;
-            // Hidden path: instanceId-based lookup. Used by UITreeOps to avoid
-            // path ambiguity when siblings share names (e.g. a column of VStacks
-            // all named "VStack" — the parent's scene path is not unique during
-            // tree construction).
+            // _parentInstanceId is UITreeOps' private channel — avoids path ambiguity when siblings share names.
             if (args.TryGetValue("_parentInstanceId", out object idRaw))
             {
                 int id = (int)UIHelpers.ToFloatSafe(idRaw);
@@ -48,7 +39,7 @@ namespace Dreamer.AgentBridge
             return go != null ? go.transform : null;
         }
 
-        /// <summary>Finalize common post-creation steps: apply rect args, register undo, set dirty.</summary>
+        /// <summary>Finalize a new UI GO: apply rect args, register undo, set dirty.</summary>
         static string FinalizeUI(GameObject go, Dictionary<string, object> args, string undoLabel)
         {
             var rt = UIHelpers.EnsureRectTransform(go);
@@ -148,7 +139,6 @@ namespace Dreamer.AgentBridge
 
             var img = go.GetComponent<Image>();
 
-            // Default: semi-transparent dark panel so it's visible but not overwhelming.
             Color color = new Color(0.1f, 0.1f, 0.1f, 0.8f);
             if (args.TryGetValue("color", out object cRaw) && UIHelpers.TryParseColor(cRaw, out Color parsed)) color = parsed;
             img.color = color;
@@ -159,7 +149,7 @@ namespace Dreamer.AgentBridge
                 var sprite = AssetDatabase.LoadAssetAtPath<Sprite>(spritePath);
                 if (sprite == null)
                 {
-                    // Probe sub-assets for Sprite in a Texture2D import
+                    // Probe sub-assets — sprite may live inside a Texture2D import.
                     var subs = AssetDatabase.LoadAllAssetsAtPath(spritePath);
                     foreach (var s in subs)
                     {
@@ -170,8 +160,7 @@ namespace Dreamer.AgentBridge
             }
             else
             {
-                // Use Unity's built-in UISprite (rounded-corner 9-slice) as the default
-                // if no sprite specified and color is opaque-ish. Skip if color is clear.
+                // Default to Unity's built-in UISprite (rounded-corner 9-slice) when color is opaque-ish.
                 if (color.a > 0.01f)
                 {
                     var uiSprite = AssetDatabase.GetBuiltinExtraResource<Sprite>("UI/Skin/UISprite.psd");
@@ -262,7 +251,6 @@ namespace Dreamer.AgentBridge
             if (SimpleJson.GetBool(args, "preserveAspect", false))
                 img.preserveAspect = true;
 
-            // Image type — Simple (default), Sliced, Tiled, Filled. "Filled" enables fillAmount.
             string imageTypeStr = SimpleJson.GetString(args, "imageType");
             if (!string.IsNullOrEmpty(imageTypeStr))
             {
@@ -274,14 +262,12 @@ namespace Dreamer.AgentBridge
                     case "filled": img.type = Image.Type.Filled; break;
                 }
             }
-            // Fill amount (0..1) — only meaningful when type=Filled. Auto-promotes
-            // type to Filled if user supplied fillAmount without imageType.
+            // Auto-promote to Filled if fillAmount/fillMethod given without imageType.
             if (args.TryGetValue("fillAmount", out object faRaw))
             {
                 if (img.type != Image.Type.Filled) img.type = Image.Type.Filled;
                 img.fillAmount = Mathf.Clamp01(UIHelpers.ToFloatSafe(faRaw, 1f));
             }
-            // Fill method — Horizontal | Vertical | Radial90 | Radial180 | Radial360
             string fmStr = SimpleJson.GetString(args, "fillMethod");
             if (!string.IsNullOrEmpty(fmStr))
             {
@@ -295,7 +281,6 @@ namespace Dreamer.AgentBridge
                     case "radial360":  img.fillMethod = Image.FillMethod.Radial360; break;
                 }
             }
-            // Fill origin — int (Image's enum varies by FillMethod). 0 default for most.
             if (args.TryGetValue("fillOrigin", out object foRaw))
             {
                 img.fillOrigin = (int)UIHelpers.ToFloatSafe(foRaw, 0f);
@@ -322,7 +307,6 @@ namespace Dreamer.AgentBridge
             if (!string.IsNullOrEmpty(parentErr) && parent == null) return CommandResult.Fail(parentErr);
 
             string name = SimpleJson.GetString(args, "name", "Button");
-            // `label` is canonical; `text` is back-compat alias.
             string label = SimpleJson.GetString(args, "label")
                         ?? SimpleJson.GetString(args, "text", "Button");
             float fontSize = SimpleJson.GetFloat(args, "fontSize", 18f);
@@ -332,7 +316,6 @@ namespace Dreamer.AgentBridge
             Color fg = new Color(0.15f, 0.15f, 0.15f, 1f);
             if (args.TryGetValue("textColor", out object tRaw) && UIHelpers.TryParseColor(tRaw, out Color tp)) fg = tp;
 
-            // Parent button
             var go = new GameObject(name, typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(Button));
             if (parent != null) go.transform.SetParent(parent, false);
 
@@ -340,7 +323,6 @@ namespace Dreamer.AgentBridge
             img.color = bg;
             var uiSprite = AssetDatabase.GetBuiltinExtraResource<Sprite>("UI/Skin/UISprite.psd");
             if (uiSprite != null) { img.sprite = uiSprite; img.type = Image.Type.Sliced; }
-            // User-provided sprite overrides default
             string spritePath = SimpleJson.GetString(args, "sprite");
             if (!string.IsNullOrEmpty(spritePath))
             {
@@ -351,19 +333,16 @@ namespace Dreamer.AgentBridge
             var button = go.GetComponent<Button>();
             button.targetGraphic = img;
 
-            // Child Text GameObject (TMP if available, legacy otherwise)
             var textGo = new GameObject("Text", typeof(RectTransform));
             textGo.transform.SetParent(go.transform, false);
             UIHelpers.AddTextComponent(textGo, label, fontSize, fg, "center", out bool wasTmp);
             var textRT = textGo.GetComponent<RectTransform>();
-            // Fill parent — text fills the button
             textRT.anchorMin = Vector2.zero;
             textRT.anchorMax = Vector2.one;
             textRT.offsetMin = Vector2.zero;
             textRT.offsetMax = Vector2.zero;
             textRT.pivot = new Vector2(0.5f, 0.5f);
 
-            // Size default: wide enough for label
             if (!args.ContainsKey("size"))
             {
                 var rt = go.GetComponent<RectTransform>();
@@ -404,18 +383,10 @@ namespace Dreamer.AgentBridge
             return ResultFor(parent.gameObject, "kind", kind);
         }
 
-        /// <summary>
-        /// Internal helper — attach and configure a LayoutGroup on a given
-        /// GameObject, reading args from the same dict shape as the command.
-        /// Separated from the command handler so the declarative tree builder
-        /// can call it with a direct GameObject reference and skip path lookup
-        /// (path-based lookup ambiguates when two siblings share names, which
-        /// happens naturally in tree builds like "column of three VStacks").
-        /// Returns null on success, error message on failure.
-        /// </summary>
+        /// <summary>Attach and configure a LayoutGroup on go; null on success, error message on failure.</summary>
         public static string AttachLayoutGroup(GameObject go, string kind, Dictionary<string, object> args)
         {
-            // Remove any existing LayoutGroup (mutually exclusive)
+            // LayoutGroup variants are mutually exclusive — replace any existing.
             var existing = go.GetComponent<LayoutGroup>();
             if (existing != null) Object.DestroyImmediate(existing);
 
@@ -439,7 +410,6 @@ namespace Dreamer.AgentBridge
                     return $"Unknown layout kind '{kind}'. Use: vertical | horizontal | grid.";
             }
 
-            // Spacing (single number for V/H, Vector2 for Grid)
             if (args.TryGetValue("spacing", out object spRaw))
             {
                 if (lg is HorizontalOrVerticalLayoutGroup hv)
@@ -452,19 +422,19 @@ namespace Dreamer.AgentBridge
                 }
             }
 
-            // Padding: single N (uniform) or [l,t,r,b]
+            // Padding: uniform N or [l,t,r,b].
             if (args.TryGetValue("padding", out object padRaw))
             {
                 RectOffset ro;
                 if (padRaw is List<object> padList && padList.Count == 4)
                 {
+                    // RectOffset ctor is (left, right, top, bottom); input is [l,t,r,b].
                     ro = new RectOffset(
                         (int)UIHelpers.ToFloatSafe(padList[0]),
-                        (int)UIHelpers.ToFloatSafe(padList[2]), // right
-                        (int)UIHelpers.ToFloatSafe(padList[1]), // top
-                        (int)UIHelpers.ToFloatSafe(padList[3])  // bottom
+                        (int)UIHelpers.ToFloatSafe(padList[2]),
+                        (int)UIHelpers.ToFloatSafe(padList[1]),
+                        (int)UIHelpers.ToFloatSafe(padList[3])
                     );
-                    // RectOffset ctor is (left, right, top, bottom) per Unity docs
                 }
                 else
                 {
@@ -485,28 +455,12 @@ namespace Dreamer.AgentBridge
                 hv2.childControlWidth = SimpleJson.GetBool(args, "controlChildSize", true);
                 hv2.childControlHeight = SimpleJson.GetBool(args, "controlChildSize", true);
 
-                // childForceExpand defaults to FALSE on both axes.
-                //
-                // Primary-axis justification: Unity's GetChildSizes overrides every child's
-                // flexible to max(actualFlex, 1) when forceExpand is on — which would steal
-                // surplus from fixed-size (flex=0) siblings. VStack with header (size [0,36]
-                // → flex 0) + scroll list (size unset → flex 1) would split height roughly
-                // evenly instead of header=36, scroll=remaining.
-                //
-                // Cross-axis justification: Unity DOES inflate a child to group size on the
-                // cross axis when LE.flexibleSize > 0 (independent of forceExpand). Our
-                // auto-LE gives size-less children flex=1 on that axis, so cross-axis fill
-                // still works without forceExpand — AND fixed-size (flex=0) children stay
-                // at their preferred size (e.g. a 28×28 toggle in a 32-tall row stays 28
-                // tall and centers via childAlignment, instead of stretching to 32).
-                //
-                // The earlier-suspected "cross-axis collapse" symptom was actually a layout
-                // staleness issue: Unity only runs layout while focused, so inspect can
-                // return pre-layout sizeDelta (0) on an unfocused Editor — focus Unity to
-                // see the real computed sizes.
-                //
-                // Users can still override either default via explicit
-                // `childForceExpandWidth` / `childForceExpandHeight` in the spec.
+                // childForceExpand defaults to FALSE on both axes. With forceExpand=true Unity
+                // overrides every child's flexible to max(actualFlex, 1) and steals surplus from
+                // fixed-size (flex=0) siblings — e.g. VStack [header=36, scroll=fill] would split
+                // evenly instead of giving the scroll list everything but 36px. Cross-axis fill
+                // still works because LE.flexibleSize>0 inflates to group size independently of
+                // forceExpand. Override via `childForceExpandWidth` / `childForceExpandHeight`.
                 hv2.childForceExpandWidth  = SimpleJson.GetBool(args, "childForceExpandWidth",  false);
                 hv2.childForceExpandHeight = SimpleJson.GetBool(args, "childForceExpandHeight", false);
             }
@@ -571,18 +525,16 @@ namespace Dreamer.AgentBridge
             string direction = SimpleJson.GetString(args, "direction", "vertical").Trim().ToLowerInvariant();
             string contentLayout = SimpleJson.GetString(args, "contentLayout", direction);
 
-            // Root: RectTransform + Image (bg) + ScrollRect + RectMask (on viewport)
             var root = new GameObject(name, typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(ScrollRect));
             if (parent != null) root.transform.SetParent(parent, false);
             var rootImg = root.GetComponent<Image>();
             rootImg.color = new Color(0, 0, 0, 0.25f);
             var scroll = root.GetComponent<ScrollRect>();
 
-            // Viewport
             var viewport = new GameObject("Viewport", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(Mask));
             viewport.transform.SetParent(root.transform, false);
             var vpImg = viewport.GetComponent<Image>();
-            vpImg.color = Color.white; // Mask requires a graphic; alpha doesn't matter for rect mask
+            vpImg.color = Color.white; // Mask requires a graphic; alpha is ignored.
             var mask = viewport.GetComponent<Mask>();
             mask.showMaskGraphic = false;
             var vpRT = viewport.GetComponent<RectTransform>();
@@ -592,25 +544,20 @@ namespace Dreamer.AgentBridge
             vpRT.offsetMax = Vector2.zero;
             vpRT.pivot = new Vector2(0, 1);
 
-            // Content. Anchor depends on direction: when horizontal scrolling is enabled,
-            // Content must be free to grow horizontally beyond Viewport width — so anchor
-            // to top-left point (not stretched). The ContentSizeFitter then sizes Content
-            // to fit children. Vertical-only scrolling can still stretch Content horizontally
-            // (Content.width = Viewport.width), which gives nicer reflow for text columns.
+            // Horizontal scrolling needs Content free to grow past Viewport width — anchor top-left,
+            // size via fitter. Vertical-only stretches Content horizontally for nicer text reflow.
             bool horizontalScroll = direction == "horizontal" || direction == "both";
             var content = new GameObject("Content", typeof(RectTransform));
             content.transform.SetParent(viewport.transform, false);
             var contentRT = content.GetComponent<RectTransform>();
             if (horizontalScroll)
             {
-                // Top-left fixed: free to grow in both axes via ContentSizeFitter.
                 contentRT.anchorMin = new Vector2(0, 1);
                 contentRT.anchorMax = new Vector2(0, 1);
                 contentRT.pivot = new Vector2(0, 1);
             }
             else
             {
-                // Top-stretched: width matches Viewport, height grows via fitter.
                 contentRT.anchorMin = new Vector2(0, 1);
                 contentRT.anchorMax = new Vector2(1, 1);
                 contentRT.pivot = new Vector2(0, 1);
@@ -618,19 +565,13 @@ namespace Dreamer.AgentBridge
             contentRT.sizeDelta = new Vector2(0, 0);
             contentRT.anchoredPosition = Vector2.zero;
 
-            // Layout group + content-size-fitter on Content. Direct-GameObject API to
-            // dodge path-based parent lookups (unnecessary indirection when we already
-            // have the reference, and a source of ambiguity when siblings share names).
             var layoutArgs = new Dictionary<string, object> { ["fitContent"] = true };
             if (args.TryGetValue("spacing", out object sp)) layoutArgs["spacing"] = sp;
             if (args.TryGetValue("padding", out object pad)) layoutArgs["padding"] = pad;
             AttachLayoutGroup(content, contentLayout, layoutArgs);
 
-            // For horizontal/both scrolling: also force horizontalFit on the ContentSizeFitter
-            // so Content can grow past the Viewport width. AttachLayoutGroup's fitContent only
-            // sets horizontalFit when the LAYOUT direction is horizontal/grid — but a both-
-            // scrolling list with a vertical layout still needs horizontal fit for the children
-            // to push Content wider than the Viewport.
+            // AttachLayoutGroup's fitContent only sets horizontalFit when layout is horizontal/grid.
+            // A both-scrolling list with vertical layout still needs horizontalFit so children can push Content past Viewport width.
             if (horizontalScroll)
             {
                 var fitter = content.GetComponent<ContentSizeFitter>();
@@ -640,7 +581,6 @@ namespace Dreamer.AgentBridge
                     fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
             }
 
-            // Wire up ScrollRect
             scroll.viewport = vpRT;
             scroll.content = contentRT;
             switch (direction)
@@ -651,13 +591,9 @@ namespace Dreamer.AgentBridge
             }
             scroll.movementType = ScrollRect.MovementType.Elastic;
 
-            // Optional: attach MapPanZoom for runtime mouse-wheel zoom. Pan is already
-            // handled by ScrollRect's built-in drag — this just adds the missing zoom.
-            // Also zero the ScrollRect's scrollSensitivity so the wheel only zooms (via
-            // MapPanZoom's IScrollHandler) and doesn't simultaneously scroll the content.
-            // Set here at build time so the serialized scene reflects the change — relying
-            // on MapPanZoom.Awake() alone leaves the scene asset showing scrollSensitivity=1
-            // even though the runtime value gets zeroed.
+            // Zero scrollSensitivity at build time (not just MapPanZoom.Awake) so the serialized
+            // scene asset reflects the change — otherwise the asset shows sensitivity=1 even
+            // though the runtime value gets zeroed, confusing diffs/inspect.
             if (SimpleJson.GetBool(args, "mapPanZoom", false))
             {
                 root.AddComponent<Dreamer.AgentBridge.UGUI.MapPanZoom>();
@@ -691,7 +627,6 @@ namespace Dreamer.AgentBridge
             var root = new GameObject(name, typeof(RectTransform), typeof(Slider));
             if (parent != null) root.transform.SetParent(parent, false);
 
-            // Background
             var bg = new GameObject("Background", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
             bg.transform.SetParent(root.transform, false);
             var bgRT = bg.GetComponent<RectTransform>();
@@ -699,7 +634,6 @@ namespace Dreamer.AgentBridge
             bgRT.offsetMin = Vector2.zero; bgRT.offsetMax = Vector2.zero;
             bg.GetComponent<Image>().color = new Color(0.7f, 0.7f, 0.7f, 1f);
 
-            // Fill Area + Fill
             var fillArea = new GameObject("Fill Area", typeof(RectTransform));
             fillArea.transform.SetParent(root.transform, false);
             var faRT = fillArea.GetComponent<RectTransform>();
@@ -713,7 +647,6 @@ namespace Dreamer.AgentBridge
             fillRT.offsetMin = Vector2.zero; fillRT.offsetMax = Vector2.zero;
             fill.GetComponent<Image>().color = new Color(0.3f, 0.5f, 0.9f, 1f);
 
-            // Handle Slide Area + Handle
             var handleArea = new GameObject("Handle Slide Area", typeof(RectTransform));
             handleArea.transform.SetParent(root.transform, false);
             var haRT = handleArea.GetComponent<RectTransform>();
@@ -767,7 +700,6 @@ namespace Dreamer.AgentBridge
             var root = new GameObject(name, typeof(RectTransform), typeof(Toggle));
             if (parent != null) root.transform.SetParent(parent, false);
 
-            // Background box on the left
             var bg = new GameObject("Background", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
             bg.transform.SetParent(root.transform, false);
             var bgRT = bg.GetComponent<RectTransform>();
@@ -777,7 +709,6 @@ namespace Dreamer.AgentBridge
             bgRT.anchoredPosition = new Vector2(0, 0);
             bg.GetComponent<Image>().color = Color.white;
 
-            // Checkmark
             var check = new GameObject("Checkmark", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
             check.transform.SetParent(bg.transform, false);
             var cRT = check.GetComponent<RectTransform>();
@@ -785,12 +716,10 @@ namespace Dreamer.AgentBridge
             cRT.offsetMin = new Vector2(2, 2); cRT.offsetMax = new Vector2(-2, -2);
             check.GetComponent<Image>().color = new Color(0.2f, 0.6f, 1f, 1f);
 
-            // Label to the right of the box — only when the caller explicitly set
-            // a non-empty `label`. Previously we defaulted to "Toggle", which broke
-            // the common pattern of an externally-positioned label next to a
-            // checkbox-only Toggle (size [28, 28]): the internal Label would
-            // stretch-fill the 28px-wide toggle minus the 25px checkbox offset =
-            // 3px of visible width with the default text "Toggle" jammed into it.
+            // Only emit the internal label when caller passes a non-empty `label`. Defaulting to
+            // "Toggle" broke checkbox-only toggles (size [28,28]): the label stretch-filled into
+            // the 3px between the 25px checkbox offset and the 28px toggle width, jamming "Toggle"
+            // into a sliver. Callers who want an external label position it as a sibling.
             string label = SimpleJson.GetString(args, "label", "");
             if (!string.IsNullOrEmpty(label))
             {
@@ -810,7 +739,6 @@ namespace Dreamer.AgentBridge
 
             if (!args.ContainsKey("size"))
             {
-                // Default: just the checkbox when no label; label-width room when there is one.
                 var rt = root.GetComponent<RectTransform>();
                 rt.sizeDelta = string.IsNullOrEmpty(label) ? new Vector2(20, 20) : new Vector2(160, 20);
             }
@@ -849,16 +777,14 @@ namespace Dreamer.AgentBridge
             if (uiSprite != null) { bgImg.sprite = uiSprite; bgImg.type = Image.Type.Sliced; }
 
 #if DREAMER_HAS_TMP
-            // TMP_InputField requires a Text Area child that owns the Mask/viewport,
-            // with the TMP_Text as a child of that. This is the structure Unity
-            // generates via GameObject > UI > Input Field - TextMeshPro.
+            // TMP_InputField requires a Text Area child owning the Mask/viewport with TMP_Text as its
+            // child — matches Unity's GameObject > UI > Input Field - TextMeshPro structure.
             var textArea = new GameObject("Text Area", typeof(RectTransform), typeof(RectMask2D));
             textArea.transform.SetParent(root.transform, false);
             var taRT = textArea.GetComponent<RectTransform>();
             taRT.anchorMin = Vector2.zero; taRT.anchorMax = Vector2.one;
             taRT.offsetMin = new Vector2(10, 6); taRT.offsetMax = new Vector2(-10, -7);
 
-            // Placeholder (TMP)
             var phGo = new GameObject("Placeholder", typeof(RectTransform));
             phGo.transform.SetParent(textArea.transform, false);
             var phTmp = phGo.AddComponent<TextMeshProUGUI>();
@@ -872,7 +798,6 @@ namespace Dreamer.AgentBridge
             phRT.anchorMin = Vector2.zero; phRT.anchorMax = Vector2.one;
             phRT.offsetMin = Vector2.zero; phRT.offsetMax = Vector2.zero;
 
-            // Typed text (TMP)
             var textGo = new GameObject("Text", typeof(RectTransform));
             textGo.transform.SetParent(textArea.transform, false);
             var textTmp = textGo.AddComponent<TextMeshProUGUI>();
@@ -893,7 +818,6 @@ namespace Dreamer.AgentBridge
             input.placeholder = phTmp;
             input.text = initialText;
 #else
-            // Placeholder (legacy)
             var phGo = new GameObject("Placeholder", typeof(RectTransform));
             phGo.transform.SetParent(root.transform, false);
             UIHelpers.AddTextComponent(phGo, placeholder, 14f, new Color(0.5f, 0.5f, 0.5f, 0.6f), "middle-left", out _);
@@ -901,7 +825,6 @@ namespace Dreamer.AgentBridge
             phRT.anchorMin = Vector2.zero; phRT.anchorMax = Vector2.one;
             phRT.offsetMin = new Vector2(10, 6); phRT.offsetMax = new Vector2(-10, -7);
 
-            // Typed text (legacy)
             var textGo = new GameObject("Text", typeof(RectTransform));
             textGo.transform.SetParent(root.transform, false);
             UIHelpers.AddTextComponent(textGo, initialText, 14f, Color.black, "middle-left", out _);
@@ -927,13 +850,8 @@ namespace Dreamer.AgentBridge
         }
 
 #if !DREAMER_HAS_TMP
-        /// <summary>
-        /// Force-add a legacy UnityEngine.UI.Text component (NOT TMP). Used by the
-        /// legacy fallback paths for Dropdown and InputField when TMP isn't
-        /// available — those widgets' captionText/textComponent properties are
-        /// typed <c>Text</c> and NRE at runtime if handed a TMP component.
-        /// Only compiled when DREAMER_HAS_TMP is undefined.
-        /// </summary>
+        // Force legacy Text (NOT TMP) for Dropdown/InputField legacy fallbacks — their captionText/
+        // textComponent properties are typed `Text` and NRE at runtime if handed a TMP component.
         static Text AddLegacyText(GameObject go, string text, float fontSize, Color color, TextAnchor alignment)
         {
             var t = go.AddComponent<Text>();
@@ -969,10 +887,8 @@ namespace Dreamer.AgentBridge
             float itemFontSize    = SimpleJson.GetFloat(args, "itemFontSize",    14f);
 
 #if DREAMER_HAS_TMP
-            // Root: Image bg + TMP_Dropdown
             var root = new GameObject(name, typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(TMP_Dropdown));
 #else
-            // Root: Image bg + legacy Dropdown
             var root = new GameObject(name, typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(Dropdown));
 #endif
             if (parent != null) root.transform.SetParent(parent, false);
@@ -981,9 +897,7 @@ namespace Dreamer.AgentBridge
             var uiBg = AssetDatabase.GetBuiltinExtraResource<Sprite>("UI/Skin/UISprite.psd");
             if (uiBg != null) { bgImg.sprite = uiBg; bgImg.type = Image.Type.Sliced; }
 
-            // Caption (currently-selected label). Type depends on dropdown variant:
-            // TMP_Dropdown.captionText requires TMP_Text; legacy Dropdown.captionText
-            // requires legacy UnityEngine.UI.Text (NRE on the wrong type).
+            // Caption: TMP_Dropdown.captionText requires TMP_Text; legacy Dropdown.captionText requires legacy Text (NRE on wrong type).
             var label = new GameObject("Label", typeof(RectTransform));
             label.transform.SetParent(root.transform, false);
 #if DREAMER_HAS_TMP
@@ -1001,7 +915,6 @@ namespace Dreamer.AgentBridge
             lblRT.anchorMin = Vector2.zero; lblRT.anchorMax = Vector2.one;
             lblRT.offsetMin = new Vector2(10, 6); lblRT.offsetMax = new Vector2(-25, -7);
 
-            // Arrow
             var arrow = new GameObject("Arrow", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
             arrow.transform.SetParent(root.transform, false);
             var arrowImg = arrow.GetComponent<Image>();
@@ -1014,7 +927,7 @@ namespace Dreamer.AgentBridge
             arRT.sizeDelta = new Vector2(20, 20);
             arRT.anchoredPosition = new Vector2(-8, 0);
 
-            // Template (popup) — Dropdown needs this to instantiate when opened.
+            // Template: prototype that Dropdown clones when opened.
             var template = new GameObject("Template", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(ScrollRect));
             template.transform.SetParent(root.transform, false);
             template.SetActive(false);
@@ -1027,11 +940,8 @@ namespace Dreamer.AgentBridge
             tRT.anchoredPosition = new Vector2(0, 2);
             tRT.sizeDelta = new Vector2(0, 150);
 
-            // Template > Viewport (with Mask). Inset by 3px on every side so the
-            // masked content doesn't paint over the rounded corners of the template
-            // background sprite — a 0-inset viewport looked "boxy" at the edges
-            // where the rounded corner should show through. Set pivot BEFORE offsets:
-            // Unity recomputes derived values on each set, so pivot order matters.
+            // 3px inset so the mask doesn't paint over the template sprite's rounded corners.
+            // Set pivot BEFORE offsets — Unity recomputes derived values on each set.
             var vp = new GameObject("Viewport", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(Mask));
             vp.transform.SetParent(template.transform, false);
             var vpImg = vp.GetComponent<Image>();
@@ -1044,7 +954,6 @@ namespace Dreamer.AgentBridge
             vpRT.offsetMin = new Vector2(3, 3);
             vpRT.offsetMax = new Vector2(-3, -3);
 
-            // Template > Viewport > Content
             var contentGo = new GameObject("Content", typeof(RectTransform));
             contentGo.transform.SetParent(vp.transform, false);
             var cRT = contentGo.GetComponent<RectTransform>();
@@ -1052,7 +961,6 @@ namespace Dreamer.AgentBridge
             cRT.pivot = new Vector2(0.5f, 1);
             cRT.sizeDelta = new Vector2(0, 28);
 
-            // Template > Viewport > Content > Item (toggle for each option)
             var item = new GameObject("Item", typeof(RectTransform), typeof(Toggle));
             item.transform.SetParent(contentGo.transform, false);
             var itemRT = item.GetComponent<RectTransform>();
@@ -1060,7 +968,6 @@ namespace Dreamer.AgentBridge
             itemRT.pivot = new Vector2(0.5f, 0.5f);
             itemRT.sizeDelta = new Vector2(0, 20);
 
-            // Item > Background
             var itemBg = new GameObject("Item Background", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
             itemBg.transform.SetParent(item.transform, false);
             var ibImg = itemBg.GetComponent<Image>();
@@ -1069,7 +976,6 @@ namespace Dreamer.AgentBridge
             ibRT.anchorMin = Vector2.zero; ibRT.anchorMax = Vector2.one;
             ibRT.offsetMin = Vector2.zero; ibRT.offsetMax = Vector2.zero;
 
-            // Item > Checkmark (visible when selected)
             var itemCheck = new GameObject("Item Checkmark", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
             itemCheck.transform.SetParent(item.transform, false);
             var icImg = itemCheck.GetComponent<Image>();
@@ -1082,7 +988,7 @@ namespace Dreamer.AgentBridge
             icRT.sizeDelta = new Vector2(20, 20);
             icRT.anchoredPosition = new Vector2(10, 0);
 
-            // Item > Label — same TMP/legacy split as the caption label.
+            // Same TMP/legacy split as the caption label (typed property NRE).
             var itemLabel = new GameObject("Item Label", typeof(RectTransform));
             itemLabel.transform.SetParent(item.transform, false);
 #if DREAMER_HAS_TMP
@@ -1105,11 +1011,7 @@ namespace Dreamer.AgentBridge
             toggle.graphic = icImg;
             toggle.isOn = true;
 
-            // Template > Scrollbar (vertical) — Dropdown wires this if present.
-            // Skip for simplicity; Dropdown still works without it (just no scrollbar visible
-            // when the option list overflows the popup height).
-
-            // Wire ScrollRect on Template
+            // No Template Scrollbar — Dropdown still works without it (just no scrollbar visible on overflow).
             var sr = template.GetComponent<ScrollRect>();
             sr.viewport = vpRT;
             sr.content = cRT;
@@ -1118,7 +1020,6 @@ namespace Dreamer.AgentBridge
             sr.movementType = ScrollRect.MovementType.Clamped;
 
 #if DREAMER_HAS_TMP
-            // Wire TMP_Dropdown
             var dd = root.GetComponent<TMP_Dropdown>();
             dd.template = tRT;
             dd.captionText = labelTmp;
@@ -1141,7 +1042,6 @@ namespace Dreamer.AgentBridge
                 dd.captionText.text = dd.options[dd.value].text;
             }
 #else
-            // Wire legacy Dropdown
             var dd = root.GetComponent<Dropdown>();
             dd.template = tRT;
             dd.captionText = label.GetComponent<Text>();

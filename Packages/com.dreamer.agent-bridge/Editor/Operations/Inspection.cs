@@ -7,14 +7,13 @@ namespace Dreamer.AgentBridge
 {
     public class InspectionOptions
     {
-        // -1 = unlimited (default). 0 = root only. childCount is always reported.
+        // -1 = unlimited; 0 = root only. childCount always reported.
         public int Depth = -1;
         public bool IncludeTransforms;
         public bool IncludeFields;
     }
 
-    // Shared GameObject -> JSON serialiser. Used by inspect_asset, inspect_hierarchy,
-    // inspect_assets so all three produce the same node shape.
+    /// <summary>Shared GameObject → JSON serialiser used by inspect_asset, inspect_hierarchy, inspect_assets so all produce identical node shape.</summary>
     public static class Inspection
     {
         public static string BuildGameObjectInfo(GameObject go, InspectionOptions opts)
@@ -45,7 +44,7 @@ namespace Dreamer.AgentBridge
             var comps = SimpleJson.Array();
             foreach (var comp in go.GetComponents<Component>())
             {
-                if (comp == null) continue; // missing script
+                if (comp == null) continue;
                 var ct = comp.GetType();
                 var compObj = SimpleJson.Object()
                     .Put("type", ct.Name)
@@ -107,7 +106,7 @@ namespace Dreamer.AgentBridge
             return fields.ToString();
         }
 
-        // Serialize a SerializedProperty to a raw JSON value (embed via PutRaw).
+        /// <summary>Serialize a SerializedProperty to a raw JSON value (embed via PutRaw).</summary>
         public static string SerializeValue(SerializedProperty prop)
         {
             if (prop == null) return "null";

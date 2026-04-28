@@ -7,10 +7,7 @@ using UnityEngine.Networking;
 
 namespace Dreamer.AgentBridge
 {
-    /// <summary>
-    /// HTTP client for daemon communication. Uses UnityWebRequest,
-    /// driven from EditorApplication.update.
-    /// </summary>
+    /// <summary>HTTP client for daemon communication via UnityWebRequest, driven from EditorApplication.update.</summary>
     public static class DaemonClient
     {
         const string PrefPort = "AgentBridge_Port";
@@ -24,28 +21,12 @@ namespace Dreamer.AgentBridge
         static int _consecutiveErrors;
         const int ErrorSuppressThreshold = 3;
 
-        // Port cache — refreshed on domain reload (static state resets), which
-        // is when the user most likely changed config. Avoids file I/O on every
-        // HTTP request.
+        // Refreshed on domain reload (when config most likely changed) so HTTP requests don't pay file I/O.
         static int? _cachedConfigPort;
 
         // ── Public API ──
 
-        /// <summary>
-        /// Daemon port. Precedence:
-        ///   DREAMER_PORT env var
-        ///     > shared projects registry (%APPDATA%/Dreamer/projects.json on Windows,
-        ///       $HOME/.dreamer/projects.json on Unix) — owned by the CLI/daemon
-        ///     > legacy daemon/.dreamer-config.json (per-project override)
-        ///     > EditorPrefs (machine-global; last resort)
-        ///     > 18710.
-        ///
-        /// The registry is the preferred source — it stores a {projectPath → port}
-        /// map so multiple Unity editors on the same machine route to distinct
-        /// daemons automatically. If no registry entry exists, HasRegistryEntry
-        /// returns false and the AgentBridge UI hints to run
-        /// `./bin/dreamer status` from the project root to register.
-        /// </summary>
+        /// <summary>Daemon port. Precedence: DREAMER_PORT env > projects registry > daemon/.dreamer-config.json > EditorPrefs > 18710. Registry is the preferred source — it maps project→port so multiple editors on one machine route to distinct daemons.</summary>
         public static int Port
         {
             get
@@ -67,10 +48,7 @@ namespace Dreamer.AgentBridge
         /// <summary>True when the projects registry has an entry for this project.</summary>
         public static bool HasRegistryEntry => ReadRegistryPort() > 0;
 
-        /// <summary>
-        /// Path to the shared registry file (useful for surfacing in the bridge UI
-        /// when the current project isn't registered).
-        /// </summary>
+        /// <summary>Path to the shared registry file.</summary>
         public static string RegistryPath => ProjectRegistry.GetRegistryPath();
 
         static int? _cachedRegistryPort;
@@ -80,11 +58,8 @@ namespace Dreamer.AgentBridge
 
         static int ReadRegistryPort()
         {
-            // File.GetLastWriteTime is cheap but not free; stat at most every
-            // few seconds. If the registry file's mtime changed since the last
-            // read, drop the cache so the next call re-reads — this is how a
-            // `./bin/dreamer registry reassign` takes effect without requiring
-            // a Unity restart.
+            // Stat at most every few seconds; mtime change drops the cache so
+            // `dreamer registry reassign` takes effect without a Unity restart.
             try
             {
                 double now = UnityEditor.EditorApplication.timeSinceStartup;
@@ -116,13 +91,12 @@ namespace Dreamer.AgentBridge
             int result = -1;
             try
             {
-                // Application.dataPath is <project>/Assets — parent is the project root.
                 string projectRoot = System.IO.Path.GetDirectoryName(Application.dataPath);
                 string configPath = System.IO.Path.Combine(projectRoot, "daemon", ".dreamer-config.json");
                 if (System.IO.File.Exists(configPath))
                 {
                     string json = System.IO.File.ReadAllText(configPath);
-                    // Narrow regex — config is machine-written, always simple key:value.
+                    // Config is machine-written, always simple key:value — no need for a real parser.
                     var match = System.Text.RegularExpressions.Regex.Match(json, "\"port\"\\s*:\\s*(\\d+)");
                     if (match.Success && int.TryParse(match.Groups[1].Value, out int p) && p > 0)
                     {
@@ -135,7 +109,7 @@ namespace Dreamer.AgentBridge
             return result;
         }
 
-        /// <summary>Force a re-read of the config + registry ports on next access.</summary>
+        /// <summary>Force re-read of config + registry ports on next access.</summary>
         public static void InvalidatePortCache()
         {
             _cachedConfigPort = null;
@@ -156,10 +130,9 @@ namespace Dreamer.AgentBridge
             }
         }
 
-        /// <summary>Call from EditorApplication.update to pump request queue.</summary>
+        /// <summary>Pump the request queue. Call from EditorApplication.update.</summary>
         public static void Update()
         {
-            // Check completed requests
             for (int i = _inFlight.Count - 1; i >= 0; i--)
             {
                 var req = _inFlight[i];
@@ -199,7 +172,6 @@ namespace Dreamer.AgentBridge
                 req.www.Dispose();
             }
 
-            // Dispatch queued requests
             while (_outgoing.Count > 0 && _inFlight.Count < MaxConcurrentRequests)
             {
                 var q = _outgoing.Dequeue();
@@ -218,7 +190,7 @@ namespace Dreamer.AgentBridge
         /// <summary>Fetch pending commands from daemon.</summary>
         public static void FetchPendingCommands(Action<List<BridgeCommand>> onSuccess, Action<string> onError)
         {
-            if (HasPendingPoll) return; // Don't overlap polls
+            if (HasPendingPoll) return;
 
             Enqueue("poll", () =>
             {
@@ -244,7 +216,6 @@ namespace Dreamer.AgentBridge
                                     kind = SimpleJson.GetString(cmdDict, "kind", ""),
                                     argsJson = ""
                                 };
-                                // Args can be a nested object — re-serialize it
                                 if (cmdDict.TryGetValue("args", out object argsVal))
                                 {
                                     if (argsVal is Dictionary<string, object>)

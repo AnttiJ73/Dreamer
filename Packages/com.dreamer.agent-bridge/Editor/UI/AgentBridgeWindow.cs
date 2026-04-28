@@ -49,7 +49,6 @@ namespace Dreamer.AgentBridge
 
             EditorGUILayout.EndScrollView();
 
-            // Auto-repaint while running
             if (AgentBridgeBootstrap.IsRunning)
                 Repaint();
         }
@@ -66,7 +65,6 @@ namespace Dreamer.AgentBridge
                 AgentBridgeBootstrap.IsEnabled = enabled;
             }
 
-            // Status indicator
             string status = AgentBridgeBootstrap.IsRunning ? "RUNNING" : "STOPPED";
             Color statusColor = AgentBridgeBootstrap.IsRunning ? new Color(0.2f, 0.8f, 0.2f) : Color.gray;
 
@@ -81,7 +79,6 @@ namespace Dreamer.AgentBridge
             EditorGUI.LabelField(rect, $"Status: {status}", style);
             GUI.color = prevColor;
 
-            // Project path (helps debug multi-project setups)
             string projectPath = System.IO.Path.GetDirectoryName(Application.dataPath);
             EditorGUILayout.LabelField("Project", projectPath, EditorStyles.miniLabel);
         }

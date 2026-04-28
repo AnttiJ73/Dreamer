@@ -4,17 +4,14 @@ using UnityEngine;
 
 namespace Dreamer.AgentBridge
 {
-    /// <summary>
-    /// Captures Unity console log entries into a ring buffer.
-    /// Re-registers after every domain reload via Initialize.
-    /// </summary>
+    /// <summary>Captures Unity console log entries into a ring buffer; re-registers after every domain reload via Initialize.</summary>
     public static class ConsoleCapture
     {
         const int BufferSize = 200;
 
         static readonly ConsoleEntry[] _buffer = new ConsoleEntry[BufferSize];
-        static int _head;  // next write position
-        static int _count; // current number of entries
+        static int _head;
+        static int _count;
         static bool _registered;
 
         public static void Initialize()
@@ -33,7 +30,7 @@ namespace Dreamer.AgentBridge
             Application.logMessageReceived -= OnLogMessage;
         }
 
-        /// <summary>Get the most recent N console entries (oldest first).</summary>
+        /// <summary>Most recent N console entries, oldest first.</summary>
         public static ConsoleEntry[] GetEntries(int count)
         {
             int n = Math.Min(count, _count);
@@ -55,9 +52,8 @@ namespace Dreamer.AgentBridge
 
         static void OnLogMessage(string message, string stackTrace, LogType logType)
         {
-            // Skip our own messages to avoid feedback loops. DreamerLog.Tag ("[Dreamer]")
-            // is preserved as plain text inside the rich-text color wrapper, so a
-            // substring match works whether or not color tags are present.
+            // Skip Dreamer's own messages — DreamerLog keeps the tag as plain text inside the
+            // rich-text color wrapper so substring match works regardless of color tags.
             if (message != null && message.Contains(DreamerLog.Tag)) return;
 
             string typeStr;

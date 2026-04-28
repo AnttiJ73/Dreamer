@@ -16,18 +16,10 @@ const createCommandHandlers = require('./handlers/commands');
 const createUnityHandlers = require('./handlers/unity');
 const createStatusHandlers = require('./handlers/status');
 
-// ── Configuration ────────────────────────────────────────────────────────────
-
 const DAEMON_DIR = path.resolve(__dirname, '..');
 const DAEMON_PROJECT_ROOT = path.resolve(DAEMON_DIR, '..');
 const QUEUE_FILE = path.join(DAEMON_DIR, '.dreamer-queue.json');
 const PID_FILE = path.join(DAEMON_DIR, '.dreamer-daemon.pid');
-
-// Logging: log.js auto-detects --daemon and emits JSON lines to
-// .dreamer-daemon.log. In foreground/TTY mode it emits colored human-readable
-// output to stdout. No console.log override needed.
-
-// ── Initialise core components ───────────────────────────────────────────────
 
 const queue = new CommandQueue(QUEUE_FILE);
 queue.load();
@@ -40,12 +32,6 @@ const commandHandlers = createCommandHandlers(queue, scheduler, unityState, asse
 const unityHandlers = createUnityHandlers(queue, unityState, scheduler, assetWatcher);
 const statusHandlers = createStatusHandlers(queue, unityState, assetWatcher, scheduler);
 
-// ── HTTP helpers ─────────────────────────────────────────────────────────────
-
-/**
- * Read the full request body as a string, then parse as JSON.
- * Returns null for empty bodies.
- */
 function readBody(req) {
   return new Promise((resolve, reject) => {
     const chunks = [];
@@ -63,9 +49,6 @@ function readBody(req) {
   });
 }
 
-/**
- * Send a JSON response with CORS headers.
- */
 function sendJSON(res, statusCode, data) {
   const body = JSON.stringify(data);
   res.writeHead(statusCode, {
@@ -77,11 +60,6 @@ function sendJSON(res, statusCode, data) {
   res.end(body);
 }
 
-/**
- * Parse query string from a URL.
- * @param {string} urlStr
- * @returns {{ pathname: string, query: object }}
- */
 function parseURL(urlStr) {
   const parsed = new URL(urlStr, 'http://localhost');
   const query = {};
@@ -89,18 +67,12 @@ function parseURL(urlStr) {
   return { pathname: parsed.pathname, query };
 }
 
-/**
- * Check that the request originates from localhost.
- */
 function isLocalhost(req) {
   const addr = req.socket.remoteAddress;
   return addr === '127.0.0.1' || addr === '::1' || addr === '::ffff:127.0.0.1';
 }
 
-/**
- * Extract a path parameter like :id from a URL pattern.
- * Simple matching: "/api/commands/abc" matches "/api/commands/:id" → id="abc"
- */
+/** Match `pathname` against a `:id`-style pattern, returning the params or null. */
 function matchRoute(pathname, pattern) {
   const pathParts = pathname.split('/').filter(Boolean);
   const patParts = pattern.split('/').filter(Boolean);
@@ -116,16 +88,12 @@ function matchRoute(pathname, pattern) {
   return params;
 }
 
-// ── Route dispatch ───────────────────────────────────────────────────────────
-
 async function handleRequest(req, res) {
-  // CORS preflight
   if (req.method === 'OPTIONS') {
     sendJSON(res, 204, null);
     return;
   }
 
-  // Localhost only
   if (!isLocalhost(req)) {
     sendJSON(res, 403, { error: 'Forbidden: only localhost connections allowed' });
     return;
@@ -137,7 +105,6 @@ async function handleRequest(req, res) {
   try {
     let result;
 
-    // ── Command routes ────────────────────────────────────────────────
     if (method === 'POST' && pathname === '/api/commands') {
       const body = await readBody(req);
       result = await commandHandlers.submit(body);
@@ -153,7 +120,6 @@ async function handleRequest(req, res) {
       const { id } = matchRoute(pathname, '/api/commands/:id');
       result = await commandHandlers.cancel(id);
 
-    // ── Unity routes ──────────────────────────────────────────────────
     } else if (method === 'GET' && pathname === '/api/unity/pending') {
       result = await unityHandlers.pending();
 
@@ -169,7 +135,6 @@ async function handleRequest(req, res) {
       const body = await readBody(req);
       result = await unityHandlers.heartbeat(body);
 
-    // ── Status routes ─────────────────────────────────────────────────
     } else if (method === 'GET' && pathname === '/api/status') {
       result = await statusHandlers.status();
 
@@ -182,7 +147,6 @@ async function handleRequest(req, res) {
     } else if (method === 'GET' && pathname === '/api/activity') {
       result = await statusHandlers.activity(query);
 
-    // ── Shutdown (daemon management) ──────────────────────────────────
     } else if (method === 'POST' && pathname === '/api/shutdown') {
       sendJSON(res, 200, { ok: true, message: 'Shutting down' });
       shutdown();
@@ -200,8 +164,6 @@ async function handleRequest(req, res) {
   }
 }
 
-// ── Server lifecycle ─────────────────────────────────────────────────────────
-
 const server = http.createServer(handleRequest);
 
 function shutdown() {
@@ -214,7 +176,6 @@ function shutdown() {
     projectRegistry.updateEntry(DAEMON_PROJECT_ROOT, { daemonPid: null });
   } catch { /* ignore */ }
 
-  // Remove PID file
   try {
     if (fs.existsSync(PID_FILE)) fs.unlinkSync(PID_FILE);
   } catch { /* ignore */ }
@@ -224,16 +185,12 @@ function shutdown() {
     process.exit(0);
   });
 
-  // Force exit after 5s if graceful close stalls
   setTimeout(() => process.exit(0), 5000).unref();
 }
 
 process.on('SIGTERM', shutdown);
 process.on('SIGINT', shutdown);
 
-// Resolve port from the per-project registry (auto-allocates on first run),
-// then bind. Registry entry is updated with this process's PID on success so
-// other CLI/UI surfaces can correlate the running daemon with its project.
 (async () => {
   let port;
   let registryEntry = null;
@@ -260,7 +217,6 @@ process.on('SIGINT', shutdown);
   server.listen(port, '0.0.0.0', () => {
     log.info(`Listening on 0.0.0.0:${port}`);
 
-    // Update registry with our PID + start time so CLIs can sanity-check liveness.
     try {
       projectRegistry.updateEntry(DAEMON_PROJECT_ROOT, {
         daemonPid: process.pid,
@@ -270,14 +226,13 @@ process.on('SIGINT', shutdown);
       log.warn(`Failed to update registry: ${err.message}`);
     }
 
-    // Write local PID file (legacy, still used by daemon-manager liveness checks).
+    // Legacy PID file — still used by daemon-manager liveness checks.
     try {
       fs.writeFileSync(PID_FILE, String(process.pid), 'utf8');
     } catch (err) {
       log.error(`Failed to write PID file: ${err.message}`);
     }
 
-    // Start the scheduler
     scheduler.start();
     log.info('Scheduler started');
   });

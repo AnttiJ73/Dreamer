@@ -3,12 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 
-/**
- * Absolute path to daemon/.dreamer-source.json — the install-time marker that
- * records repo URL, ref, SHA, and installed add-ons. Used by both `update` and
- * `addon install/remove`. Module-scoped so every handler can read it without
- * redefining.
- */
+// Install-time marker recording repo URL/ref/SHA/installed add-ons. Read by both `update` and `addon`.
 const SOURCE_PATH = path.join(path.resolve(__dirname, '..'), '.dreamer-source.json');
 const { ensureDaemon, isDaemonRunning, startDaemon, stopDaemon, httpRequest, focusUnity } = require('./daemon-manager');
 const configModule = require('./config');
@@ -36,12 +31,7 @@ function fail(message) {
   process.exit(1);
 }
 
-/**
- * One-line (occasionally two-line) humanized summary of /api/status. Used as
- * the default `dreamer status` output — the raw JSON is still available via
- * `--json`. Priority: bad news (disconnected / stuck / compile errors) first,
- * healthy state last.
- */
+/** Humanized 1-2 line summary of /api/status — bad news first, healthy state last. */
 function summarizeStatus(data) {
   if (!data || typeof data !== 'object') return 'PROBLEM: malformed status response';
   const d = data.daemon || {};
@@ -52,7 +42,6 @@ function summarizeStatus(data) {
   const parts = [];
   let verdict = 'OK';
 
-  // Connection check
   if (!u.connected) {
     verdict = 'PROBLEM';
     const age = u.lastHeartbeatAge && u.lastHeartbeatAge.ageHuman;
@@ -64,7 +53,6 @@ function summarizeStatus(data) {
     else if (u.lastCompileSuccess) parts.push(`last compile ${u.lastCompileSuccessAge.ageHuman}`);
   }
 
-  // Queue health
   const nonTerminal = (q.queued || 0) + (q.waiting || 0) + (q.running || 0) + (q.dispatched || 0);
   if (nonTerminal === 0) {
     parts.push(`${q.total || 0} total / 0 in flight`);
@@ -74,7 +62,6 @@ function summarizeStatus(data) {
     parts.push(`${nonTerminal} in flight${stuck.length ? ` (${stuck.length} stuck > 1m)` : ''}`);
   }
 
-  // Scheduler liveness
   if (s && s.lastTickAge && s.lastTickAge.ageMs > (s.tickIntervalMs || 200) * 10) {
     verdict = 'PROBLEM';
     parts.push(`scheduler frozen ${s.lastTickAge.ageHuman}`);
@@ -84,7 +71,6 @@ function summarizeStatus(data) {
 
   let line = `${verdict}: ${parts.join(', ')}.`;
 
-  // Append stuck-command detail (worst offender) when applicable.
   if (verdict === 'PROBLEM' && q.active && q.active.length) {
     const worst = q.active.slice().sort((a, b) => (b.sinceUpdateMs || 0) - (a.sinceUpdateMs || 0))[0];
     if (worst) {
@@ -94,12 +80,7 @@ function summarizeStatus(data) {
   return line;
 }
 
-/**
- * Parse CLI flags from argv into a simple map.
- * Handles: --flag value, --flag=value, --bool-flag (no value → true)
- * @param {string[]} argv
- * @returns {{ positional: string[], flags: object }}
- */
+/** Parse argv: handles --flag value, --flag=value, --bool-flag (no value → true). */
 function parseArgs(argv) {
   const positional = [];
   const flags = {};
@@ -127,25 +108,13 @@ function parseArgs(argv) {
   return { positional, flags };
 }
 
-/**
- * Git-Bash on Windows silently rewrites absolute paths: `/Foo` becomes
- * `C:/Program Files/Git/Foo` (MSYS MSYS2_ARG_CONV_EXCL). This bites
- * scene-object paths constantly — `--scene-object /MainMenuCanvas` turns
- * into `--scene-object C:/Program Files/Git/MainMenuCanvas`, which the
- * daemon then can't find and reports as a mysterious "not found".
- *
- * We detect the translated form for flags that conventionally carry scene
- * paths and warn the user with a concrete remedy. We don't auto-fix because
- * there's a legitimate (rare) case where the user really does want to
- * reference something under `C:/Program Files/Git/…`.
- */
+// Git-Bash on Windows silently rewrites leading-slash paths via MSYS_ARG_CONV_EXCL:
+// `--scene-object /MainMenuCanvas` becomes `C:/Program Files/Git/MainMenuCanvas`,
+// which the daemon then reports as a mysterious "not found". Detect and auto-correct.
 const SCENE_PATH_FLAGS = new Set(['scene-object', 'parent', 'parent-path']);
 function maybeDetectGitBashPath(flagName, value) {
   if (typeof value !== 'string') return value;
   if (!SCENE_PATH_FLAGS.has(flagName)) return value;
-  // Git-Bash rewrites leading '/X' to 'C:/Program Files/Git/X'. Detect AND
-  // auto-correct so the command actually works — previously we only warned,
-  // letting the broken path reach Unity for a mysterious "not found".
   const translated = /^([A-Za-z]:[\\/]Program Files[\\/]Git[\\/])(.+)$/i;
   const m = value.match(translated);
   if (m) {
@@ -160,67 +129,44 @@ function maybeDetectGitBashPath(flagName, value) {
   return value;
 }
 
-/**
- * Submit a command to the daemon and optionally wait for completion.
- * @param {string} kind
- * @param {object} args
- * @param {object} flags - CLI flags (may contain --wait, --priority, etc.)
- * @returns {Promise<void>}
- */
-// How long a --wait command may sit without progressing to a terminal state
-// before we conclude Unity's main thread is frozen and focus-steal to unstick
-// it. Only applies in smart mode. Override per-invocation with --focus-after,
-// or globally via config.focusStallMs.
+// In smart mode, how long a --wait command may sit before we conclude Unity's
+// main thread is frozen and focus-steal to unstick it. Override via --focus-after
+// or config.focusStallMs.
 const DEFAULT_FOCUS_STALL_MS = 5000;
 
 const TERMINAL_STATES = new Set(['succeeded', 'failed', 'blocked', 'cancelled']);
 
-/**
- * Detect error messages that usually mean "Unity hasn't imported recent .cs
- * changes" rather than "user typoed". These appear when an agent writes a
- * script directly (bypassing `./bin/dreamer create-script`) and then tries to
- * use the new type/property before Unity auto-imports or the CLI triggers
- * `refresh-assets`. We enrich the error with a specific remediation hint.
- */
+/** True for errors that signal "Unity hasn't imported recent .cs" rather than user typo. */
 function isStaleAssetError(errorMsg) {
   if (!errorMsg || typeof errorMsg !== 'string') return false;
   return /^Type not found:/i.test(errorMsg)
       || /^Property '.+' not found on/i.test(errorMsg);
 }
 
-/**
- * Auto-prepend a refresh-assets when a compile-gated command is about to
- * submit and the asset watcher has seen .cs changes since the last refresh.
- * This lets direct-write workflows (agent writes .cs via its native Write
- * tool, then calls add-component) Just Work without a manual refresh step.
- *
- * Opt-out: --no-refresh flag, or config.autoRefresh === false.
- */
+/** Auto-prepend refresh-assets before a compile-gated command if the watcher's dirty. */
 async function maybeAutoRefreshAssets(kind, flags) {
   if (flags['no-refresh'] === true) return;
   if (config.autoRefresh === false) return;
   const def = KIND_DEFS[kind];
   if (!def || !def.requirements || def.requirements.compilation !== true) return;
-  if (kind === 'refresh_assets') return; // don't recurse
+  if (kind === 'refresh_assets') return;
 
   let statusResp;
   try {
     statusResp = await httpRequest('GET', '/api/status');
-  } catch { return; /* daemon not reachable, let submit fail naturally */ }
+  } catch { return; /* daemon not reachable; let submit fail naturally */ }
   const dirty = statusResp && statusResp.data && statusResp.data.assets && statusResp.data.assets.dirty;
   if (!dirty) return;
 
-  // Issue a synchronous refresh. We use the daemon API directly (not a
-  // recursive submitCommand) so we don't double-focus or re-enter this path.
+  // Use the API directly, not submitCommand — avoids double-focus / re-entering this path.
   const refreshResp = await httpRequest('POST', '/api/commands', {
     kind: 'refresh_assets',
     args: {},
     options: { humanLabel: 'Auto-refresh (stale asset DB)' },
   });
-  if (refreshResp.status >= 400) return; // best-effort; surface the original failure later if needed
+  if (refreshResp.status >= 400) return;
   const refreshId = refreshResp.data.id;
 
-  // Poll until the refresh completes or we hit a reasonable timeout.
   const deadline = Date.now() + 15000;
   while (Date.now() < deadline) {
     await sleep(250);
@@ -249,10 +195,7 @@ async function submitCommand(kind, args, flags = {}) {
 
   const resp = await httpRequest('POST', '/api/commands', { kind, args, options });
   if (resp.status >= 400) {
-    // Compose a richer message when the daemon includes source/hint/details.
-    // Pre-existing 400 responses just had {error}; new ones may add
-    // source: "daemon" + hint + details (e.g. for "Unknown command kind"
-    // rejections that need a daemon restart hint). Surface the lot.
+    // Surface daemon-supplied source/hint/details in addition to the bare error.
     const e = (resp.data && resp.data.error) || `HTTP ${resp.status}`;
     const parts = [e];
     if (resp.data && resp.data.source) parts.push(`(source: ${resp.data.source})`);
@@ -266,12 +209,11 @@ async function submitCommand(kind, args, flags = {}) {
   const cmd = resp.data;
 
   if (flags.wait) {
-    // Poll until terminal state. In smart mode (the default), Unity's main
-    // thread can freeze entirely when the window is unfocused — not "tick
-    // slowly", just stop. If the command hasn't reached a terminal state after
-    // the stall window, focus Unity once to unstick it.
-    const pollInterval = 500; // ms
-    const timeout = parseInt(flags['wait-timeout'], 10) || 120000; // 2 min default
+    // In smart mode, Unity's main thread fully halts when unfocused (not
+    // slow — stopped). If we don't hit terminal within the stall window,
+    // focus once to unstick it.
+    const pollInterval = 500;
+    const timeout = parseInt(flags['wait-timeout'], 10) || 120000;
     const stallMs = focusPolicy.shouldFallbackFocus(flags, config, focusedUpfront)
       ? (parseInt(flags['focus-after'], 10) || config.focusStallMs || DEFAULT_FOCUS_STALL_MS)
       : Infinity;
@@ -282,8 +224,6 @@ async function submitCommand(kind, args, flags = {}) {
     while (Date.now() < deadline) {
       await sleep(pollInterval);
 
-      // Fallback focus: Unity has almost certainly stopped ticking if a
-      // dispatched command hasn't transitioned to terminal in this many ms.
       if (!hasFallbackFocused && (Date.now() - start) >= stallMs) {
         hasFallbackFocused = true;
         await focusUnity();
@@ -291,9 +231,8 @@ async function submitCommand(kind, args, flags = {}) {
 
       const check = await httpRequest('GET', `/api/commands/${cmd.id}`);
       if (check.status === 404) {
-        // Command vanished — most commonly, the daemon restarted since we
-        // submitted. Compare daemon uptime against command age to confirm
-        // and give the user an actionable error instead of a raw 404.
+        // Most commonly: the daemon restarted since submit. Compare uptime
+        // vs command age to confirm and give an actionable error vs raw 404.
         const stat = await httpRequest('GET', '/api/status').catch(() => null);
         const uptimeMs = stat && stat.data && stat.data.daemon && (stat.data.daemon.uptime * 1000);
         const cmdAgeMs = Date.now() - Date.parse(cmd.createdAt);
@@ -315,9 +254,8 @@ async function submitCommand(kind, args, flags = {}) {
       }
       const current = check.data;
       if (TERMINAL_STATES.has(current.state)) {
-        // Enrich the most common confusing failure mode: "Type not found"
-        // / "Property not found" usually means the agent wrote .cs files
-        // directly and skipped refresh-assets, not that they typoed.
+        // "Type not found" / "Property not found" almost always means the agent
+        // wrote .cs directly and skipped refresh-assets, not that they typoed.
         if (current.state === 'failed' && current.error && isStaleAssetError(current.error)) {
           process.stderr.write(JSON.stringify({
             error: current.error,
@@ -327,9 +265,7 @@ async function submitCommand(kind, args, flags = {}) {
           }, null, 2) + '\n');
           process.exit(1);
         }
-        // UGUI add-on not installed: the bridge doesn't have handlers for
-        // create_ui_tree / inspect_ui_tree / set_rect_transform. Point the
-        // caller at the add-on install prompt instead of the generic error.
+        // UGUI add-on missing — point at the install prompt vs the generic error.
         if (current.state === 'failed'
             && current.error
             && /^Unknown command kind:\s*(create_ui_tree|inspect_ui_tree|set_rect_transform)/.test(current.error)) {
@@ -345,10 +281,7 @@ async function submitCommand(kind, args, flags = {}) {
         return;
       }
 
-      // Short-circuit on dead-wait conditions — situations where polling
-      // will never succeed without external intervention. Fetch extra
-      // context (compile errors) and surface a clear, non-zero failure
-      // instead of letting the user wait out the timeout.
+      // Short-circuit dead-wait — polling can't succeed without external action.
       if (current.state === 'waiting' && current.waitingReason === 'Compile errors present') {
         const cs = await httpRequest('GET', '/api/compile-status').catch(() => null);
         const errors = (cs && cs.data && cs.data.errors) || [];
@@ -373,9 +306,8 @@ function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-// Diff old vs. new CHANGELOG.md content. Returns the headings + bullets that
-// appear in `new` but not in `old`. Used by `./bin/dreamer update` so the
-// agent can list new entries to the user after pulling the latest version.
+// Returns headings + bullets present in new CHANGELOG.md but not in old.
+// `update` exposes these so the agent can read changes back to the user.
 function computeChangelogDiff(oldText, newPath) {
   let newText = null;
   try { newText = require('fs').readFileSync(newPath, 'utf8'); } catch { return null; }
@@ -395,10 +327,7 @@ function computeChangelogDiff(oldText, newPath) {
 
 // ── Command routing ──────────────────────────────────────────────────────────
 
-/**
- * Main CLI dispatch.
- * @param {string[]} argv - process.argv.slice(2)
- */
+/** Main CLI dispatch — argv is process.argv.slice(2). */
 async function run(argv) {
   const { positional, flags } = parseArgs(argv);
   const command = positional[0];
@@ -588,8 +517,8 @@ async function run(argv) {
       case 'create-script': {
         let csName = flags.name;
         let csPath = flags.path || null;
-        // Tolerate users passing a full file path in --path (e.g. "Assets/Scripts/Foo/Bar.cs").
-        // Split into parent folder + class name; reject if --name disagrees.
+        // Accept full file path in --path (e.g. "Assets/Scripts/Foo/Bar.cs") —
+        // split into parent folder + class name; reject if --name disagrees.
         if (csPath && /\.cs$/i.test(csPath)) {
           const norm = csPath.replace(/\\/g, '/').replace(/\/+$/, '');
           const slash = norm.lastIndexOf('/');
@@ -668,7 +597,6 @@ async function run(argv) {
         try {
           value = JSON.parse(flags.value);
         } catch {
-          // Treat as raw string
           value = flags.value;
         }
         const spArgs = {
@@ -1181,11 +1109,10 @@ async function run(argv) {
       }
 
       case 'reparent': {
-        // Two modes:
-        //   Scene  : --scene-object PATH [--new-parent PATH]
-        //   Prefab : --asset PATH --child-path SOURCE [--new-parent PARENT_REL]
-        // In prefab mode --new-parent is interpreted RELATIVE TO THE PREFAB ROOT
-        // (matching --child-path's existing semantics elsewhere). Omit for prefab root.
+        // Scene mode:  --scene-object PATH [--new-parent PATH]
+        // Prefab mode: --asset PATH --child-path SOURCE [--new-parent PARENT_REL]
+        // In prefab mode --new-parent is RELATIVE TO PREFAB ROOT (per --child-path
+        // semantics). Omit for prefab root.
         const rpArgs = {};
         if (flags['scene-object']) {
           rpArgs.sceneObjectPath = flags['scene-object'];
@@ -1252,8 +1179,7 @@ async function run(argv) {
 
       case 'reimport-script':
       case 'reimport-scripts': {
-        // Accept both spellings — "reimport-script" reads better with --path pointing
-        // at a single .cs file; "reimport-scripts" reads better with a folder.
+        // Both spellings — "-script" reads better for a single file, "-scripts" for a folder.
         if (!flags.path && !flags.asset) {
           fail('--path FILE_OR_FOLDER (or --asset PATH) is required for reimport-script');
         }
@@ -1292,16 +1218,15 @@ async function run(argv) {
 
         if (flags.keyword) {
           mpArgs.keyword = flags.keyword;
-          // --enable true/false, default true
+          // --enable defaults true; explicit "false" disables.
           mpArgs.enable = flags.enable !== 'false' && flags.enable !== false;
         } else {
           mpArgs.property = flags.property;
           if (flags.value === undefined) fail('--value is required when setting a material property');
-          // Value is JSON (or a bare primitive for Float/Int). Same convention as set-property.
           try {
             mpArgs.value = typeof flags.value === 'string' ? JSON.parse(flags.value) : flags.value;
           } catch {
-            // Not valid JSON — pass through as-is (float/int via string, texture-as-path, etc.)
+            // Not JSON — pass through as-is for float/int strings, texture paths, etc.
             mpArgs.value = flags.value;
           }
         }
@@ -1346,10 +1271,8 @@ async function run(argv) {
       }
 
       // ── UGUI add-on — three public commands ──────────────────────────
-      // Requires the `com.dreamer.agent-bridge.ugui` package to be installed
-      // alongside the core bridge. Without it, Unity will reject these
-      // commands as "Unknown command kind" and the daemon hint points the
-      // caller at the add-on install prompt.
+      // Requires com.dreamer.agent-bridge.ugui. Missing → "Unknown command kind"
+      // from Unity; daemon hint surfaces the add-on install prompt.
 
       case 'set-rect-transform': {
         const rtArgs = {};
@@ -1417,10 +1340,9 @@ async function run(argv) {
         } else {
           const resp = await httpRequest('GET', '/api/status');
           if (resp.status >= 400) fail(resp.data.error || `HTTP ${resp.status}`);
-          // Default output is a one-line humanized summary because the raw
-          // JSON is ~100 lines for a healthy state and the user's primary
-          // question is usually "is anything wrong?". Use --json for the
-          // raw payload, --verbose for both summary + JSON.
+          // Default to humanized 1-line summary — raw JSON is ~100 lines
+          // for healthy state and the user's question is usually "anything wrong?"
+          // --json for raw, --verbose for summary + JSON.
           if (flags.json) {
             out(resp.data);
           } else {
@@ -1446,10 +1368,9 @@ async function run(argv) {
         const resp = await httpRequest('GET', `/api/commands${qs ? '?' + qs : ''}`);
         if (resp.status >= 400) fail(resp.data.error || `HTTP ${resp.status}`);
 
-        // Default view: non-terminal commands + the 5 most recent terminal
-        // ones. This matches what the user asks 90% of the time ("what's
-        // stuck, what just finished?") without drowning them in history.
-        // --all forces the full list; --state/--task already narrow by themselves.
+        // Default view: non-terminal + 5 most recent terminal — matches the
+        // common "what's stuck, what just finished?" without dumping history.
+        // --all overrides; --state/--task already narrow.
         const explicitFilter = flags.state || flags.task || flags.all || flags.limit;
         if (explicitFilter || flags.json) {
           out(resp.data);
@@ -1493,8 +1414,7 @@ async function run(argv) {
 
       case 'activity': {
         await ensureDaemon();
-        // Build query string from optional flags: --limit N, --since DURATION, --state X.
-        // --since accepts bare ms, or "Ns"/"Nm"/"Nh" for the common conversational durations.
+        // --since accepts bare ms or "Ns"/"Nm"/"Nh" shorthand.
         const params = [];
         const limit = parseInt(flags.limit, 10);
         if (Number.isFinite(limit) && limit > 0) params.push(`limit=${limit}`);
@@ -1569,10 +1489,8 @@ async function run(argv) {
           }
 
           case 'prune': {
-            // Drop entries whose projectPath no longer exists on disk. The
-            // registry holds absolute paths; a missing directory strongly
-            // implies the Unity project was deleted or renamed, and the port
-            // allocation is effectively garbage.
+            // Drop entries whose absolute projectPath no longer exists — port
+            // allocation is garbage if the Unity project was deleted or renamed.
             const before = registry.listEntries();
             const dropped = [];
             for (const e of before) {
@@ -1747,7 +1665,7 @@ async function run(argv) {
         let parsedVal;
         try { parsedVal = JSON.parse(flags.value); }
         catch (e) {
-          // Allow bare strings without JSON quoting for ergonomics.
+          // Bare strings without JSON quoting — ergonomic shortcut.
           parsedVal = flags.value;
         }
         await submitCommand('set_project_setting', {
@@ -1966,7 +1884,7 @@ async function run(argv) {
         } catch {
           fail('--json must be valid JSON');
         }
-        // --save-path makes it a prefab instead of a scene object
+        // --save-path turns it into a prefab instead of a scene object.
         if (flags['save-path']) {
           hierarchy.savePath = flags['save-path'];
         }
@@ -1996,15 +1914,13 @@ async function run(argv) {
         const checkOnly = flags.check === true;
         const projectRoot = path.resolve(__dirname, '..', '..');
 
-        // Verify git available
         const gitCheck = spawnSync('git', ['--version'], { stdio: 'ignore' });
         if (gitCheck.error || gitCheck.status !== 0) {
           fail('git not found on PATH. Install git and retry.');
         }
 
-        // --check: just compare the installed SHA to the remote HEAD of `ref`.
-        // No clone, no filesystem changes. Used by the SessionStart hook so
-        // every Claude session begins with a quick freshness ping.
+        // --check: cheap ls-remote SHA compare, no clone. SessionStart hook uses
+        // this so every Claude session begins with a quick freshness ping.
         if (checkOnly) {
           const remoteHead = spawnSync('git', ['ls-remote', source.repo, ref], {
             stdio: ['ignore', 'pipe', 'pipe'],
@@ -2032,7 +1948,6 @@ async function run(argv) {
           break;
         }
 
-        // Clone shallow to temp dir
         const tmpBase = fs.mkdtempSync(path.join(os.tmpdir(), 'dreamer-update-'));
         const cloneDir = path.join(tmpBase, 'repo');
         const clone = spawnSync('git', ['clone', '--depth', '1', '--branch', ref, source.repo, cloneDir], {
@@ -2044,13 +1959,11 @@ async function run(argv) {
           fail(`git clone failed for ${source.repo}@${ref}: ${err}`);
         }
 
-        // Resolve commit SHA
         const rev = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: cloneDir, stdio: ['ignore', 'pipe', 'pipe'] });
         const newSha = rev.status === 0 ? rev.stdout.toString().trim() : 'unknown';
 
-        // Paths to replace (src inside clone → dst inside projectRoot).
-        // Core targets always copied; add-on targets gated on the
-        // installed add-ons list in daemon/.dreamer-source.json.
+        // Replace targets (src in clone → dst in projectRoot). Core always
+        // copied; add-on targets gated on installed add-ons in .dreamer-source.json.
         const targets = [
           { src: 'daemon/src', dst: 'daemon/src', type: 'dir' },
           { src: 'daemon/bin', dst: 'daemon/bin', type: 'dir' },
@@ -2074,14 +1987,13 @@ async function run(argv) {
           try { fs.rmSync(tmpBase, { recursive: true, force: true }); } catch { /* ignore */ }
           fail(`Source repo missing expected paths at ref '${ref}': ${missing.map((m) => m.src).join(', ')}`);
         }
-        // Drop optional targets that aren't present in the clone.
         for (let i = targets.length - 1; i >= 0; i--) {
           if (targets[i].optional && !fs.existsSync(path.join(cloneDir, targets[i].src))) {
             targets.splice(i, 1);
           }
         }
 
-        // Snapshot CHANGELOG.md before swap so we can show new entries.
+        // Snapshot before swap so we can diff and surface new entries.
         const changelogPath = path.join(projectRoot, 'CHANGELOG.md');
         let oldChangelog = null;
         try { oldChangelog = fs.readFileSync(changelogPath, 'utf8'); } catch { /* fresh install */ }
@@ -2091,10 +2003,9 @@ async function run(argv) {
           out({ dryRun: true, repo: source.repo, ref, sha: newSha, wouldReplace: targets.map((t) => t.dst) });
         }
 
-        // Stop running daemon so we can swap its files safely
+        // Stop daemon so we can swap its files safely.
         try { await stopDaemon(); } catch { /* ignore */ }
 
-        // Apply replacements
         const applied = [];
         for (const t of targets) {
           const srcAbs = path.join(cloneDir, t.src);
@@ -2113,35 +2024,28 @@ async function run(argv) {
           applied.push(t.dst);
         }
 
-        // Cleanup
         try { fs.rmSync(tmpBase, { recursive: true, force: true }); } catch { /* ignore */ }
 
-        // One-time migration: the dreamer CLI reference was relocated from
-        // `.claude/commands/dreamer.md` (slash-command, user-invoked only) to
-        // `.claude/skills/dreamer/SKILL.md` (skill, auto-loaded by Claude when
-        // Unity work appears). Remove the legacy file if it's still there so
-        // both forms don't coexist in installs that pre-date the move.
+        // Migration: the dreamer ref moved from .claude/commands/dreamer.md
+        // (slash-command) to .claude/skills/dreamer/SKILL.md (auto-loading skill).
+        // Remove the legacy file from pre-move installs so both don't coexist.
         const legacyCommandPath = path.join(projectRoot, '.claude/commands/dreamer.md');
         const migrated = [];
         try {
           if (fs.existsSync(legacyCommandPath)) {
             fs.rmSync(legacyCommandPath, { force: true });
             migrated.push('.claude/commands/dreamer.md (removed — superseded by .claude/skills/dreamer/SKILL.md)');
-            // Also try to remove the now-empty commands dir. Safe because rmdir
-            // only succeeds if empty; if the user keeps other commands there,
-            // this silently no-ops.
+            // rmdir no-ops if non-empty, so users keeping other commands are safe.
             try { fs.rmdirSync(path.join(projectRoot, '.claude/commands')); } catch { /* keep dir if non-empty */ }
           }
         } catch { /* non-fatal */ }
 
-        // Stamp the installed SHA into .dreamer-source.json so `update --check`
-        // can detect drift cheaply via ls-remote on subsequent runs.
+        // Stamp installed SHA so `update --check` can ls-remote-diff cheaply.
         try {
           const updatedSource = { ...source, ref, sha: newSha, lastUpdatedAt: new Date().toISOString() };
           fs.writeFileSync(SOURCE_PATH, JSON.stringify(updatedSource, null, 2) + '\n', 'utf8');
         } catch { /* non-fatal: next update will re-stamp */ }
 
-        // Diff CHANGELOG.md so the agent can read out new entries.
         const changelog = computeChangelogDiff(oldChangelog, changelogPath);
 
         out({
@@ -2163,7 +2067,6 @@ async function run(argv) {
       }
 
       case 'addon': {
-        // addon list | addon install <name> | addon remove <name>
         const { spawnSync } = require('child_process');
         const projectRoot = path.resolve(__dirname, '..', '..');
         const sub = positional[1];
@@ -2174,8 +2077,7 @@ async function run(argv) {
               { src: 'Packages/com.dreamer.agent-bridge.ugui', dst: 'Packages/com.dreamer.agent-bridge.ugui', type: 'dir' },
               { src: '.claude/skills/dreamer-ugui', dst: '.claude/skills/dreamer-ugui', type: 'dir' },
             ],
-            // Section appended to CLAUDE.md on install, stripped on remove. Wrapped in
-            // <!-- dreamer-addon:ugui --> markers so we can find/replace idempotently.
+            // Wrapped in <!-- dreamer-addon:ugui --> markers for idempotent install/remove.
             claudeMdSection: `<!-- dreamer-addon:ugui:start -->
 ## Dreamer UGUI add-on
 
@@ -2189,7 +2091,6 @@ For any Canvas (uGUI) UI task — menus, HUDs, panels, buttons, scroll views —
           },
         };
 
-        // Append/strip an addon's CLAUDE.md section idempotently using the marker tags.
         function updateClaudeMdForAddon(addonName, action) {
           const def = KNOWN_ADDONS[addonName];
           if (!def || !def.claudeMdSection) return;
@@ -2200,11 +2101,10 @@ For any Canvas (uGUI) UI task — menus, HUDs, panels, buttons, scroll views —
           const startTag = `<!-- dreamer-addon:${addonName}:start -->`;
           const endTag = `<!-- dreamer-addon:${addonName}:end -->`;
           const sectionRegex = new RegExp(`${startTag}[\\s\\S]*?${endTag}\\n?`, 'g');
-          // Always strip first so install is also idempotent (no duplicate section if reinstalled).
+          // Strip first so reinstall is idempotent (no duplicate section).
           content = content.replace(sectionRegex, '');
 
           if (action === 'install') {
-            // Append with a leading blank line if file isn't empty.
             const sep = content.length > 0 && !content.endsWith('\n\n') ? (content.endsWith('\n') ? '\n' : '\n\n') : '';
             content = content + sep + def.claudeMdSection + '\n';
           }
@@ -2212,7 +2112,6 @@ For any Canvas (uGUI) UI task — menus, HUDs, panels, buttons, scroll views —
           fs.writeFileSync(claudeMdPath, content, 'utf8');
         }
 
-        // Read current source.json; the source marker records installed add-ons.
         let src;
         try { src = JSON.parse(fs.readFileSync(SOURCE_PATH, 'utf8')); }
         catch { fail('daemon/.dreamer-source.json missing — reinstall Dreamer to manage add-ons.'); }
@@ -2239,7 +2138,6 @@ For any Canvas (uGUI) UI task — menus, HUDs, panels, buttons, scroll views —
               break;
             }
 
-            // Clone the source repo and copy add-on paths.
             const os = require('os');
             const tmpBase = fs.mkdtempSync(path.join(os.tmpdir(), `dreamer-addon-${name}-`));
             const cloneDir = path.join(tmpBase, 'repo');
@@ -2267,7 +2165,7 @@ For any Canvas (uGUI) UI task — menus, HUDs, panels, buttons, scroll views —
                   fs.copyFileSync(srcAbs, dstAbs);
                 }
               }
-              // Record the add-on in source.json so future updates pull it too.
+              // Record in source.json so future `update` calls pull this add-on too.
               src.addons = Array.from(new Set([...currentAddons, name]));
               fs.writeFileSync(SOURCE_PATH, JSON.stringify(src, null, 2) + '\n', 'utf8');
               // Augment CLAUDE.md so future Claude sessions know the add-on exists.
@@ -2293,7 +2191,6 @@ For any Canvas (uGUI) UI task — menus, HUDs, panels, buttons, scroll views —
             break;
           }
 
-          // remove
           if (!currentAddons.includes(name)) {
             out({ notInstalled: true, name });
             break;
@@ -2302,13 +2199,11 @@ For any Canvas (uGUI) UI task — menus, HUDs, panels, buttons, scroll views —
             const dstAbs = path.join(projectRoot, p.dst);
             try {
               if (fs.existsSync(dstAbs)) fs.rmSync(dstAbs, { recursive: true, force: true });
-            } catch (e) {
-              // Non-fatal — continue trying other paths.
-            }
+            } catch (e) { /* non-fatal — continue */ }
           }
           src.addons = currentAddons.filter((n) => n !== name);
           fs.writeFileSync(SOURCE_PATH, JSON.stringify(src, null, 2) + '\n', 'utf8');
-          // Strip the CLAUDE.md section so future Claude sessions don't reference a missing add-on.
+          // Strip CLAUDE.md section so future sessions don't reference a missing add-on.
           try { updateClaudeMdForAddon(name, 'remove'); } catch { /* non-fatal */ }
           out({
             removed: true,
@@ -2330,7 +2225,6 @@ For any Canvas (uGUI) UI task — menus, HUDs, panels, buttons, scroll views —
           const val = rest.join('=');
           if (!key || val === '') fail('Usage: dreamer config set key=value');
           const cfg = loadConfig();
-          // Parse value: booleans, numbers, or string
           let parsed = val;
           if (val === 'true') parsed = true;
           else if (val === 'false') parsed = false;
@@ -2377,9 +2271,7 @@ For any Canvas (uGUI) UI task — menus, HUDs, panels, buttons, scroll views —
         if (!schema) {
           fail(`No schema for '${rawKind}'. Documented kinds: ${schemas.list().join(', ')}. Try \`dreamer help conventions\` for cross-cutting rules.`);
         }
-        // Auto-inject a pointer to the conventions doc so callers reading any
-        // schema see the cross-cutting reference without each schema repeating
-        // it in its own description.
+        // Inject conventions pointer so each schema needn't repeat the cross-ref.
         out({
           ...schema,
           seeAlso: [
@@ -2391,9 +2283,8 @@ For any Canvas (uGUI) UI task — menus, HUDs, panels, buttons, scroll views —
       }
 
       case 'probe-port': {
-        // Largely superseded by the projects registry's automatic port
-        // allocation, but still useful as a "what would be picked next"
-        // diagnostic — e.g., during install for a bespoke port override.
+        // Mostly superseded by registry auto-allocation; still useful as a
+        // "what would be picked next" diagnostic during bespoke install setup.
         const start = parseInt(flags.start, 10) || configModule.DEFAULT_PORT;
         const count = parseInt(flags.count, 10) || 10;
         const free = await configModule.findFreePort(start, count);
@@ -2429,8 +2320,7 @@ For any Canvas (uGUI) UI task — menus, HUDs, panels, buttons, scroll views —
           const raw = fs.readFileSync(DAEMON_LOG, 'utf8');
           const lines = raw.split(/\r?\n/).filter(Boolean);
           const tail = lines.slice(-n);
-          // Pretty-print each JSON line to `ISO LEVEL module — msg`; fall
-          // back to raw if a line isn't JSON (startup banner, etc.).
+          // Pretty-print JSON lines to `ISO LEVEL module — msg`; non-JSON pass through.
           const pretty = tail.map((l) => {
             try {
               const e = JSON.parse(l);

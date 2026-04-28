@@ -7,15 +7,7 @@ using UnityEngine;
 
 namespace Dreamer.AgentBridge.Animation
 {
-    /// <summary>
-    /// AnimatorController authoring — create the asset, add parameters,
-    /// add states with optional Motion clips, wire transitions with
-    /// conditions, set default state, inspect the result.
-    ///
-    /// State-machine root only (layer 0 by default; --layer N for others).
-    /// Sub-state machines, blend trees, and per-layer masks are out of
-    /// scope for v1 — author them in the Unity Animator window if needed.
-    /// </summary>
+    /// <summary>AnimatorController authoring — parameters, states, transitions, layers, blend trees, masks; state-machine root only (no sub-state machines).</summary>
     public static class AnimatorOps
     {
         // ── create-animator-controller ────────────────────────────────────
@@ -62,7 +54,7 @@ namespace Dreamer.AgentBridge.Animation
             if (string.IsNullOrEmpty(paramName)) return CommandResult.Fail("'name' is required.");
             string paramType = SimpleJson.GetString(args, "type", "bool")?.ToLowerInvariant();
 
-            // Reject duplicates — would silently corrupt later condition lookups.
+            // Duplicate names silently corrupt later condition lookups.
             foreach (var p in ctrl.parameters)
                 if (p.name == paramName)
                     return CommandResult.Fail($"Parameter '{paramName}' already exists on '{ctrl.name}'. Names must be unique.");
@@ -143,8 +135,6 @@ namespace Dreamer.AgentBridge.Animation
             float speed = (float)GetDouble(args, "speed", 1.0);
             state.speed = speed;
 
-            // First state added = automatic default. Caller may override later
-            // via set-animator-default-state.
             EditorUtility.SetDirty(ctrl);
             AssetDatabase.SaveAssets();
 
@@ -186,13 +176,7 @@ namespace Dreamer.AgentBridge.Animation
 
             AnimatorStateTransition transition;
 
-            // Source semantics:
-            //   "AnyState" / "Any State" — added via AddAnyStateTransition
-            //   "Entry"                  — currently rejected (entry transitions
-            //                              use AnimatorTransition, not AnimatorStateTransition,
-            //                              and have a different shape with no exit time / duration).
-            //                              Defer for v1 — surface a clear message instead of half-doing it.
-            //   <state name>             — state.AddTransition / state.AddExitTransition
+            // "Entry" rejected: entry transitions use AnimatorTransition (different shape, no exit time/duration) — out of scope for v1.
             if (string.Equals(fromName, "AnyState", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(fromName, "Any State", StringComparison.OrdinalIgnoreCase))
             {
@@ -210,7 +194,6 @@ namespace Dreamer.AgentBridge.Animation
                 transition = toExit ? fromState.AddExitTransition() : fromState.AddTransition(toState);
             }
 
-            // Transition properties.
             bool hasExit = SimpleJson.GetBool(args, "hasExitTime", false);
             transition.hasExitTime = hasExit;
             if (hasExit) transition.exitTime = (float)GetDouble(args, "exitTime", 0.9);
@@ -218,7 +201,6 @@ namespace Dreamer.AgentBridge.Animation
             transition.offset   = (float)GetDouble(args, "offset", 0.0);
             transition.canTransitionToSelf = SimpleJson.GetBool(args, "canTransitionToSelf", false);
 
-            // Conditions.
             object condsRaw = SimpleJson.GetValue(args, "conditions");
             if (condsRaw is List<object> condsList)
             {
@@ -338,10 +320,6 @@ namespace Dreamer.AgentBridge.Animation
                         .Put("isDefault", sm.defaultState == s)
                         .Put("transitionCount", s.transitions.Length);
 
-                    // Distinguish blend tree from clip — both are Motion but
-                    // a BlendTree state is fundamentally different (has children,
-                    // blend params). Surface enough to round-trip without an
-                    // extra inspect call.
                     var blendTree = s.motion as BlendTree;
                     if (blendTree != null)
                     {
@@ -428,9 +406,7 @@ namespace Dreamer.AgentBridge.Animation
                 if (ctrl.parameters[i].name == paramName) { idx = i; break; }
             if (idx < 0) return CommandResult.Fail($"Parameter '{paramName}' not found.");
 
-            // Surface dependents — agents typically want to know what'll silently
-            // break before they remove (Unity tolerates dangling param references
-            // at runtime; conditions just never fire).
+            // Surface dependents: Unity tolerates dangling param refs at runtime — orphaned conditions silently never fire.
             var dependents = new List<string>();
             foreach (var layer in ctrl.layers)
             {
@@ -481,9 +457,7 @@ namespace Dreamer.AgentBridge.Animation
             var state = FindState(sm, stateName);
             if (state == null) return CommandResult.Fail($"State '{stateName}' not found on layer {layerIdx}.");
 
-            // Count incoming transitions across the layer (Unity's RemoveState
-            // cleans up outgoing automatically but incoming references can be
-            // left as null destinations on the source side).
+            // Unity's RemoveState leaves null-destination transitions on source states — count + scrub them below.
             int incoming = 0;
             foreach (var sc in sm.states)
                 foreach (var t in sc.state.transitions)
@@ -493,7 +467,6 @@ namespace Dreamer.AgentBridge.Animation
 
             sm.RemoveState(state);
 
-            // Pre-emptively scrub now-dangling transitions on the source side.
             foreach (var sc in sm.states)
             {
                 var keep = new List<AnimatorStateTransition>();
@@ -506,7 +479,6 @@ namespace Dreamer.AgentBridge.Animation
                             sc.state.RemoveTransition(t);
                 }
             }
-            // Remove dangling AnyState transitions too.
             var anyKeep = new List<AnimatorStateTransition>();
             foreach (var t in sm.anyStateTransitions)
                 if (t.destinationState != null) anyKeep.Add(t);
@@ -715,13 +687,11 @@ namespace Dreamer.AgentBridge.Animation
                 else return CommandResult.Fail($"Unknown interruptionSource '{src}'. Use None|Source|Destination|SourceThenDestination|DestinationThenSource.");
             }
 
-            // Conditions: replace whole list when provided.
             if (args.ContainsKey("conditions"))
             {
                 object condsRaw = args["conditions"];
                 if (condsRaw is List<object> condsList)
                 {
-                    // Clear existing and rebuild.
                     transition.conditions = new AnimatorCondition[0];
                     foreach (var item in condsList)
                     {
@@ -776,13 +746,10 @@ namespace Dreamer.AgentBridge.Animation
             string layerName = SimpleJson.GetString(args, "name");
             if (string.IsNullOrEmpty(layerName)) return CommandResult.Fail("'name' is required.");
 
-            // Reject duplicates.
             foreach (var l in ctrl.layers)
                 if (l.name == layerName) return CommandResult.Fail($"Layer '{layerName}' already exists.");
 
-            // AnimatorController.AddLayer creates layer + state machine. Set
-            // properties through the layer struct, then write back the whole
-            // layers array (Unity requires this round-trip to persist).
+            // Layer property changes only persist via the full layers-array round-trip below.
             ctrl.AddLayer(layerName);
             var layers = ctrl.layers;
             int newIdx = layers.Length - 1;
@@ -954,23 +921,16 @@ namespace Dreamer.AgentBridge.Animation
             if (FindState(sm, stateName) != null)
                 return CommandResult.Fail($"State '{stateName}' already exists on layer {layerIdx}.");
 
-            // Create state + blend tree as a sub-asset of the controller (so
-            // the blend tree's children/thresholds save with the controller
-            // file). AddState + state.motion = new BlendTree {...} works in
-            // Unity 2022+; the blend tree inherits AddObjectToAsset from the
-            // controller automatically when assigned to state.motion via
-            // CreateBlendTreeInController.
+            // CreateBlendTreeInController nests the BlendTree as a sub-asset so children/thresholds save with the controller.
             BlendTree blendTree;
             var state = ctrl.CreateBlendTreeInController(stateName, out blendTree, layerIdx);
             blendTree.blendType = blendType;
 
-            // Blend parameter(s).
             string param = SimpleJson.GetString(args, "blendParameter");
             if (!string.IsNullOrEmpty(param)) blendTree.blendParameter = param;
             string paramY = SimpleJson.GetString(args, "blendParameterY");
             if (!string.IsNullOrEmpty(paramY)) blendTree.blendParameterY = paramY;
 
-            // Children — array of {motion, threshold?, position?, timeScale?, mirror?, directBlendParameter?}.
             int childCount = 0;
             object childrenRaw = SimpleJson.GetValue(args, "children");
             if (childrenRaw is List<object> childrenList)
@@ -987,7 +947,6 @@ namespace Dreamer.AgentBridge.Animation
                         if (motion == null) return CommandResult.Fail($"Motion (AnimationClip or BlendTree) not found at '{motionPath}'.");
                     }
 
-                    // 1D: threshold; 2D: position [x,y]; Direct: directBlendParameter.
                     if (blendType == BlendTreeType.Simple1D)
                     {
                         float threshold = (float)GetDouble(c, "threshold", childCount);
@@ -998,14 +957,14 @@ namespace Dreamer.AgentBridge.Animation
                     {
                         if (motion != null) blendTree.AddChild(motion);
                         else blendTree.AddChild((AnimationClip)null);
-                        // Direct param assignment via children-array round-trip.
+                        // directBlendParameter only persists through children-array round-trip.
                         var children = blendTree.children;
                         var last = children[children.Length - 1];
                         last.directBlendParameter = SimpleJson.GetString(c, "directBlendParameter") ?? "";
                         children[children.Length - 1] = last;
                         blendTree.children = children;
                     }
-                    else // 2D variants
+                    else
                     {
                         Vector2 pos = Vector2.zero;
                         object posRaw = SimpleJson.GetValue(c, "position");
@@ -1019,7 +978,6 @@ namespace Dreamer.AgentBridge.Animation
                         else blendTree.AddChild((AnimationClip)null, pos);
                     }
 
-                    // Per-child timeScale / mirror via children round-trip.
                     if (c.ContainsKey("timeScale") || c.ContainsKey("mirror") || c.ContainsKey("cycleOffset"))
                     {
                         var children = blendTree.children;

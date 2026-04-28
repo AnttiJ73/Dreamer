@@ -13,17 +13,13 @@ namespace Dreamer.AgentBridge
     {
         const int MaxResults = 100;
 
-        /// <summary>
-        /// Find assets by type/name/path.
-        /// Args: { type?: "prefab"|"script"|"scene"|"material"|"texture"|"all", name?: "pattern", path?: "Assets/folder" }
-        /// </summary>
+        /// <summary>Find assets by type/name/path. Args: { type?: "prefab"|"script"|"scene"|"material"|"texture"|"all", name?: "pattern", path?: "Assets/folder" }</summary>
         public static CommandResult FindAssets(Dictionary<string, object> args)
         {
             string typeFilter = SimpleJson.GetString(args, "type", "all");
             string nameFilter = SimpleJson.GetString(args, "name");
             string pathFilter = SimpleJson.GetString(args, "path");
 
-            // Build AssetDatabase search filter
             string filter = BuildFilter(typeFilter, nameFilter);
 
             string[] searchFolders = null;
@@ -50,7 +46,7 @@ namespace Dreamer.AgentBridge
                 string assetPath = AssetDatabase.GUIDToAssetPath(guid);
                 if (string.IsNullOrEmpty(assetPath)) continue;
 
-                // Additional name filtering (FindAssets only does prefix matching)
+                // FindAssets only does prefix matching — apply substring match here.
                 if (!string.IsNullOrEmpty(nameFilter))
                 {
                     string assetName = Path.GetFileNameWithoutExtension(assetPath);
@@ -87,15 +83,11 @@ namespace Dreamer.AgentBridge
             return CommandResult.Ok(json);
         }
 
-        /// <summary>
-        /// Inspect a specific asset or scene object in detail.
-        /// Args: { assetPath?: "path", guid?: "guid", sceneObjectPath?: "MyObject/Child" }
-        /// </summary>
+        /// <summary>Inspect an asset or scene object. Args: { assetPath?, guid?, sceneObjectPath? }</summary>
         public static CommandResult InspectAsset(Dictionary<string, object> args)
         {
             var opts = ParseInspectionOptions(args);
 
-            // Scene object inspection
             string sceneObjectPath = SimpleJson.GetString(args, "sceneObjectPath");
             if (!string.IsNullOrEmpty(sceneObjectPath))
                 return InspectSceneObject(sceneObjectPath, opts);
@@ -134,7 +126,6 @@ namespace Dreamer.AgentBridge
             }
             else
             {
-                // Generic asset info
                 string fullPath = Path.GetFullPath(assetPath);
                 if (File.Exists(fullPath))
                 {
@@ -209,23 +200,7 @@ namespace Dreamer.AgentBridge
             };
         }
 
-        /// <summary>
-        /// Persist editor state to disk. Covers BOTH:
-        ///   - <c>AssetDatabase.SaveAssets()</c>: writes dirty ScriptableObjects,
-        ///     prefab assets, materials, etc.
-        ///   - <c>EditorSceneManager.SaveOpenScenes()</c> / <c>SaveScene</c>:
-        ///     writes dirty open scenes — without this, scene-object mutations
-        ///     queued via set-property / add-component / create-gameobject etc.
-        ///     stay in-memory only and "git diff" shows no scene changes after a
-        ///     successful-looking save-assets call.
-        ///
-        /// Args (optional):
-        ///   { skipScenes: true } — only save assets, not scenes (legacy behaviour)
-        ///   { skipAssets: true } — only save scenes, not assets (rare)
-        ///   default: save both.
-        ///
-        /// Returns counts so callers can verify something actually changed.
-        /// </summary>
+        /// <summary>Persist editor state — both AssetDatabase.SaveAssets() and SaveOpenScenes(). Without the scene save, scene-object mutations (set-property/add-component/create-gameobject) stay in-memory only and git diff shows no changes. Args: { skipAssets?, skipScenes? }</summary>
         public static CommandResult SaveAssets(Dictionary<string, object> args)
         {
             bool skipAssets = SimpleJson.GetBool(args, "skipAssets", false);
@@ -236,8 +211,7 @@ namespace Dreamer.AgentBridge
 
             if (!skipScenes)
             {
-                // Snapshot dirty count before save so the result reflects the
-                // ones we actually wrote — SaveOpenScenes clears the dirty bit.
+                // Snapshot dirty count before save — SaveOpenScenes clears the dirty bit.
                 int sceneCount = SceneManager.sceneCount;
                 for (int i = 0; i < sceneCount; i++)
                 {
@@ -273,32 +247,12 @@ namespace Dreamer.AgentBridge
             return CommandResult.Ok(json.ToString());
         }
 
-        /// <summary>
-        /// Force Unity to scan the disk for changed/new/deleted assets.
-        /// This is essential when files are written externally (by an agent, CLI, etc.)
-        /// because Unity on Windows does not reliably detect changes without focus.
-        ///
-        /// Auto-heal: if the caller passes a `changedFiles` array (forward-slash
-        /// "Assets/..." paths), every .cs file that Unity imports as something
-        /// other than MonoScript (i.e. got classified as the default/unknown
-        /// importer because of an ill-timed write outside the Editor) is
-        /// force-reimported. This fixes the common "script exists on disk but
-        /// doesn't appear in Assembly-CSharp and can't be assigned to prefabs"
-        /// bug caused by unfocused-Editor imports.
-        ///
-        /// Result JSON:
-        ///   { refreshed: true, checked: N, reimported: [...], misclassified: [...] }
-        /// where `misclassified` lists files that are STILL not MonoScript after
-        /// the force-reimport — those need human intervention (bad namespace,
-        /// syntax preventing initial parse, etc.).
-        /// </summary>
+        /// <summary>Force Unity to rescan disk. Essential because Unity on Windows doesn't reliably detect external changes without focus. Auto-heals .cs files misclassified as unknown by force-reimporting them when the caller passes `changedFiles[]`.</summary>
         public static CommandResult RefreshAssets(Dictionary<string, object> args)
         {
             AssetDatabase.Refresh(ImportAssetOptions.Default);
 
-            // Auto-heal phase. Only runs when the daemon-side watcher gave us a
-            // concrete list of changed files; a bare refresh_assets call with
-            // no arg list skips this entirely (fast path, unchanged behavior).
+            // Auto-heal only runs with a concrete changedFiles list; bare refresh_assets is the fast path.
             var reimported = new List<string>();
             var misclassified = new List<string>();
             int checkedCount = 0;
@@ -337,15 +291,7 @@ namespace Dreamer.AgentBridge
             return CommandResult.Ok(resultJson.ToString());
         }
 
-        /// <summary>
-        /// Explicit rescue command. Force-reimports all .cs files under the given
-        /// path (single file or folder). Unlike RefreshAssets, this runs
-        /// force-reimport on every .cs regardless of current classification —
-        /// useful when the watcher missed the original write and the file is
-        /// stuck as unknown.
-        ///
-        /// Args: { path: "Assets/Foo.cs" | "Assets/Scripts", recursive?: true }
-        /// </summary>
+        /// <summary>Force-reimport every .cs under path regardless of current classification. Use when the watcher missed the original write and the file is stuck as unknown. Args: { path, recursive? }</summary>
         public static CommandResult ReimportScripts(Dictionary<string, object> args)
         {
             string target = SimpleJson.GetString(args, "path");
@@ -354,7 +300,6 @@ namespace Dreamer.AgentBridge
 
             bool recursive = !args.ContainsKey("recursive") || SimpleJson.GetBool(args, "recursive", true);
 
-            // Normalize to forward slashes so we can compare with AssetDatabase paths.
             target = target.Replace('\\', '/').TrimEnd('/');
 
             var reimported = new List<string>();
@@ -374,12 +319,8 @@ namespace Dreamer.AgentBridge
                 var files = System.IO.Directory.GetFiles(full, "*.cs", opt);
                 foreach (var f in files)
                 {
-                    // Convert absolute path back to AssetDatabase form. Unity treats
-                    // both "Assets/..." (project assets) and "Packages/..." (embedded /
-                    // resolved packages) as valid asset roots. Earlier versions of this
-                    // loop only looked for /Assets/, so any .cs under Packages/ was
-                    // silently skipped — which made the rescue command useless for
-                    // editing add-on package code (the exact case this is most needed for).
+                    // Both Assets/ and Packages/ are valid AssetDatabase roots; Packages/
+                    // matters for editing add-on package code via this rescue command.
                     string rel = f.Replace('\\', '/');
                     string assetPath = ToAssetDatabasePath(rel);
                     if (assetPath == null) continue;
@@ -391,8 +332,7 @@ namespace Dreamer.AgentBridge
                 return CommandResult.Fail($"Path not found: {target}");
             }
 
-            // Kick a compile — force-reimport alone doesn't always trigger one if Unity's
-            // compilation pipeline thinks nothing relevant changed.
+            // Force-reimport alone doesn't always trigger compilation if Unity thinks nothing changed.
             UnityEditor.Compilation.CompilationPipeline.RequestScriptCompilation();
 
             return CommandResult.Ok(SimpleJson.Object()
@@ -407,27 +347,18 @@ namespace Dreamer.AgentBridge
                 .ToString());
         }
 
-        /// <summary>
-        /// Convert a forward-slash absolute or relative path to an AssetDatabase
-        /// path. Unity accepts both "Assets/..." and "Packages/..." as roots —
-        /// returns the substring starting at whichever it finds, or null when
-        /// the path doesn't sit inside either (out-of-project file).
-        /// </summary>
+        // Returns substring at "Assets/" or "Packages/" — both are AssetDatabase roots.
+        // Picks rightmost match in case the project lives under a path containing those names.
         static string ToAssetDatabasePath(string forwardSlashPath)
         {
             if (string.IsNullOrEmpty(forwardSlashPath)) return null;
 
-            // Already a relative AssetDatabase path?
             if (forwardSlashPath.StartsWith("Assets/", StringComparison.OrdinalIgnoreCase)
                 || forwardSlashPath.StartsWith("Packages/", StringComparison.OrdinalIgnoreCase))
                 return forwardSlashPath;
 
-            // Absolute path — look for /Assets/ or /Packages/ inside.
             int aIdx = forwardSlashPath.IndexOf("/Assets/", StringComparison.OrdinalIgnoreCase);
             int pIdx = forwardSlashPath.IndexOf("/Packages/", StringComparison.OrdinalIgnoreCase);
-
-            // Pick the rightmost match (handles unusual layouts where a project lives under
-            // another path containing "Assets" or "Packages" — the project's own root wins).
             int idx = Math.Max(aIdx, pIdx);
             if (idx < 0) return null;
 
@@ -436,17 +367,12 @@ namespace Dreamer.AgentBridge
 
         enum HealOutcome { AlreadyMonoScript, Reimported, StillMisclassified }
 
-        /// <summary>
-        /// Check whether <paramref name="assetPath"/> is classified as MonoScript.
-        /// If not, force-reimport and check again. Returns which outcome landed.
-        /// </summary>
         static HealOutcome HealScriptClassification(string assetPath)
         {
             var typeBefore = AssetDatabase.GetMainAssetTypeAtPath(assetPath);
             if (typeBefore == typeof(MonoScript)) return HealOutcome.AlreadyMonoScript;
 
-            // Force a full re-import. ForceUpdate says "pretend the hash changed";
-            // ForceSynchronousImport says "don't defer, do it now on this thread."
+            // ForceUpdate = pretend hash changed; ForceSynchronousImport = no defer, this thread.
             AssetDatabase.ImportAsset(assetPath,
                 ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
 
@@ -456,10 +382,6 @@ namespace Dreamer.AgentBridge
                 : HealOutcome.StillMisclassified;
         }
 
-        /// <summary>
-        /// Force-reimport a .cs file unconditionally (for the rescue command path).
-        /// Reports which bucket it lands in.
-        /// </summary>
         static void ForceReimport(string assetPath, List<string> reimported, List<string> healed, List<string> misclassified)
         {
             var typeBefore = AssetDatabase.GetMainAssetTypeAtPath(assetPath);
@@ -474,10 +396,7 @@ namespace Dreamer.AgentBridge
             else if (typeAfter != typeof(MonoScript)) misclassified.Add(assetPath);
         }
 
-        /// <summary>
-        /// Create a ScriptableObject asset instance.
-        /// Args: { typeName: "Game.MyDataSO", name: "EnemyData", path?: "Assets/Data" }
-        /// </summary>
+        /// <summary>Create a ScriptableObject asset. Args: { typeName, name, path? }</summary>
         public static CommandResult CreateScriptableObject(Dictionary<string, object> args)
         {
             string typeName = SimpleJson.GetString(args, "typeName");
@@ -497,7 +416,6 @@ namespace Dreamer.AgentBridge
             if (!typeof(ScriptableObject).IsAssignableFrom(soType))
                 return CommandResult.Fail($"Type '{typeName}' does not derive from ScriptableObject.");
 
-            // Ensure directory exists
             string fullDir = Path.GetFullPath(folder);
             if (!Directory.Exists(fullDir))
             {
@@ -535,7 +453,6 @@ namespace Dreamer.AgentBridge
             if (go == null)
                 return CommandResult.Fail(findError ?? $"Scene object not found at path: {objectPath}");
 
-            // Build the unified node payload first.
             string nodeJson = Inspection.BuildGameObjectInfo(go, opts);
 
             var extras = SimpleJson.Object()
@@ -655,7 +572,6 @@ namespace Dreamer.AgentBridge
 
         static void InspectScene(string assetPath, JsonBuilder result)
         {
-            // We can only list scene info from the asset database, not load it
             result.Put("isScene", true);
 
             string fullPath = Path.GetFullPath(assetPath);
@@ -666,7 +582,6 @@ namespace Dreamer.AgentBridge
                 result.Put("lastModified", info.LastWriteTimeUtc.ToString("o"));
             }
 
-            // Check if this scene is currently loaded
             var activeScene = UnityEngine.SceneManagement.SceneManager.GetActiveScene();
             result.Put("isActiveScene", activeScene.path == assetPath);
         }

@@ -4,17 +4,7 @@ using UnityEngine.UI;
 
 namespace Dreamer.AgentBridge.UGUI
 {
-    /// <summary>
-    /// Runtime mouse-wheel zoom for any ScrollRect. Pan is handled by ScrollRect's
-    /// built-in drag; this adds the missing zoom step.
-    ///
-    /// Attach to the same GameObject as a ScrollRect. Implements IScrollHandler so
-    /// EventSystem dispatches mouse wheel input here, and scales the ScrollRect's
-    /// Content RectTransform proportionally (clamped between minZoom..maxZoom).
-    ///
-    /// Auto-attached by UIWidgetOps.CreateScrollList when the spec has
-    /// `mapPanZoom: true`. Standalone use: just AddComponent on any ScrollRect.
-    /// </summary>
+    /// <summary>Runtime mouse-wheel zoom for a ScrollRect (pan is handled by ScrollRect's built-in drag).</summary>
     [RequireComponent(typeof(ScrollRect))]
     public class MapPanZoom : UIBehaviour, IScrollHandler
     {

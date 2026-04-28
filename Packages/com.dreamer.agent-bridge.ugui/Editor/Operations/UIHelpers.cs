@@ -9,23 +9,12 @@ using UnityEngine.UI;
 
 namespace Dreamer.AgentBridge
 {
-    /// <summary>
-    /// Shared helpers for the UI operation commands (Tier 1/2/3).
-    ///
-    /// Design goal: agent-built UIs don't need to be pixel-perfect. The goal is
-    /// a legible scaffold with correct anchoring and component structure that
-    /// the user refines visually in Unity's Scene/Game view. These helpers
-    /// encode the defaults a human would reach for in the Inspector.
-    /// </summary>
+    /// <summary>Shared helpers for the UI operation commands.</summary>
     public static class UIHelpers
     {
         // ── Anchor presets ──────────────────────────────────────────────
 
-        /// <summary>
-        /// Resolved anchor specification: min/max anchor + pivot. `stretchX` /
-        /// `stretchY` indicate whether the size should be treated as offset
-        /// margins rather than a fixed size along that axis (stretched anchors).
-        /// </summary>
+        /// <summary>Resolved anchor spec: min/max anchor + pivot, with per-axis stretch flags.</summary>
         public struct AnchorSpec
         {
             public Vector2 anchorMin;
@@ -35,10 +24,7 @@ namespace Dreamer.AgentBridge
             public bool stretchY;
         }
 
-        /// <summary>
-        /// Parse a named anchor preset (e.g. "center", "top-stretch", "fill").
-        /// Accepts dashes, underscores, or spaces as separators; case-insensitive.
-        /// </summary>
+        /// <summary>Parse a named anchor preset (e.g. "center", "top-stretch", "fill"); separators dash/underscore/space, case-insensitive.</summary>
         public static bool TryParseAnchor(string name, out AnchorSpec spec)
         {
             spec = default;
@@ -102,8 +88,7 @@ namespace Dreamer.AgentBridge
 
         static AnchorSpec MakeAnchor(float aMinX, float aMinY, float aMaxX, float aMaxY)
         {
-            // Pivot mirrors the anchor location for non-stretched presets — that's
-            // what the Unity Inspector's anchor presets panel does when you hold Alt.
+            // Pivot mirrors the anchor location — matches Unity Inspector's Alt+anchor-preset behavior.
             return new AnchorSpec
             {
                 anchorMin = new Vector2(aMinX, aMinY),
@@ -152,25 +137,7 @@ namespace Dreamer.AgentBridge
 
         // ── RectTransform configuration ─────────────────────────────────
 
-        /// <summary>
-        /// Apply an anchor preset + size + optional pivot/offset overrides.
-        ///
-        /// sizeDelta semantics:
-        /// - On stretched axes: sizeDelta is the inset from parent (0 = fill exactly,
-        ///   negative = smaller than parent, positive = bigger than parent). When `size`
-        ///   isn't given, defaults to 0 (fill exactly) — NOT Unity's RectTransform default
-        ///   of (100,100), which would make the panel 100px bigger than its parent and
-        ///   throw off every nested LayoutGroup measurement.
-        /// - On non-stretched axes: sizeDelta is the literal pixel size from `size.x` or
-        ///   `size.y`. When `size` isn't given on that axis, the existing sizeDelta value
-        ///   is preserved.
-        ///
-        /// offsetMin/Max semantics:
-        /// - Only applied per-axis when that axis is stretched. Setting `offsetMin: [0, 100]`
-        ///   on a vertically-stretched (e.g. stretch-right) panel applies the y inset (100)
-        ///   but leaves the x offset alone — otherwise the x component would overwrite the
-        ///   sizeDelta-derived offsets and zero out the panel width.
-        /// </summary>
+        /// <summary>Apply an anchor preset + size + optional pivot/offset overrides; see UNITY-LAYOUT-QUIRKS.md for sizeDelta/offset semantics.</summary>
         public static void ApplyRectTransform(
             RectTransform rt,
             AnchorSpec anchor,
@@ -334,11 +301,7 @@ namespace Dreamer.AgentBridge
 
         static float ToFloat(object v) => ToFloatSafe(v, 0f);
 
-        /// <summary>
-        /// Coerce a JSON-parsed value into a float. Accepts double/float/int/long
-        /// directly and tries parsing strings. Returns <paramref name="fallback"/>
-        /// on null, unsupported types, or unparseable strings.
-        /// </summary>
+        /// <summary>Coerce a JSON-parsed value into a float; accepts numeric types or numeric strings, returns fallback otherwise.</summary>
         public static float ToFloatSafe(object v, float fallback = 0f)
         {
             if (v == null) return fallback;
@@ -361,11 +324,7 @@ namespace Dreamer.AgentBridge
         static Type _tmpType;      // TMPro.TextMeshProUGUI
         static Type _tmpAlignType; // TMPro.TextAlignmentOptions
 
-        /// <summary>
-        /// Try to resolve the TextMeshPro component type via reflection. Returns
-        /// null if TMP isn't available in the project (e.g. user hasn't imported
-        /// TMP Essentials yet). Caller falls back to legacy UnityEngine.UI.Text.
-        /// </summary>
+        /// <summary>Resolve the TMP component type via reflection; null if TMP isn't installed (caller falls back to legacy Text).</summary>
         public static Type ResolveTMPType()
         {
             if (_tmpResolved) return _tmpType;
@@ -391,11 +350,7 @@ namespace Dreamer.AgentBridge
             return _tmpType;
         }
 
-        /// <summary>
-        /// Add a text component (TMP if available, legacy Text otherwise) to <paramref name="go"/>
-        /// and configure it. Returns the component for further tweaks, and sets
-        /// <paramref name="wasTmp"/> so the caller knows which path was taken.
-        /// </summary>
+        /// <summary>Add a text component (TMP if available, legacy Text otherwise) to go; wasTmp signals which path was taken.</summary>
         public static Component AddTextComponent(GameObject go, string text, float fontSize, Color? color, string alignment, out bool wasTmp)
         {
             var tmpType = ResolveTMPType();
@@ -516,21 +471,9 @@ namespace Dreamer.AgentBridge
 
         // ── EventSystem ensurance ───────────────────────────────────────
 
-        /// <summary>
-        /// Ensure the active scene has an EventSystem — required for Button/Toggle/Slider
-        /// clicks to fire. Creates one at the scene root if missing. Returns true if
-        /// a new EventSystem was created.
-        ///
-        /// Picks the input module matching the project's active Input handling:
-        /// when Unity defines ENABLE_INPUT_SYSTEM (New or Both modes) and the
-        /// `com.unity.inputsystem` package is installed, attaches
-        /// InputSystemUIInputModule (resolved via reflection so this add-on stays
-        /// optional-dependency on the Input System package). Otherwise attaches the
-        /// legacy StandaloneInputModule. Mismatched modules throw at runtime
-        /// ("You are trying to read Input using the UnityEngine.Input class, but
-        /// you have switched active Input handling to Input System package") —
-        /// hence the explicit detection here.
-        /// </summary>
+        /// <summary>Ensure scene has an EventSystem (required for Button/Toggle/Slider clicks); picks the input module matching project's active Input handling.</summary>
+        // Mismatched input module vs project setting throws at runtime ("trying to read Input using
+        // UnityEngine.Input class, but you have switched to Input System package") — hence the explicit detection.
         public static bool EnsureEventSystem()
         {
 #if UNITY_2023_1_OR_NEWER
@@ -560,11 +503,7 @@ namespace Dreamer.AgentBridge
 
         // ── Scene-vs-prefab target resolver ─────────────────────────────
 
-        /// <summary>
-        /// Resolve a parent GameObject from command args. Supports `sceneObjectPath`
-        /// (scene target) or `parentPath` alias. Returns null and sets <paramref name="error"/>
-        /// if unresolved. Null args.parent returns null (caller interprets as "root").
-        /// </summary>
+        /// <summary>Resolve a parent GameObject from `parent`/`parentPath`/`sceneObjectPath` args; null = scene root.</summary>
         public static GameObject ResolveParent(Dictionary<string, object> args, out string error)
         {
             error = null;
@@ -594,7 +533,6 @@ namespace Dreamer.AgentBridge
                 return $"Unknown anchor preset '{anchorName}'. Valid: {string.Join(", ", AnchorPresetNames())}.";
             if (!hasAnchor)
             {
-                // Default: keep existing anchors (caller didn't ask to change them).
                 spec.anchorMin = rt.anchorMin;
                 spec.anchorMax = rt.anchorMax;
                 spec.pivot = rt.pivot;
@@ -637,15 +575,12 @@ namespace Dreamer.AgentBridge
                 else return "`offsetMax` must be [x,y].";
             }
 
-            // High-level `margin` shortcut: writes the correct offsetMin/Max for stretched
-            // axes from CSS-style [top, right, bottom, left] (or uniform N, or per-side
-            // dict). Doesn't override explicit offsetMin/Max if both are present — those win.
+            // `margin` shortcut: CSS-style insets translated to offsetMin/Max for stretched axes.
+            // Explicit offsetMin/Max wins if both are present.
             if (args.TryGetValue("margin", out object marginRaw))
             {
                 if (!TryParseMargin(marginRaw, out float mTop, out float mRight, out float mBot, out float mLeft))
                     return "`margin` must be N (uniform), [top, right, bottom, left], or {\"top\":N,\"right\":N,\"bottom\":N,\"left\":N}.";
-                // offsetMin = (left, bottom) for stretched axes — positive insets in.
-                // offsetMax = (-right, -top) for stretched axes — negative pulls in from right/top.
                 if (!oMin.HasValue) oMin = new Vector2(mLeft, mBot);
                 if (!oMax.HasValue) oMax = new Vector2(-mRight, -mTop);
             }
@@ -654,11 +589,7 @@ namespace Dreamer.AgentBridge
             return null;
         }
 
-        /// <summary>
-        /// Parse `margin`: uniform N, CSS-order [top, right, bottom, left] array, or
-        /// per-side dict {top, right, bottom, left}. All values are positive insets;
-        /// the caller flips sign for offsetMax (top/right pull in from far edges).
-        /// </summary>
+        /// <summary>Parse `margin`: uniform N, [top, right, bottom, left], or per-side dict — all positive insets.</summary>
         public static bool TryParseMargin(object raw, out float top, out float right, out float bottom, out float left)
         {
             top = right = bottom = left = 0f;
@@ -689,17 +620,12 @@ namespace Dreamer.AgentBridge
                 left   = TryGetFloat(dict, "left",   0f);
                 return true;
             }
-            // Scalar: uniform.
             float u = ToFloat(raw);
             top = right = bottom = left = u;
             return true;
         }
 
-        /// <summary>
-        /// Convenience: strip value list to single items if needed. Some arg
-        /// shapes come through SimpleJson as `List&lt;object&gt;` for array types;
-        /// callers that want a dict might pass these along.
-        /// </summary>
+        /// <summary>Cast object to Dictionary or return null.</summary>
         public static Dictionary<string, object> AsDict(object o) => o as Dictionary<string, object>;
     }
 }

@@ -6,14 +6,7 @@ using UnityEngine;
 
 namespace Dreamer.AgentBridge
 {
-    /// <summary>
-    /// PlayerSettings authoring via the static UnityEditor.PlayerSettings API.
-    /// Some fields (icons, per-platform application identifier, cursor) only
-    /// round-trip cleanly through the static setters; SerializedObject access
-    /// works for simple fields but doesn't reach the per-platform dictionaries.
-    /// Generic SerializedObject editing on ProjectSettings.asset is still
-    /// available via set-project-setting; this file adds the API-only paths.
-    /// </summary>
+    /// <summary>PlayerSettings authoring via the static UnityEditor.PlayerSettings API. Some fields (icons, per-platform app id, cursor) only round-trip cleanly through the static setters — SerializedObject can't reach the per-platform dictionaries.</summary>
     public static class PlayerSettingsOps
     {
         // ─── inspect-player-settings ──────────────────────────────────────
@@ -42,18 +35,15 @@ namespace Dreamer.AgentBridge
                 .Put("scriptingBackend", PlayerSettings.GetScriptingBackend(named).ToString())
                 .Put("apiCompatibilityLevel", PlayerSettings.GetApiCompatibilityLevel(named).ToString());
 
-            // Cursor
             string cursorPath = PlayerSettings.defaultCursor != null
                 ? AssetDatabase.GetAssetPath(PlayerSettings.defaultCursor)
                 : null;
             json.Put("cursorTexture", cursorPath ?? "");
             json.PutRaw("cursorHotspot", $"[{PlayerSettings.cursorHotspot.x},{PlayerSettings.cursorHotspot.y}]");
 
-            // Default icon
             var defaultIcons = PlayerSettings.GetIcons(NamedBuildTarget.Unknown, IconKind.Application);
             json.PutRaw("defaultIcons", IconArrayToJson(defaultIcons));
 
-            // Per-platform icons for the inspected target
             var platformIcons = PlayerSettings.GetIcons(named, IconKind.Application);
             var platformIconObj = SimpleJson.Object()
                 .Put("target", named.TargetName)
@@ -119,9 +109,7 @@ namespace Dreamer.AgentBridge
             if (!args.TryGetValue("textures", out object texturesObj) || !(texturesObj is List<object> texList))
                 return CommandResult.Fail("'textures' is required (JSON array of asset paths).");
 
-            // Determine slot count expected by Unity for this target so we
-            // can warn the agent if their array is the wrong length. Unity
-            // pads or truncates silently otherwise — easy to get wrong.
+            // Unity pads or truncates silently if the array length doesn't match its slot count — warn the agent.
             var expectedSizes = PlayerSettings.GetIconSizes(named, IconKind.Application);
             int expected = expectedSizes != null ? expectedSizes.Length : 0;
 
@@ -163,7 +151,6 @@ namespace Dreamer.AgentBridge
 
             PlayerSettings.defaultCursor = tex;
 
-            // Optional hotspot
             if (args.TryGetValue("hotspot", out object hotspotObj) && hotspotObj is List<object> hsList && hsList.Count >= 2)
             {
                 PlayerSettings.cursorHotspot = new Vector2(ToFloat(hsList[0]), ToFloat(hsList[1]));

@@ -6,14 +6,7 @@ using UnityEngine;
 
 namespace Dreamer.AgentBridge.Animation
 {
-    /// <summary>
-    /// AnimationClip authoring — create clips, write/replace float-curve bindings,
-    /// inspect existing clips, and sample curves to a numeric (t, v) table that
-    /// the agent can read to verify the curve evaluates as intended.
-    ///
-    /// Also covers ObjectReferenceCurves (sprite-swap animation) and
-    /// AnimationEvents (callbacks fired at specific times).
-    /// </summary>
+    /// <summary>AnimationClip authoring — float curves, object-reference (sprite) curves, animation events, and curve sampling.</summary>
     public static class AnimationClipOps
     {
         // ── create-animation-clip ─────────────────────────────────────────
@@ -43,7 +36,6 @@ namespace Dreamer.AgentBridge.Animation
                 return CommandResult.Fail($"Animation clip already exists at '{assetPath}'. Use a different --name or delete the existing asset first.");
 
             var clip = new AnimationClip { frameRate = frameRate, name = name };
-            // Apply loop via clip settings.
             if (loop)
             {
                 var settings = AnimationUtility.GetAnimationClipSettings(clip);
@@ -108,10 +100,7 @@ namespace Dreamer.AgentBridge.Animation
 
             AnimationUtility.SetEditorCurve(clip, binding, curve);
 
-            // After SetEditorCurve, the curve's keys are stored — apply tangent
-            // modes per-key to honor "linear" / "constant" / "auto" requests.
-            // For "free" mode, the inTangent/outTangent values applied at build
-            // time stay as-is.
+            // Apply tangent modes per-key after SetEditorCurve; "free" preserves the build-time inTangent/outTangent.
             ApplyTangentModes(clip, binding, tangentSpecs);
 
             EditorUtility.SetDirty(clip);
@@ -159,9 +148,6 @@ namespace Dreamer.AgentBridge.Animation
                 bindingsJson.AddRaw(item.ToString());
             }
 
-            // Object-reference curves (sprite swaps, etc.). Each is summarized
-            // with per-keyframe sprite name + asset path so the agent can
-            // verify the swap sequence without a separate read.
             var objBindings = AnimationUtility.GetObjectReferenceCurveBindings(clip);
             var objJson = SimpleJson.Array();
             foreach (var b in objBindings)
@@ -191,7 +177,6 @@ namespace Dreamer.AgentBridge.Animation
                 objJson.AddRaw(bItem.ToString());
             }
 
-            // Animation events (callbacks fired at specific times).
             var events = AnimationUtility.GetAnimationEvents(clip);
             var evJson = SimpleJson.Array();
             foreach (var e in events)
@@ -478,7 +463,6 @@ namespace Dreamer.AgentBridge.Animation
                     messageOptions = SendMessageOptions.DontRequireReceiver,
                 };
 
-                // Optional object reference parameter — accepts {assetRef, subAsset?}.
                 if (e.ContainsKey("objectReferenceParameter") && e["objectReferenceParameter"] is Dictionary<string, object> orpDict)
                 {
                     var obj = ResolveAssetRef(orpDict, out string err);
@@ -545,8 +529,7 @@ namespace Dreamer.AgentBridge.Animation
 
         static TangentSpec SpecForInterp(string interp, Dictionary<string, object> key)
         {
-            // "free" = keep the explicit inTangent/outTangent the build placed
-            // on the Keyframe. Anything else uses Unity's tangent-mode setter.
+            // "free" preserves the Keyframe's explicit inTangent/outTangent; other modes go through Unity's tangent-mode setter.
             switch (interp)
             {
                 case "linear":
@@ -576,8 +559,7 @@ namespace Dreamer.AgentBridge.Animation
                 AnimationUtility.SetKeyLeftTangentMode(fresh, i, s.left);
                 AnimationUtility.SetKeyRightTangentMode(fresh, i, s.right);
             }
-            // Write the curve back so tangent-mode side-effects on the Keyframe
-            // tangent values stick.
+            // Write back so tangent-mode side-effects on Keyframe tangent values persist.
             AnimationUtility.SetEditorCurve(clip, binding, fresh);
         }
 
@@ -598,8 +580,7 @@ namespace Dreamer.AgentBridge.Animation
                 if (k.value < vMin) vMin = k.value;
                 if (k.value > vMax) vMax = k.value;
             }
-            // The actual rendered min/max can be outside keyframe values when
-            // tangents overshoot — sample 17 times to get a tighter estimate.
+            // Tangents can overshoot keyframe values; probe-sample to catch the rendered min/max.
             const int probe = 17;
             for (int i = 0; i < probe; i++)
             {
@@ -620,8 +601,7 @@ namespace Dreamer.AgentBridge.Animation
 
         static string NormalizeTargetPath(string target)
         {
-            // AnimationUtility expects relative paths with no leading slash.
-            // Empty string = root (the GO with the Animator/Animation).
+            // AnimationUtility expects relative paths, no leading slash; "" = root (GO holding the Animator).
             if (string.IsNullOrEmpty(target)) return "";
             return target.TrimStart('/');
         }
@@ -648,8 +628,6 @@ namespace Dreamer.AgentBridge.Animation
             catch { return false; }
         }
 
-        // Resolve a {assetRef, subAsset?} dict OR a bare path string to a UnityEngine.Object.
-        // Used by SetSpriteCurve and SetAnimationEvents.
         static UnityEngine.Object ResolveAssetRef(Dictionary<string, object> dict, out string error)
         {
             error = null;
@@ -678,25 +656,12 @@ namespace Dreamer.AgentBridge.Animation
             return main;
         }
 
-        // Resolve a sprite reference — accepts:
-        //   { "sprite": "Assets/Sprites/Walk.png", "subAsset": "Walk_0" }
-        //   { "sprite": { "assetRef": "Assets/X.png", "subAsset": "Walk_0" } }
-        //   { "assetRef": "...", "subAsset": "..." }      (no nested 'sprite' key)
-        //
-        // For the "just a path string" case, we PREFER the Sprite sub-asset
-        // over the Texture2D main asset — most callers pass a .png path
-        // expecting it to bind as a Sprite, and Unity rejects Texture2D at
-        // runtime for SpriteRenderer.m_Sprite. LoadAssetAtPath<Sprite>(path)
-        // returns the Single-mode Sprite; for Multiple-mode atlases it
-        // returns the first slice. To pick a specific slice on Multiple,
-        // pass subAsset.
+        // Bare-path case prefers Sprite sub-asset over Texture2D main: SpriteRenderer.m_Sprite rejects Texture2D at runtime.
         static UnityEngine.Object ResolveSpriteRef(Dictionary<string, object> key, out string error)
         {
             error = null;
-            // Case A: nested object under 'sprite'
             if (key.ContainsKey("sprite") && key["sprite"] is Dictionary<string, object> nested)
                 return ResolveAssetRef(nested, out error);
-            // Case B: 'sprite' is a path string
             string spritePath = SimpleJson.GetString(key, "sprite");
             string subAsset = SimpleJson.GetString(key, "subAsset");
             if (!string.IsNullOrEmpty(spritePath))
@@ -706,15 +671,12 @@ namespace Dreamer.AgentBridge.Animation
                     var probe = new Dictionary<string, object> { { "assetRef", spritePath }, { "subAsset", subAsset } };
                     return ResolveAssetRef(probe, out error);
                 }
-                // Single-mode sprite: pull the Sprite sub-asset out of the .png.
                 var sprite = AssetDatabase.LoadAssetAtPath<Sprite>(spritePath);
                 if (sprite != null) return sprite;
-                // Fallback (caller might be passing a non-png Sprite asset).
                 var any = AssetDatabase.LoadMainAssetAtPath(spritePath);
                 if (any == null) { error = $"asset not found at '{spritePath}'"; return null; }
                 return any;
             }
-            // Case C: no nested 'sprite' — assume key itself is an assetRef dict
             if (key.ContainsKey("assetRef"))
                 return ResolveAssetRef(key, out error);
             error = "expected 'sprite' (path or {assetRef, subAsset?}) or top-level 'assetRef'";

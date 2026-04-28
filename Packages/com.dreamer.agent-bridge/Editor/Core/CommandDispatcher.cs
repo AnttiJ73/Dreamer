@@ -1,13 +1,10 @@
-// Dreamer.AgentBridge — Command Dispatcher
 using System;
 using System.Collections.Generic;
 using UnityEngine;
 
 namespace Dreamer.AgentBridge
 {
-    /// <summary>
-    /// Routes BridgeCommand.kind to the appropriate operation handler.
-    /// </summary>
+    /// <summary>Routes BridgeCommand.kind to the appropriate operation handler.</summary>
     public static class CommandDispatcher
     {
         static readonly Dictionary<string, Func<Dictionary<string, object>, CommandResult>> _handlers
@@ -23,7 +20,6 @@ namespace Dreamer.AgentBridge
             _handlers.Clear();
             _recentCommands.Clear();
 
-            // Asset operations
             _handlers["find_assets"]       = AssetOps.FindAssets;
             _handlers["inspect_asset"]     = AssetOps.InspectAsset;
             _handlers["inspect_assets"]    = AssetOps.InspectAssets;
@@ -31,25 +27,20 @@ namespace Dreamer.AgentBridge
             _handlers["refresh_assets"]    = AssetOps.RefreshAssets;
             _handlers["reimport_scripts"]  = AssetOps.ReimportScripts;
 
-            // Script operations
             _handlers["create_script"]     = ScriptOps.CreateScript;
 
-            // Component operations
             _handlers["add_component"]           = ComponentOps.AddComponent;
             _handlers["remove_component"]        = ComponentOps.RemoveComponent;
             _handlers["remove_missing_scripts"]  = ComponentOps.RemoveMissingScripts;
 
-            // Property operations
             _handlers["set_property"]      = PropertyOps.SetProperty;
             _handlers["read_property"]     = PropertyOps.ReadProperty;
 
-            // Prefab operations
             _handlers["create_prefab"]       = PrefabOps.CreatePrefab;
             _handlers["add_child_to_prefab"] = PrefabOps.AddChildToPrefab;
             _handlers["save_as_prefab"]      = PrefabOps.SaveAsPrefab;
             _handlers["instantiate_prefab"]  = SceneOps.InstantiatePrefab;
 
-            // Scene operations
             _handlers["create_gameobject"]   = SceneOps.CreateGameObject;
             _handlers["delete_gameobject"]   = SceneOps.DeleteGameObject;
             _handlers["rename_gameobject"]   = SceneOps.RenameGameObject;
@@ -61,12 +52,10 @@ namespace Dreamer.AgentBridge
             _handlers["open_scene"]          = SceneOps.OpenScene;
             _handlers["save_scene"]          = SceneOps.SaveScene;
 
-            // Editor operations
             _handlers["execute_menu_item"]       = EditorOps.ExecuteMenuItem;
             _handlers["execute_method"]          = EditorOps.ExecuteMethod;
             _handlers["set_play_mode"]           = PlayModeOps.SetPlayMode;
 
-            // Project Settings — convenience commands + generic editor.
             _handlers["inspect_project_settings"] = ProjectSettingsOps.InspectProjectSettings;
             _handlers["set_layer_name"]           = ProjectSettingsOps.SetLayerName;
             _handlers["clear_layer"]              = ProjectSettingsOps.ClearLayer;
@@ -79,56 +68,39 @@ namespace Dreamer.AgentBridge
             _handlers["set_project_setting"]      = ProjectSettingsOps.SetProjectSetting;
             _handlers["inspect_project_setting"]  = ProjectSettingsOps.InspectProjectSetting;
 
-            // PlayerSettings (static API path — for fields that don't round-trip via SerializedObject).
+            // PlayerSettings static API — for fields that don't round-trip via SerializedObject.
             _handlers["inspect_player_settings"]  = PlayerSettingsOps.InspectPlayerSettings;
             _handlers["set_app_id"]               = PlayerSettingsOps.SetAppId;
             _handlers["set_default_icon"]         = PlayerSettingsOps.SetDefaultIcon;
             _handlers["set_app_icons"]            = PlayerSettingsOps.SetAppIcons;
             _handlers["set_cursor_icon"]          = PlayerSettingsOps.SetCursorIcon;
 
-            // Visual feedback — render assets to PNG so agents can "see".
             _handlers["screenshot_prefab"]        = PreviewOps.ScreenshotPrefab;
             _handlers["screenshot_scene"]         = PreviewOps.ScreenshotScene;
 
-            // EditorBuildSettings.scenes — the build-scenes list.
             _handlers["inspect_build_scenes"]     = BuildSettingsOps.InspectBuildScenes;
             _handlers["set_build_scenes"]         = BuildSettingsOps.SetBuildScenes;
             _handlers["add_build_scene"]          = BuildSettingsOps.AddBuildScene;
             _handlers["remove_build_scene"]       = BuildSettingsOps.RemoveBuildScene;
 
-            // ScriptableObject operations
             _handlers["create_scriptable_object"] = AssetOps.CreateScriptableObject;
 
-            // Material operations
             _handlers["create_material"]         = MaterialOps.CreateMaterial;
             _handlers["inspect_material"]        = MaterialOps.InspectMaterial;
             _handlers["set_material_property"]   = MaterialOps.SetMaterialProperty;
             _handlers["set_material_shader"]     = MaterialOps.SetMaterialShader;
 
-            // ParticleSystem operations (config exposed via wrapper structs that
-            // generic set-property can't reach — see ParticleOps for details).
+            // ParticleSystem config lives on wrapper structs the generic set-property can't reach.
             _handlers["set_particle_property"]   = ParticleOps.SetParticleProperty;
 
-            // Shader operations
             _handlers["shader_status"]           = ShaderOps.ShaderStatus;
             _handlers["inspect_shader"]          = ShaderOps.InspectShader;
 
-            // Add-on plugin discovery. Each add-on ships a type named
-            // "Dreamer.AgentBridge.<Name>.Registration" with a static
-            // `Register(IDictionary<string, Func<Dictionary<string,object>, CommandResult>>)`
-            // method. Core discovers them via reflection so it can compile + run
-            // standalone, and add-ons can drop in without any edits here.
+            // Add-ons ship a type "Dreamer.AgentBridge.<Name>.Registration" with a static
+            // Register(handlers) method. Discovered via reflection so core compiles standalone.
             DiscoverPluginRegistrations();
         }
 
-        /// <summary>
-        /// Reflection-based plugin discovery. Finds every assembly-accessible
-        /// type whose full name ends in ".Registration" and is in the
-        /// Dreamer.AgentBridge namespace family, then invokes its static
-        /// `Register` method with our handler dictionary. Keeps core
-        /// decoupled from optional add-on packages — nothing here fails if
-        /// an add-on is absent.
-        /// </summary>
         static void DiscoverPluginRegistrations()
         {
             foreach (var asm in System.AppDomain.CurrentDomain.GetAssemblies())
@@ -180,13 +152,8 @@ namespace Dreamer.AgentBridge
             {
                 if (!_handlers.TryGetValue(command.kind, out var handler))
                 {
-                    // Unity-side rejection — handler not registered. Distinct
-                    // from the daemon-side "Unknown command kind" rejection
-                    // (which never reaches Unity). The "[unity-bridge]" tag
-                    // is the disambiguator: if you see this exact prefix,
-                    // it's a registration / domain-reload problem on Unity's
-                    // side; if you see "source: daemon" in a 400 response,
-                    // restart the daemon process instead.
+                    // The "[unity-bridge]" tag disambiguates Unity-side rejection from the
+                    // daemon-side "Unknown command kind" — see the result string below.
                     result = CommandResult.Fail(
                         $"Unknown command kind '{command.kind}' [unity-bridge]. " +
                         "The daemon accepted this kind but the Unity-side dispatcher has no handler registered. " +

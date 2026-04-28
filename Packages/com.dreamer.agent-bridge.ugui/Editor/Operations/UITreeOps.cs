@@ -5,35 +5,12 @@ using UnityEngine;
 using UnityEngine.UI;
 using Object = UnityEngine.Object;
 
-// recompile-touch 2026-04-20: forcing Unity to pick up auto-LayoutElement + warning helpers
 namespace Dreamer.AgentBridge
 {
-    /// <summary>
-    /// Tier 3 of the UI support — declarative tree builder.
-    /// One command, one nested JSON spec, a full UI subtree goes up.
-    ///
-    /// Supports four construction modes, so callers can start the tree at
-    /// any point in the scene hierarchy, not just a canvas root:
-    ///   - "create": build a fresh Canvas and tree beneath it
-    ///   - "append": add the tree as a child of the specified target
-    ///   - "replace-children": delete all children of target, rebuild from tree
-    ///   - "replace-self": delete target, put the new tree in its place (as
-    ///     a child of target's parent)
-    ///
-    /// Node types available: Panel, Image, Text, Button, VStack, HStack, Grid,
-    /// ScrollList, Slider, Toggle, InputField, Spacer, Raw.
-    /// </summary>
+    /// <summary>Declarative UI tree builder — modes: create | append | replace-children | replace-self.</summary>
     public static class UITreeOps
     {
-        /// <summary>
-        /// Args: {
-        ///   mode: "create" | "append" | "replace-children" | "replace-self",
-        ///   target?: "/Canvas/MainPanel",        // required for append/replace-*
-        ///   canvas?: { ... },                    // for mode=create
-        ///   tree: { type, name, anchor, size, children?: [...], ... }
-        /// }
-        /// Returns { created: true, rootPath, builtCount, warnings? }
-        /// </summary>
+        /// <summary>Build a UI tree from a nested JSON spec.</summary>
         public static CommandResult CreateUITree(Dictionary<string, object> args)
         {
             string modeStr = SimpleJson.GetString(args, "mode", "create").Trim().ToLowerInvariant();
@@ -49,7 +26,6 @@ namespace Dreamer.AgentBridge
             {
                 case "create":
                 {
-                    // Build a fresh canvas then place the tree under it.
                     var canvasSpec = UIHelpers.AsDict(SimpleJson.GetValue(args, "canvas")) ?? new Dictionary<string, object>();
                     var canvasResult = UIWidgetOps.CreateCanvas(canvasSpec);
                     if (!canvasResult.success)
@@ -89,7 +65,6 @@ namespace Dreamer.AgentBridge
                     }
                     else
                     {
-                        // mode=replace-children with no tree == just clear
                         rootGo = target;
                     }
                     return OkResult(rootGo, warnings, extraKey: "childrenRemoved", extraVal: removed);
@@ -153,11 +128,7 @@ namespace Dreamer.AgentBridge
         //  Node construction
         // ────────────────────────────────────────────────────────────────
 
-        /// <summary>
-        /// Build a single node and recursively its children. Returns the
-        /// GameObject at the root of this node, or null on failure (with a
-        /// warning added).
-        /// </summary>
+        /// <summary>Build a single node and its children; returns the root GO or null on failure (with a warning).</summary>
         static GameObject BuildNode(Dictionary<string, object> spec, Transform parent, List<string> warnings)
         {
             if (spec == null) return null;
@@ -216,11 +187,9 @@ namespace Dreamer.AgentBridge
             ApplyAutoLayoutElement(go, spec, parent);
             WarnLayoutAntipatterns(go, spec, parent, key, warnings);
 
-            // Recurse children (for container types only — leaf types like Text/Image/Button
-            // don't consume children, but we warn rather than silently drop them).
             if (spec.TryGetValue("children", out object childrenObj) && childrenObj is List<object> childList && childList.Count > 0)
             {
-                // For ScrollList, children go into the Content node, not the root.
+                // ScrollList children go into Content, not the root.
                 Transform childParent = go.transform;
                 if (key == "scrolllist" || key == "scroll-list" || key == "scrollview")
                 {
@@ -258,13 +227,13 @@ namespace Dreamer.AgentBridge
                 case "dropdown":
                     return true;
                 default:
-                    return false;  // Button allows a child Text override; container types (Panel, stacks, ScrollList) take children
+                    return false;
             }
         }
 
         // ── Per-type constructors ───────────────────────────────────────
 
-        /// <summary>Build a panel-ish container. Optionally with an Image background and/or a LayoutGroup.</summary>
+        /// <summary>Build a panel-ish container, optionally with an Image background and/or a LayoutGroup.</summary>
         static GameObject BuildPanelLike(Dictionary<string, object> spec, Transform parent, bool addImage, string layout)
         {
             string name = SimpleJson.GetString(spec, "name", DefaultNameForLayout(layout) ?? "Panel");
@@ -312,10 +281,8 @@ namespace Dreamer.AgentBridge
             }
         }
 
-        // Helpers below pass `_parentInstanceId` rather than a scene path so
-        // widget primitives can SetParent by instance reference. Avoids the
-        // ambiguity that happens when two tree siblings share the same name
-        // during construction ("VStack" twice under the same parent).
+        // Helpers pass `_parentInstanceId` not a scene path: avoids ambiguity when two tree siblings share a name
+        // during construction (e.g. "VStack" twice under the same parent — path lookup picks the wrong one).
 
         static GameObject BuildImage(Dictionary<string, object> spec, Transform parent)
         {
@@ -352,10 +319,7 @@ namespace Dreamer.AgentBridge
             var wArgs = CopyRectArgs(spec);
             wArgs["_parentInstanceId"] = parent.gameObject.GetInstanceID();
             if (spec.TryGetValue("name", out object n)) wArgs["name"] = n;
-            // Accept both `label` and `text` for the button caption — `label`
-            // matches the rest of the widget set (Toggle uses `label`) and
-            // mirrors how Unity's Inspector names control text. `text` stays
-            // as a back-compat alias.
+            // `label` is canonical (matches Toggle/Unity Inspector); `text` is back-compat.
             if (spec.TryGetValue("label", out object lbl)) wArgs["text"] = lbl;
             else if (spec.TryGetValue("text", out object t)) wArgs["text"] = t;
             if (spec.TryGetValue("fontSize", out object fs)) wArgs["fontSize"] = fs;
@@ -386,7 +350,6 @@ namespace Dreamer.AgentBridge
         {
             var wArgs = new Dictionary<string, object>(spec);
             wArgs["_parentInstanceId"] = parent.gameObject.GetInstanceID();
-            // Drop children (leaf) so they don't confuse downstream.
             wArgs.Remove("children");
             result = createFn(wArgs);
             return result.success ? FindChildByResult(parent, result) : null;
@@ -412,11 +375,7 @@ namespace Dreamer.AgentBridge
             return go;
         }
 
-        /// <summary>
-        /// Escape hatch: bare GameObject + optional explicit `components`
-        /// (array of full-type-name strings). Useful when the schema doesn't
-        /// cover your widget and you need to drop in a custom MonoBehaviour.
-        /// </summary>
+        /// <summary>Escape hatch: bare GameObject with optional explicit `components` for custom MonoBehaviours.</summary>
         static GameObject BuildRaw(Dictionary<string, object> spec, Transform parent, List<string> warnings)
         {
             string name = SimpleJson.GetString(spec, "name", "RawNode");
@@ -451,10 +410,7 @@ namespace Dreamer.AgentBridge
 
         // ── Helpers ─────────────────────────────────────────────────────
 
-        /// <summary>
-        /// Extract rect-transform-relevant fields from a node spec into a fresh dict
-        /// so it can be passed to UIWidgetOps.* handlers, which expect flat args.
-        /// </summary>
+        /// <summary>Extract rect-transform fields from a node spec into a flat args dict for UIWidgetOps handlers.</summary>
         static Dictionary<string, object> CopyRectArgs(Dictionary<string, object> spec)
         {
             var result = new Dictionary<string, object>();
@@ -465,12 +421,7 @@ namespace Dreamer.AgentBridge
             return result;
         }
 
-        /// <summary>
-        /// The widget primitives return a JSON result that carries the new GO's
-        /// `instanceId` (preferred — path lookup would ambiguate when two siblings
-        /// have the same name, common in tree builds like a column of Buttons).
-        /// Falls back to path if instanceId is missing.
-        /// </summary>
+        /// <summary>Resolve a widget primitive's result back to the GO via instanceId (preferred — path is ambiguous when siblings share names).</summary>
         static GameObject FindChildByResult(Transform parent, CommandResult result)
         {
             if (string.IsNullOrEmpty(result.resultJson)) return null;
@@ -513,40 +464,22 @@ namespace Dreamer.AgentBridge
             UIHelpers.ApplyRectTransformArgs(rt, spec);
         }
 
-        /// <summary>
-        /// When `parent` carries a HorizontalOrVerticalLayoutGroup (VStack/HStack) and the
-        /// child spec has a `size`, attach a LayoutElement so the LayoutGroup respects the
-        /// requested dimensions. Without this, `size` is silently dropped under
-        /// `controlChildSize=true` because the LayoutGroup reads LayoutElement.preferredX
-        /// (default 0), not RectTransform.sizeDelta.
-        ///
-        /// Both preferred AND flex are set explicitly (NOT left at -1) on each axis. Unity's
-        /// LayoutUtility.GetLayoutProperty SKIPS negative values and falls through to the next
-        /// ILayoutElement on the same GameObject. Container nodes (HStack, VStack, ScrollList)
-        /// have a LayoutGroup or ScrollRect that ALSO implements ILayoutElement at lower
-        /// priority — leaving flex at -1 here makes Unity use the LayoutGroup's reported
-        /// flex (max of children), which silently re-flexes a "fixed-size" child. Setting
-        /// flex=0 explicitly locks the axis to the LayoutElement's preferred value.
-        ///
-        /// Convention: positive size value -> preferred=size, flex=0 (locked size).
-        ///             zero/missing       -> preferred=0, flex=1 (fills available space).
-        /// Skips GridLayoutGroup children (Grid uses cellSize, ignores LayoutElement).
-        /// Skips when a LayoutElement already exists (Spacer attaches its own).
-        /// </summary>
+        // Auto-attach a LayoutElement when this child sits in a H/V LayoutGroup. Critical because:
+        //   - Without LE, controlChildSize=true reads LE.preferredX (default 0) instead of sizeDelta and shrinks the child.
+        //   - Both preferred AND flex MUST be set explicitly. Unity's LayoutUtility SKIPS negative LE values
+        //     and falls through to the next ILayoutElement on the same GO — container nodes (LayoutGroup,
+        //     ScrollRect) implement ILayoutElement at lower priority, so leaving flex at -1 makes Unity use
+        //     the container's reported flex (max of children) and silently re-flexes a "fixed-size" child.
+        // Convention: positive size -> preferred=size, flex=0 (locked); missing/zero -> preferred=0, flex=1 (fill).
+        // Skips Grid (uses cellSize) and skips when LayoutElement already exists (Spacer attaches its own).
         static void ApplyAutoLayoutElement(GameObject go, Dictionary<string, object> spec, Transform parent)
         {
             if (parent == null) return;
             var hv = parent.GetComponent<HorizontalOrVerticalLayoutGroup>();
-            if (hv == null) return; // GridLayoutGroup or no layout — nothing to do
+            if (hv == null) return;
 
-            // Don't override an existing LayoutElement (e.g. Spacer adds its own with flex).
             if (go.GetComponent<LayoutElement>() != null) return;
 
-            // Always attach a LayoutElement under a LayoutGroup parent — even when `size`
-            // is omitted. Without an LE, Unity's LayoutUtility falls through to whatever
-            // ILayoutElement the child happens to carry (HorizontalLayoutGroup, ScrollRect's
-            // implicit reporting, etc.) which silently re-flexes the child. Sized children
-            // get locked dimensions; size-less children default to fill (preferred=0, flex=1).
             Vector2 size = Vector2.zero;
             bool hasSize = false;
             if (spec.TryGetValue("size", out object sizeRaw)
@@ -563,13 +496,7 @@ namespace Dreamer.AgentBridge
             else                       { le.preferredHeight = 0f;     le.flexibleHeight = 1f; }
         }
 
-        /// <summary>
-        /// Surface known schema misuses to the result's warnings[] so the agent
-        /// learns why the layout looks off instead of guessing. Currently:
-        ///   - `anchor` set on a child of a LayoutGroup parent (LayoutGroup overrides anchoring)
-        ///   - `Spacer` under a LayoutGroup with controlChildSize off on the relevant axis
-        ///     (Spacer pushes via flexible(Width|Height), which the LayoutGroup ignores in that mode)
-        /// </summary>
+        /// <summary>Surface known schema misuses to warnings[] so the agent gets a signal instead of guessing.</summary>
         static void WarnLayoutAntipatterns(GameObject go, Dictionary<string, object> spec, Transform parent, string typeKey, List<string> warnings)
         {
             if (parent == null) return;
@@ -585,10 +512,8 @@ namespace Dreamer.AgentBridge
                     "Either remove the anchor or remove the LayoutGroup on the parent.");
             }
 
-            // Spacer no longer needs a warning: with controlChildSize=true (default) and
-            // Spacer's own flex=1, surplus distribution gives Spacer the remaining space
-            // regardless of parent's forceExpand flag. Only fails if the user explicitly
-            // disables controlChildSize on the parent.
+            // Spacer only fails when controlChildSize is explicitly disabled on the relevant axis —
+            // otherwise default controlChildSize=true + Spacer flex=1 gives Spacer the surplus.
             if (typeKey == "spacer" && parentLG is HorizontalOrVerticalLayoutGroup hv)
             {
                 bool isVerticalParent = parentLG is VerticalLayoutGroup;

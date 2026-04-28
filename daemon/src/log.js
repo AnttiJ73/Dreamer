@@ -1,24 +1,9 @@
 'use strict';
 
-/**
- * Dreamer logger with two output modes:
- *
- * 1. **Human mode** (interactive TTY, e.g. `node src/server.js`) —
- *    `[Dreamer] module message` with ANSI color (cyan tag, amber warn,
- *    coral error). Disable with NO_COLOR=1.
- *
- * 2. **Structured mode** (detached daemon, or DREAMER_LOG_FORMAT=json) —
- *    JSON lines: `{"ts":"ISO-8601","level":"info","module":"server","msg":"…"}`
- *    to `.dreamer-daemon.log`. Parseable with `jq`, grepable by field.
- *
- * The detached daemon spawns with `stdio: 'ignore'`, so stdout/stderr
- * are /dev/null — structured mode writes directly to the log file from
- * a module-level stream, bypassing console.*.
- *
- * Usage:
- *   const log = require('./log').create('server');
- *   log.info('Listening on :18710');
- */
+// Two modes: human (TTY, colored `[Dreamer] module msg`, NO_COLOR disables) and
+// structured (JSON lines to `.dreamer-daemon.log` when --daemon or DREAMER_LOG_FORMAT=json).
+// The detached daemon spawns with stdio:'ignore', so structured mode writes
+// directly to the file stream — console.* would go to /dev/null.
 
 const fs = require('fs');
 const path = require('path');
@@ -29,7 +14,6 @@ const USE_COLOR = !!process.stdout.isTTY && !process.env.NO_COLOR && !FORMAT_JSO
 
 const LOG_FILE_PATH = path.join(path.resolve(__dirname, '..'), '.dreamer-daemon.log');
 
-// Open the log stream lazily — only when we're the daemon and about to write.
 let _stream = null;
 function getStream() {
   if (_stream) return _stream;
@@ -73,7 +57,6 @@ function emitJson(mod, level, msg) {
   if (stream) {
     stream.write(line);
   } else {
-    // No file stream (e.g., DREAMER_LOG_FORMAT=json in foreground) — use stdout/stderr.
     if (level === 'error') process.stderr.write(line);
     else process.stdout.write(line);
   }

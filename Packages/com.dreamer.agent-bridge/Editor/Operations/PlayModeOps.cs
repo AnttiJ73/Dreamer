@@ -4,13 +4,7 @@ using UnityEditor;
 
 namespace Dreamer.AgentBridge
 {
-    /// <summary>
-    /// Play-mode toggling. EditorApplication.ExecuteMenuItem("Edit/Play") returns
-    /// false for items with validation handlers, which includes the Play/Pause
-    /// menu — so we expose the proper APIs (EnterPlaymode/ExitPlaymode/isPaused)
-    /// as a first-class command. Gated by PlayModePolicy so the project owner
-    /// can decide whether agents are allowed to control play state at all.
-    /// </summary>
+    /// <summary>Play-mode toggling. ExecuteMenuItem("Edit/Play") silently returns false because Play/Pause have validation handlers — this exposes EnterPlaymode/ExitPlaymode/isPaused directly. Gated by PlayModePolicy.</summary>
     public static class PlayModeOps
     {
         public static CommandResult SetPlayMode(Dictionary<string, object> args)
@@ -51,11 +45,8 @@ namespace Dreamer.AgentBridge
                         $"Unknown state '{state}'. Valid: enter | exit | toggle | pause | unpause | toggle-pause");
             }
 
-            // Play-mode transitions are async — Unity finishes the transition
-            // after the next editor tick. The fields below report the immediate
-            // state after the API call, not the eventual settled state. Agents
-            // wanting confirmation should re-check via /api/status which is
-            // refreshed from the bridge's state snapshot.
+            // Play-mode transitions are async — fields below are immediate, not settled state.
+            // Agents wanting confirmation should re-check via /api/status.
             var json = SimpleJson.Object()
                 .Put("requestedState", state)
                 .Put("wasPlaying", wasPlaying)
@@ -69,12 +60,7 @@ namespace Dreamer.AgentBridge
         }
     }
 
-    /// <summary>
-    /// Per-machine policy: may agents toggle play mode? Default ON, but the
-    /// developer is asked once on first bridge start (PromptIfUnconfigured).
-    /// Stored in EditorPrefs because the bridge is per-Unity-Editor and the
-    /// answer is per-developer, not per-project-checkout.
-    /// </summary>
+    /// <summary>Per-developer policy (EditorPrefs, not per-project) for whether agents may toggle play mode. Default ON; first-run prompt sets it via PromptIfUnconfigured.</summary>
     public static class PlayModePolicy
     {
         const string PrefAllow = "Dreamer.AllowPlayModeToggle";

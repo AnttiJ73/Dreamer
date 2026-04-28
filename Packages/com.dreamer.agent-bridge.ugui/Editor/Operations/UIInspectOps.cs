@@ -5,34 +5,10 @@ using UnityEngine.UI;
 
 namespace Dreamer.AgentBridge
 {
-    /// <summary>
-    /// Dump an existing UI hierarchy back to the same JSON schema that
-    /// <see cref="UITreeOps"/> consumes. Lets Claude read current UI state,
-    /// edit the JSON, and feed it back via `create-ui-tree --mode replace-*`
-    /// to iterate on existing scenes without redesigning everything from
-    /// scratch.
-    ///
-    /// Widget recognition rules (in precedence order):
-    ///   ScrollRect           → ScrollList
-    ///   Button               → Button
-    ///   Slider               → Slider
-    ///   Toggle               → Toggle
-    ///   InputField           → InputField
-    ///   Dropdown / TMP_Drop. → (Raw — schema has no Dropdown shorthand yet)
-    ///   HorizontalLayoutGroup → HStack
-    ///   VerticalLayoutGroup   → VStack
-    ///   GridLayoutGroup       → Grid
-    ///   TMP_Text / Text       → Text
-    ///   Image                 → Panel (if it also has children) or Image
-    ///   otherwise             → Raw (with `components[]` preserving unknowns)
-    /// </summary>
+    /// <summary>Dump an existing UI hierarchy back to the create-ui-tree JSON schema for round-trip editing.</summary>
     public static class UIInspectOps
     {
-        /// <summary>
-        /// Args: { target: "/Canvas/Menu", depth?: N (default unlimited),
-        ///         includeRaw?: true (default true), includeRect?: true (default true) }
-        /// Returns: the tree as a nested JSON object in the create-ui-tree schema.
-        /// </summary>
+        /// <summary>Inspect a UI subtree and return it as create-ui-tree JSON.</summary>
         public static CommandResult InspectUITree(Dictionary<string, object> args)
         {
             string targetPath = SimpleJson.GetString(args, "target");
@@ -53,20 +29,14 @@ namespace Dreamer.AgentBridge
                 .ToString());
         }
 
-        // ────────────────────────────────────────────────────────────────
-        //  Node inspection
-        // ────────────────────────────────────────────────────────────────
-
         static string InspectNode(GameObject go, int remainingDepth, bool includeRaw, bool includeRect)
         {
             var obj = SimpleJson.Object()
                 .Put("name", go.name);
 
-            // Widget-type recognition
             string type = DetectType(go, out Dictionary<string, object> typeProps);
             obj.Put("type", type);
 
-            // Type-specific fields
             if (typeProps != null)
             {
                 foreach (var kv in typeProps)
@@ -81,8 +51,7 @@ namespace Dreamer.AgentBridge
                 }
             }
 
-            // Raw fallback: preserve all components as type-name strings so the
-            // round-trip through `Raw` doesn't silently drop custom MonoBehaviours.
+            // Preserve unknown components as type-name strings so round-trip through Raw doesn't drop custom MonoBehaviours.
             if (type == "Raw" && includeRaw)
             {
                 var comps = SimpleJson.Array();
@@ -95,7 +64,6 @@ namespace Dreamer.AgentBridge
                 obj.PutRaw("components", comps.ToString());
             }
 
-            // Rect transform fields — always useful for round-tripping placement.
             if (includeRect)
             {
                 var rt = go.GetComponent<RectTransform>();
@@ -106,28 +74,23 @@ namespace Dreamer.AgentBridge
                     obj.PutRaw("pivot", Vector2Json(rt.pivot));
                     obj.PutRaw("sizeDelta", Vector2Json(rt.sizeDelta));
                     obj.PutRaw("anchoredPosition", Vector2Json(rt.anchoredPosition));
-                    // Anchor preset name if it matches a known preset (for legibility).
                     string preset = DetectAnchorPreset(rt);
                     if (preset != null) obj.Put("anchor", preset);
                 }
             }
 
-            // Recurse children.
             if (remainingDepth != 0 && go.transform.childCount > 0)
             {
-                // ScrollList → children live inside Content, not the root.
+                // ScrollList children live inside Content, not the root.
                 Transform childRoot = go.transform;
                 if (type == "ScrollList")
                 {
                     var content = FindDescendant(go.transform, "Content");
                     if (content != null) childRoot = content;
                 }
-                // Leaf widgets store their composite structure (e.g. Button's Text child)
-                // but the schema encodes that implicitly. Skip child emission for widgets
-                // whose internal structure is reconstructed automatically by the builder.
                 if (IsComposite(type))
                 {
-                    // Don't emit children — the builder reconstructs them.
+                    // Builder reconstructs composite widgets' internals from the top-level node.
                 }
                 else
                 {
@@ -136,11 +99,9 @@ namespace Dreamer.AgentBridge
                     for (int i = 0; i < childRoot.childCount; i++)
                     {
                         var child = childRoot.GetChild(i).gameObject;
-                        // Filter out internal structural children the builder creates itself.
                         if (type == "ScrollList" && (child.name == "Viewport" || child.name == "Content")) continue;
                         children.AddRaw(InspectNode(child, nextDepth, includeRaw, includeRect));
                     }
-                    // Only emit children[] if there's something to emit.
                     var childStr = children.ToString();
                     if (childStr != "[]") obj.PutRaw("children", childStr);
                 }
@@ -149,11 +110,7 @@ namespace Dreamer.AgentBridge
             return obj.ToString();
         }
 
-        /// <summary>
-        /// Widget types whose sub-hierarchy is implicit in the schema — the
-        /// tree builder reconstructs the inner structure (e.g. Button's Text
-        /// child) from the top-level node. Skip child recursion for these.
-        /// </summary>
+        /// <summary>Widget types whose sub-hierarchy is implicit in the schema — skip child recursion.</summary>
         static bool IsComposite(string type)
         {
             switch (type)
@@ -167,10 +124,6 @@ namespace Dreamer.AgentBridge
                     return false;
             }
         }
-
-        // ────────────────────────────────────────────────────────────────
-        //  Widget-type detection
-        // ────────────────────────────────────────────────────────────────
 
         static string DetectType(GameObject go, out Dictionary<string, object> props)
         {
@@ -247,7 +200,7 @@ namespace Dreamer.AgentBridge
                 return "VStack";
             }
 
-            // TMP_Text via reflection (add-on may or may not depend on TMP).
+            // TMP via reflection — add-on doesn't hard-depend on the TMP package.
             var tmpType = UIHelpers.ResolveTMPType();
             if (tmpType != null)
             {
@@ -285,11 +238,9 @@ namespace Dreamer.AgentBridge
                     var p = AssetDatabase.GetAssetPath(img.sprite);
                     if (!string.IsNullOrEmpty(p)) props["sprite"] = p;
                 }
-                // If it has UI children of its own, treat as Panel (a container with a background).
                 return go.transform.childCount > 0 ? "Panel" : "Image";
             }
 
-            // Fallback: bare RectTransform container or unknown component mix → Raw
             props = new Dictionary<string, object>();
             return "Raw";
         }
@@ -326,8 +277,6 @@ namespace Dreamer.AgentBridge
             return null;
         }
 
-        // ── Anchor preset detection ─────────────────────────────────────
-
         /// <summary>Try to match the rect's anchorMin/Max/pivot to a known preset name.</summary>
         static string DetectAnchorPreset(RectTransform rt)
         {
@@ -355,7 +304,7 @@ namespace Dreamer.AgentBridge
             if (EQ(min, new Vector2(0.5f, 0)) && EQ(max, new Vector2(0.5f, 1))) return "stretch-center";
             if (EQ(min, new Vector2(1, 0)) && EQ(max, new Vector2(1, 1))) return "stretch-right";
 
-            return null; // explicit anchorMin/Max/pivot will round-trip via raw fields
+            return null;
         }
 
         static string Vector2Json(Vector2 v) =>

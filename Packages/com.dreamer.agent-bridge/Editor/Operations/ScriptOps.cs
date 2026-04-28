@@ -8,12 +8,7 @@ namespace Dreamer.AgentBridge
 {
     public static class ScriptOps
     {
-        /// <summary>
-        /// Create a new C# script from a template.
-        /// Args: { name: "MyComponent", namespace?: "Game",
-        ///         template?: "monobehaviour"|"scriptableobject"|"editor"|"plain",
-        ///         path?: "Assets/Scripts" }
-        /// </summary>
+        /// <summary>Create a C# script from a template. Args: { name, namespace?, template?: "monobehaviour"|"scriptableobject"|"editor"|"plain", path? }</summary>
         public static CommandResult CreateScript(Dictionary<string, object> args)
         {
             string name = SimpleJson.GetString(args, "name");
@@ -21,8 +16,7 @@ namespace Dreamer.AgentBridge
             string template = SimpleJson.GetString(args, "template", "monobehaviour").ToLowerInvariant();
             string folder = SimpleJson.GetString(args, "path", "Assets/Scripts");
 
-            // Normalize separators; tolerate users passing a full file path in --path
-            // (e.g. "Assets/Scripts/Foo/Bar.cs") instead of a folder.
+            // Tolerate users passing a full file path in --path (e.g. "Assets/Scripts/Foo/Bar.cs").
             folder = (folder ?? string.Empty).Replace('\\', '/').TrimEnd('/');
             if (folder.EndsWith(".cs", StringComparison.OrdinalIgnoreCase))
             {
@@ -42,7 +36,6 @@ namespace Dreamer.AgentBridge
             if (string.IsNullOrEmpty(name))
                 return CommandResult.Fail("'name' is required.");
 
-            // Sanitize
             name = SanitizeClassName(name);
             if (name.EndsWith(".cs", StringComparison.OrdinalIgnoreCase))
                 name = name.Substring(0, name.Length - 3);
@@ -50,7 +43,6 @@ namespace Dreamer.AgentBridge
             if (string.IsNullOrEmpty(name))
                 return CommandResult.Fail("Invalid script name after sanitization.");
 
-            // Ensure directory
             string fullDir = Path.GetFullPath(folder);
             if (!Directory.Exists(fullDir))
             {
@@ -64,7 +56,6 @@ namespace Dreamer.AgentBridge
             if (File.Exists(fullPath))
                 return CommandResult.Fail($"Script already exists at: {assetPath}");
 
-            // Generate content
             string content = GenerateScript(name, ns, template);
 
             File.WriteAllText(fullPath, content, System.Text.Encoding.UTF8);
@@ -166,7 +157,6 @@ namespace Dreamer.AgentBridge
 
         static string GenerateEditor(string className, string indent)
         {
-            // Remove "Editor" suffix to get target class name if present
             string targetClass = className.EndsWith("Editor")
                 ? className.Substring(0, className.Length - 6)
                 : className.Replace("Editor", "");
@@ -201,7 +191,7 @@ namespace Dreamer.AgentBridge
                 char c = name[i];
                 if (char.IsLetterOrDigit(c) || c == '_')
                 {
-                    // First character must be letter or underscore
+                    // First char must be letter or underscore.
                     if (sb.Length == 0 && char.IsDigit(c))
                         sb.Append('_');
                     sb.Append(c);

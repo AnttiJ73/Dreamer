@@ -5,26 +5,14 @@ using UnityEngine;
 
 namespace Dreamer.AgentBridge
 {
-    /// <summary>
-    /// ParticleSystem property writer. Necessary because PS exposes its config
-    /// through C# wrapper structs (MainModule, EmissionModule, ...) accessed as
-    /// instance properties — those wrappers proxy to native code, so you can't
-    /// reach `main.startLifetime` through generic set-property reflection. The
-    /// underlying *serialized* field names also don't match the API: `main`
-    /// serializes as `InitialModule`, `limitVelocityOverLifetime` as
-    /// `ClampVelocityModule`, etc.
-    ///
-    /// This handler does two things the generic resolver can't:
-    ///   1. Rewrite API-style first segments to their serialized equivalents.
-    ///   2. Expand a bare scalar value to MinMaxCurve.scalar + minMaxState=0
-    ///      when the target field is a MinMaxCurve struct (the common case
-    ///      for `startLifetime`, `startSpeed`, `startSize`, `rateOverTime`,
-    ///      most numeric fields under modules).
-    /// </summary>
+    /// <summary>ParticleSystem property writer. Needed because PS config is exposed via C# wrapper structs (MainModule, ...) that proxy to native code, so generic set-property can't reach them. Also serialized field names don't match the API: main → InitialModule, limitVelocityOverLifetime → ClampVelocityModule, etc.</summary>
+    // Two things this handler does the generic resolver can't:
+    //   1. Rewrite API-style first segments to their serialized equivalents (see ModuleAlias).
+    //   2. Expand a bare scalar to MinMaxCurve.scalar + minMaxState=0 for MinMaxCurve structs
+    //      (covers startLifetime, startSpeed, rateOverTime, most numeric module fields).
     public static class ParticleOps
     {
-        // C# API name → SerializedProperty name. Ordering reflects ParticleSystem.cs
-        // public surface; verified against Unity's serialization layout.
+        // C# API name → SerializedProperty name; verified against Unity's serialization layout.
         static readonly Dictionary<string, string> ModuleAlias = new Dictionary<string, string>(StringComparer.Ordinal)
         {
             { "main",                       "InitialModule"            },
@@ -150,9 +138,7 @@ namespace Dreamer.AgentBridge
 
         // ── Path rewrite ──
 
-        // "main.startLifetime"           → "InitialModule.startLifetime"
-        // "emission.rateOverTime.scalar" → "EmissionModule.rateOverTime.scalar"
-        // "lengthInSec"                  → "lengthInSec"  (no module prefix; pass-through)
+        // "main.startLifetime" → "InitialModule.startLifetime"; bare paths pass through unchanged.
         static string RewriteModulePath(string path, out string apiName, out string serializedName)
         {
             apiName = null;
@@ -173,9 +159,8 @@ namespace Dreamer.AgentBridge
 
         static string ApplyParticleValue(SerializedProperty sp, object value)
         {
-            // MinMaxCurve struct detection: presence of "minMaxState" child marks it.
-            // A bare scalar from the user → set scalar+minScalar, mode=Constant.
-            // A {min, max} object → set scalar=max, minScalar=min, mode=TwoConstants.
+            // MinMaxCurve struct detection via presence of "minMaxState" child.
+            // Bare scalar → mode=Constant; {min,max} → mode=TwoConstants.
             if (sp.propertyType == SerializedPropertyType.Generic)
             {
                 var stateProp = sp.FindPropertyRelative("minMaxState");
@@ -191,16 +176,10 @@ namespace Dreamer.AgentBridge
                         SetMinMaxCurveTwoConstants(sp, stateProp, min, max);
                         return null;
                     }
-                    // For richer MinMaxCurve assignments (curves, two-curves, gradient curves)
-                    // the agent should use explicit subpath access:
-                    //   set-particle-property --property "main.startLifetime.scalar" --value 5
-                    //   set-particle-property --property "main.startLifetime.minMaxState" --value 0
                     return $"MinMaxCurve at '{sp.propertyPath}' takes a scalar (constant) or {{min, max}} (two constants). For curves, set sub-fields explicitly: '{sp.propertyPath.Replace("InitialModule.", "main.").Replace("EmissionModule.", "emission.")}.scalar' / '.minMaxState'.";
                 }
             }
 
-            // Fall through to the generic resolver for everything else: bools, ints,
-            // floats, vectors, colors, object references, arrays, structs.
             return PropertyOps.ApplyValue(sp, value, null);
         }
 
@@ -215,7 +194,7 @@ namespace Dreamer.AgentBridge
 
         static void SetMinMaxCurveTwoConstants(SerializedProperty sp, SerializedProperty stateProp, float min, float max)
         {
-            stateProp.intValue = 3; // ParticleSystemCurveMode.TwoConstants
+            stateProp.intValue = 3; // TwoConstants
             var scalar = sp.FindPropertyRelative("scalar");
             var minScalar = sp.FindPropertyRelative("minScalar");
             if (scalar != null) scalar.floatValue = max;

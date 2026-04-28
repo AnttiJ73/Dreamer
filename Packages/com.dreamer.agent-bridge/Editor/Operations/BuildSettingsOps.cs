@@ -5,12 +5,7 @@ using UnityEngine;
 
 namespace Dreamer.AgentBridge
 {
-    /// <summary>
-    /// EditorBuildSettings authoring — primarily the build-scenes list.
-    /// EditorBuildSettings.scenes is the canonical setter; the underlying
-    /// EditorBuildSettings.asset can also be edited via SerializedObject but
-    /// the .scenes property is friendlier and persists immediately.
-    /// </summary>
+    /// <summary>EditorBuildSettings authoring — primarily the build-scenes list. .scenes is the canonical setter; persists immediately.</summary>
     public static class BuildSettingsOps
     {
         public static CommandResult InspectBuildScenes(Dictionary<string, object> args)

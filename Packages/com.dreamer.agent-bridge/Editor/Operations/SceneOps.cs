@@ -10,13 +10,8 @@ namespace Dreamer.AgentBridge
 {
     public static class SceneOps
     {
-        /// <summary>
-        /// Read the parent scene path from args. The canonical key is
-        /// <c>parentPath</c>; <c>parent</c> is accepted as an alias because agents
-        /// (and humans) reach for it naturally, and a silent-ignore placed the
-        /// GameObject at scene root with no error. Warns on alias use so the
-        /// agent learns the canonical form.
-        /// </summary>
+        // Canonical key is parentPath; `parent` is an alias because agents reach for it naturally
+        // and silent-ignore previously placed the GO at scene root with no error.
         static string ResolveParentPath(Dictionary<string, object> args)
         {
             string canonical = SimpleJson.GetString(args, "parentPath");
@@ -30,10 +25,7 @@ namespace Dreamer.AgentBridge
             return null;
         }
 
-        /// <summary>
-        /// Create a new empty GameObject in the active scene.
-        /// Args: { name: "ObjectName", parentPath?: "/Canvas/Panel", scene?: "SceneName" }
-        /// </summary>
+        /// <summary>Create a new empty GameObject in the active scene. Args: { name, parentPath?, scene? }</summary>
         public static CommandResult CreateGameObject(Dictionary<string, object> args)
         {
             string name = SimpleJson.GetString(args, "name", "GameObject");
@@ -63,11 +55,7 @@ namespace Dreamer.AgentBridge
             return CommandResult.Ok(json);
         }
 
-        /// <summary>
-        /// Rename a GameObject in scene or within a prefab.
-        /// Scene: { sceneObjectPath: "OldName", newName: "NewName" }
-        /// Prefab: { assetPath: "X.prefab", childPath?: "Child", newName: "NewName" }
-        /// </summary>
+        /// <summary>Rename a GameObject in scene or prefab. Scene: { sceneObjectPath, newName }. Prefab: { assetPath, childPath?, newName }.</summary>
         public static CommandResult RenameGameObject(Dictionary<string, object> args)
         {
             string newName = SimpleJson.GetString(args, "newName");
@@ -91,7 +79,6 @@ namespace Dreamer.AgentBridge
                     .Put("path", GetGameObjectPath(go)).ToString());
             }
 
-            // Prefab
             string assetPath = AssetOps.ResolveAssetPath(args);
             if (assetPath == null)
                 return CommandResult.Fail("Provide 'sceneObjectPath' or 'assetPath'.");
@@ -100,7 +87,6 @@ namespace Dreamer.AgentBridge
 
             if (!assetPath.EndsWith(".prefab", StringComparison.OrdinalIgnoreCase))
             {
-                // Rename asset file
                 string error = AssetDatabase.RenameAsset(assetPath, newName);
                 if (!string.IsNullOrEmpty(error))
                     return CommandResult.Fail($"Failed to rename asset: {error}");
@@ -110,7 +96,6 @@ namespace Dreamer.AgentBridge
 
             if (string.IsNullOrEmpty(childPath))
             {
-                // Rename the prefab asset file itself
                 string error = AssetDatabase.RenameAsset(assetPath, newName);
                 if (!string.IsNullOrEmpty(error))
                     return CommandResult.Fail($"Failed to rename prefab: {error}");
@@ -118,7 +103,6 @@ namespace Dreamer.AgentBridge
                     .Put("renamed", true).Put("assetPath", assetPath).Put("newName", newName).ToString());
             }
 
-            // Rename a child inside a prefab
             var prefabRoot = PrefabUtility.LoadPrefabContents(assetPath);
             if (prefabRoot == null)
                 return CommandResult.Fail($"Failed to load prefab: {assetPath}");
@@ -146,12 +130,7 @@ namespace Dreamer.AgentBridge
             }
         }
 
-        /// <summary>
-        /// Duplicate a GameObject in scene or within a prefab.
-        /// Scene: { sceneObjectPath: "MyObject", newName?: "MyObject (Copy)" }
-        /// Prefab child: { assetPath: "X.prefab", childPath: "Child", newName?: "Child (Copy)" }
-        /// Asset: { assetPath: "X.prefab", newName?: "X_Copy" } (duplicates the whole asset file)
-        /// </summary>
+        /// <summary>Duplicate a GameObject in scene or within a prefab. Scene: { sceneObjectPath, newName? }. Prefab child: { assetPath, childPath, newName? }. Asset: { assetPath, newName? } duplicates the file.</summary>
         public static CommandResult DuplicateGameObject(Dictionary<string, object> args)
         {
             string newName = SimpleJson.GetString(args, "newName");
@@ -181,7 +160,6 @@ namespace Dreamer.AgentBridge
 
             string childPath = SimpleJson.GetString(args, "childPath");
 
-            // Duplicate a child inside a prefab
             if (!string.IsNullOrEmpty(childPath))
             {
                 if (!assetPath.EndsWith(".prefab", StringComparison.OrdinalIgnoreCase))
@@ -216,7 +194,6 @@ namespace Dreamer.AgentBridge
                 }
             }
 
-            // Duplicate the asset file
             string dir = System.IO.Path.GetDirectoryName(assetPath).Replace('\\', '/');
             string ext = System.IO.Path.GetExtension(assetPath);
             string baseName = System.IO.Path.GetFileNameWithoutExtension(assetPath);
@@ -235,27 +212,7 @@ namespace Dreamer.AgentBridge
                 .ToString());
         }
 
-        /// <summary>
-        /// Reparent a GameObject under a new parent. Two modes:
-        ///
-        /// Scene mode:
-        ///   { sceneObjectPath: "/Old/Path/Target",
-        ///     newParentPath?: "/New/Parent",   // omit / null / "" → move to scene root
-        ///     keepWorldSpace?: bool,           // default false (preserve local transform under new parent)
-        ///     siblingIndex?: int }             // optional: place at this sibling slot under new parent
-        ///
-        /// Prefab mode (paths are relative to the prefab root):
-        ///   { assetPath: "Assets/Prefabs/Enemy.prefab",
-        ///     childPath: "Visuals/Body",       // the GO to move (required for prefab mode)
-        ///     newParentPath?: "Bones/Root",    // new parent inside prefab; omit / "" → prefab root
-        ///     keepWorldSpace?: bool,           // default false
-        ///     siblingIndex?: int }
-        ///
-        /// Use case: take a GameObject that owns a SpriteRenderer and move it
-        /// under a different parent without losing its components or wiring.
-        /// Equivalent to drag-and-drop in Unity's Hierarchy/Prefab Mode window,
-        /// but driven from the CLI.
-        /// </summary>
+        /// <summary>Reparent a GameObject. Scene: { sceneObjectPath, newParentPath?, keepWorldSpace?, siblingIndex? }. Prefab: { assetPath, childPath, newParentPath?, keepWorldSpace?, siblingIndex? } — paths relative to prefab root, empty newParentPath → root.</summary>
         public static CommandResult ReparentGameObject(Dictionary<string, object> args)
         {
             string sceneObjectPath = SimpleJson.GetString(args, "sceneObjectPath");
@@ -275,7 +232,7 @@ namespace Dreamer.AgentBridge
             if (go == null)
                 return CommandResult.Fail(findError ?? $"Scene object not found at path: {sceneObjectPath}");
 
-            // Resolve the new parent. Empty/null → scene root.
+            // Empty/null newParentPath → scene root.
             string newParentPath = SimpleJson.GetString(args, "newParentPath");
             Transform newParent = null;
             if (!string.IsNullOrEmpty(newParentPath))
@@ -298,9 +255,8 @@ namespace Dreamer.AgentBridge
             string oldParentPath = go.transform.parent != null ? GetGameObjectPath(go.transform.parent.gameObject) : null;
 
             Undo.SetTransformParent(go.transform, newParent, $"Reparent {go.name}");
-            // SetTransformParent's worldPositionStays defaults to true; explicitly enforce
-            // the user's choice via SetParent right after, since SetTransformParent doesn't
-            // expose that flag in all Unity versions.
+            // SetTransformParent doesn't expose worldPositionStays in all Unity versions;
+            // SetParent right after enforces the user's choice.
             go.transform.SetParent(newParent, keepWorldSpace);
 
             ApplySiblingIndex(go.transform, newParent, args);
@@ -329,7 +285,6 @@ namespace Dreamer.AgentBridge
             string newParentPath = SimpleJson.GetString(args, "newParentPath");
             bool keepWorldSpace = SimpleJson.GetBool(args, "keepWorldSpace", false);
 
-            // Edit prefab contents in isolation, save back via SaveAsPrefabAsset.
             var prefabRoot = PrefabUtility.LoadPrefabContents(assetPath);
             if (prefabRoot == null)
                 return CommandResult.Fail($"Failed to load prefab contents: {assetPath}");
@@ -343,7 +298,6 @@ namespace Dreamer.AgentBridge
                 Transform newParent;
                 if (string.IsNullOrEmpty(newParentPath))
                 {
-                    // Move to the prefab root.
                     newParent = prefabRoot.transform;
                 }
                 else
@@ -395,7 +349,7 @@ namespace Dreamer.AgentBridge
             target.SetSiblingIndex(Mathf.Clamp(idx, 0, max));
         }
 
-        /// <summary>Path of <paramref name="t"/> relative to <paramref name="root"/>, or "" if t == root.</summary>
+        /// <summary>Path of t relative to root, or "" if t == root.</summary>
         static string GetPrefabRelativePath(Transform t, Transform root)
         {
             if (t == null || t == root) return "";
@@ -406,12 +360,7 @@ namespace Dreamer.AgentBridge
             return string.Join("/", stack);
         }
 
-        /// <summary>
-        /// Delete a GameObject from the scene or from within a prefab.
-        /// Scene: { sceneObjectPath: "Canvas/Panel/OldButton" }
-        /// Prefab: { assetPath: "X.prefab", childPath: "OldChild" }
-        /// Children are always destroyed with the parent (Unity default behavior).
-        /// </summary>
+        /// <summary>Delete a GameObject from scene or prefab. Children destroyed with parent. Scene: { sceneObjectPath }. Prefab: { assetPath, childPath }.</summary>
         public static CommandResult DeleteGameObject(Dictionary<string, object> args)
         {
             string sceneObjectPath = SimpleJson.GetString(args, "sceneObjectPath");
@@ -435,7 +384,6 @@ namespace Dreamer.AgentBridge
                 return CommandResult.Ok(json);
             }
 
-            // Prefab child deletion
             string assetPath = AssetOps.ResolveAssetPath(args);
             if (assetPath == null)
                 return CommandResult.Fail("Target not found. Provide 'sceneObjectPath' or 'assetPath'+'childPath'.");
@@ -481,10 +429,7 @@ namespace Dreamer.AgentBridge
             }
         }
 
-        /// <summary>
-        /// Inspect the scene hierarchy.
-        /// Args: { scene?: "SceneName" }
-        /// </summary>
+        /// <summary>Inspect scene hierarchy or a prefab's hierarchy. Args: { scene? } or { assetPath?/guid? }</summary>
         public static CommandResult InspectHierarchy(Dictionary<string, object> args)
         {
             var opts = new InspectionOptions
@@ -494,7 +439,6 @@ namespace Dreamer.AgentBridge
                 IncludeFields = SimpleJson.GetBool(args, "includeFields", false),
             };
 
-            // Prefab asset target. Otherwise falls through to scene mode.
             string assetPath = SimpleJson.GetString(args, "assetPath");
             if (string.IsNullOrEmpty(assetPath))
             {
@@ -527,7 +471,6 @@ namespace Dreamer.AgentBridge
                 scene = SceneManager.GetSceneByName(sceneName);
                 if (!scene.IsValid() || !scene.isLoaded)
                 {
-                    // Try by path
                     scene = SceneManager.GetSceneByPath(sceneName);
                     if (!scene.IsValid() || !scene.isLoaded)
                         return CommandResult.Fail($"Scene not found or not loaded: {sceneName}");
@@ -557,11 +500,7 @@ namespace Dreamer.AgentBridge
             return CommandResult.Ok(sceneJson);
         }
 
-        /// <summary>
-        /// Instantiate a prefab into the active scene.
-        /// Args: { assetPath?: "path", guid?: "guid", name?: "override", parentPath?: "/Parent",
-        ///         position?: {x,y,z}, rotation?: {x,y,z} }
-        /// </summary>
+        /// <summary>Instantiate a prefab into the active scene. Args: { assetPath?, guid?, name?, parentPath?, position?, rotation? }</summary>
         public static CommandResult InstantiatePrefab(Dictionary<string, object> args)
         {
             string assetPath = AssetOps.ResolveAssetPath(args);
@@ -572,19 +511,16 @@ namespace Dreamer.AgentBridge
             if (prefab == null)
                 return CommandResult.Fail($"Asset at '{assetPath}' is not a GameObject/Prefab.");
 
-            // Instantiate as prefab instance (maintains prefab link)
             var instance = PrefabUtility.InstantiatePrefab(prefab) as GameObject;
             if (instance == null)
                 return CommandResult.Fail($"Failed to instantiate prefab: {assetPath}");
 
             Undo.RegisterCreatedObjectUndo(instance, $"Instantiate {prefab.name}");
 
-            // Optional name override
             string nameOverride = SimpleJson.GetString(args, "name");
             if (!string.IsNullOrEmpty(nameOverride))
                 instance.name = nameOverride;
 
-            // Optional parent
             string parentPath = ResolveParentPath(args);
             if (!string.IsNullOrEmpty(parentPath))
             {
@@ -595,14 +531,12 @@ namespace Dreamer.AgentBridge
                     DreamerLog.Warn($"Parent not found: {parentPath} ({parentError}), placing at root.");
             }
 
-            // Optional position
             if (args.TryGetValue("position", out object posObj) && posObj is Dictionary<string, object> posDict)
             {
                 instance.transform.position = new Vector3(
                     GetFloat(posDict, "x"), GetFloat(posDict, "y"), GetFloat(posDict, "z"));
             }
 
-            // Optional rotation (euler angles)
             if (args.TryGetValue("rotation", out object rotObj) && rotObj is Dictionary<string, object> rotDict)
             {
                 instance.transform.eulerAngles = new Vector3(
@@ -621,10 +555,7 @@ namespace Dreamer.AgentBridge
             return CommandResult.Ok(json);
         }
 
-        /// <summary>
-        /// Create a new scene.
-        /// Args: { name: "Level2", path?: "Assets/Scenes", setActive?: true }
-        /// </summary>
+        /// <summary>Create a new scene. Args: { name, path?, setActive? }</summary>
         public static CommandResult CreateScene(Dictionary<string, object> args)
         {
             string name = SimpleJson.GetString(args, "name");
@@ -634,7 +565,6 @@ namespace Dreamer.AgentBridge
             string folder = SimpleJson.GetString(args, "path", "Assets/Scenes");
             bool setActive = SimpleJson.GetBool(args, "setActive", true);
 
-            // Ensure directory exists
             string fullDir = Path.GetFullPath(folder);
             if (!Directory.Exists(fullDir))
             {
@@ -663,10 +593,7 @@ namespace Dreamer.AgentBridge
             return CommandResult.Ok(json);
         }
 
-        /// <summary>
-        /// Open an existing scene.
-        /// Args: { path: "Assets/Scenes/Level2.unity", mode?: "single"|"additive" }
-        /// </summary>
+        /// <summary>Open an existing scene. Args: { path, mode?: "single"|"additive" }</summary>
         public static CommandResult OpenScene(Dictionary<string, object> args)
         {
             string scenePath = SimpleJson.GetString(args, "path");
@@ -694,17 +621,13 @@ namespace Dreamer.AgentBridge
             return CommandResult.Ok(json);
         }
 
-        /// <summary>
-        /// Save the current scene or a specific scene.
-        /// Args: { path?: "Assets/Scenes/Level2.unity" }
-        /// </summary>
+        /// <summary>Save the current scene or a specific scene. Args: { path? }</summary>
         public static CommandResult SaveScene(Dictionary<string, object> args)
         {
             string scenePath = SimpleJson.GetString(args, "path");
 
             if (!string.IsNullOrEmpty(scenePath))
             {
-                // Save a specific scene by path
                 var scene = SceneManager.GetSceneByPath(scenePath);
                 if (!scene.IsValid() || !scene.isLoaded)
                     return CommandResult.Fail($"Scene not found or not loaded: {scenePath}");
@@ -723,7 +646,6 @@ namespace Dreamer.AgentBridge
             }
             else
             {
-                // Save all open scenes
                 bool saved = EditorSceneManager.SaveOpenScenes();
                 if (!saved)
                     return CommandResult.Fail("Failed to save open scenes.");
@@ -739,12 +661,7 @@ namespace Dreamer.AgentBridge
             }
         }
 
-        /// <summary>
-        /// Create a hierarchy of GameObjects with components.
-        /// Scene mode (default): { name, components?, children? }
-        /// Prefab mode: { name, components?, children?, savePath: "Assets/Prefabs" }
-        ///   When savePath is provided, builds the hierarchy, saves as prefab, destroys the temp object.
-        /// </summary>
+        /// <summary>Create a hierarchy with components. Scene: { name, components?, children? }. Prefab: same + { savePath } — builds, saves as prefab, destroys temp.</summary>
         public static CommandResult CreateHierarchy(Dictionary<string, object> args)
         {
             string name = SimpleJson.GetString(args, "name", "GameObject");
@@ -765,10 +682,8 @@ namespace Dreamer.AgentBridge
             if (go == null)
                 return CommandResult.Fail("Failed to create root GameObject.");
 
-            // Prefab mode: save as prefab and destroy the temp scene object
             if (!string.IsNullOrEmpty(savePath))
             {
-                // Ensure directory exists
                 string fullDir = System.IO.Path.GetFullPath(savePath);
                 if (!System.IO.Directory.Exists(fullDir))
                 {
@@ -801,14 +716,11 @@ namespace Dreamer.AgentBridge
                 return CommandResult.Ok(prefabJson);
             }
 
-            // Scene mode: keep in scene
             Undo.RegisterCreatedObjectUndo(go, $"Create hierarchy {name}");
 
-            // Build the standard result, then splice warnings in before returning.
+            // Splice warnings into the result via string substitution — re-parsing
+            // is overkill, and the happy-path output stays identical when none.
             string resultJson = BuildHierarchyResult(go);
-            // Quick-and-safe: re-parse-and-extend is overkill. Instead, wrap by
-            // string-replacing the final '}' with ",warnings":[...]"}" only when
-            // we have something to report. Keeps the happy-path output identical.
             if (warnings.Count > 0)
             {
                 int lastBrace = resultJson.LastIndexOf('}');
@@ -829,12 +741,8 @@ namespace Dreamer.AgentBridge
             return arr.ToString();
         }
 
-        /// <summary>
-        /// Build a GameObject + its components and recurse children. Component failures
-        /// are RECORDED into <paramref name="warnings"/> instead of being silently
-        /// dropped — the old behavior let one unresolved type mask the entire gap in
-        /// the hierarchy, which was especially bad during script compile errors.
-        /// </summary>
+        // Component failures land in `warnings` rather than being silently dropped — the old
+        // behavior let one unresolved type mask the gap, especially bad during compile errors.
         static GameObject CreateNode(Dictionary<string, object> nodeArgs, Transform parent, List<string> warnings)
         {
             string name = SimpleJson.GetString(nodeArgs, "name", "GameObject");
@@ -844,7 +752,6 @@ namespace Dreamer.AgentBridge
             if (parent != null)
                 go.transform.SetParent(parent, false);
 
-            // Add components
             if (nodeArgs.TryGetValue("components", out object compsObj) && compsObj is List<object> compList)
             {
                 foreach (var compEntry in compList)
@@ -868,7 +775,6 @@ namespace Dreamer.AgentBridge
                         continue;
                     }
 
-                    // Skip Transform — already present (expected, not a warning)
                     if (compType == typeof(Transform) || compType == typeof(RectTransform)) continue;
 
                     if (go.GetComponent(compType) != null)
@@ -881,7 +787,6 @@ namespace Dreamer.AgentBridge
                 }
             }
 
-            // Create children recursively
             if (nodeArgs.TryGetValue("children", out object childrenObj) && childrenObj is List<object> childList)
             {
                 foreach (var childEntry in childList)
@@ -902,7 +807,6 @@ namespace Dreamer.AgentBridge
                 .Put("path", GetGameObjectPath(go))
                 .Put("created", true);
 
-            // Components
             var comps = SimpleJson.Array();
             foreach (var comp in go.GetComponents<Component>())
             {
@@ -911,7 +815,6 @@ namespace Dreamer.AgentBridge
             }
             obj.PutRaw("components", comps.ToString());
 
-            // Children
             if (go.transform.childCount > 0)
             {
                 var children = SimpleJson.Array();
@@ -935,13 +838,6 @@ namespace Dreamer.AgentBridge
             if (val is long l) return l;
             return 0f;
         }
-
-        // ── Helpers ──
-        // (BuildGameObjectInfo + IsEnabled moved to the shared Inspection class —
-        // both inspect_asset and inspect_hierarchy now produce identical node shape.)
-
-        // Note: scene-object path resolution is shared via PropertyOps.FindSceneObject,
-        // which supports multi-scene, recursive descendant search, and ambiguity detection.
 
         static string GetGameObjectPath(GameObject go) => PropertyOps.GetScenePath(go);
     }

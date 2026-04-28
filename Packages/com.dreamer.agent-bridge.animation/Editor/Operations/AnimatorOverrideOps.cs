@@ -7,16 +7,9 @@ using UnityEngine;
 
 namespace Dreamer.AgentBridge.Animation
 {
-    /// <summary>
-    /// AnimatorOverrideController authoring. Override controllers reuse a
-    /// base AnimatorController's state machine but swap out individual
-    /// AnimationClips — useful for variant characters (different races /
-    /// weapons / species) sharing one logical state graph.
-    /// </summary>
+    /// <summary>AnimatorOverrideController authoring — reuses a base controller's state machine while swapping individual AnimationClips.</summary>
     public static class AnimatorOverrideOps
     {
-        // ── create-animator-override-controller ───────────────────────────
-
         public static CommandResult CreateAnimatorOverrideController(Dictionary<string, object> args)
         {
             string name = SimpleJson.GetString(args, "name");
@@ -52,11 +45,6 @@ namespace Dreamer.AgentBridge.Animation
                 .ToString());
         }
 
-        // ── set-animator-override-clip ────────────────────────────────────
-        // Set one or more clip overrides. Either pass --base-clip + --override-clip
-        // for a single override, or --overrides JSON [{baseClip, overrideClip}, ...]
-        // for batch.
-
         public static CommandResult SetAnimatorOverrideClip(Dictionary<string, object> args)
         {
             string assetPath = AssetOps.ResolveAssetPath(args);
@@ -64,14 +52,12 @@ namespace Dreamer.AgentBridge.Animation
             var ovr = AssetDatabase.LoadAssetAtPath<AnimatorOverrideController>(assetPath);
             if (ovr == null) return CommandResult.Fail($"AnimatorOverrideController not found at '{assetPath}'.");
 
-            // Build a name → original-clip lookup once.
             var pairs = new List<KeyValuePair<AnimationClip, AnimationClip>>(ovr.overridesCount);
             ovr.GetOverrides(pairs);
 
             int applied = 0;
             var updates = new List<(string baseName, string overrideName)>();
 
-            // Single-override form.
             string singleBase = SimpleJson.GetString(args, "baseClip");
             string singleOverride = SimpleJson.GetString(args, "overrideClip");
             if (!string.IsNullOrEmpty(singleBase))
@@ -79,7 +65,6 @@ namespace Dreamer.AgentBridge.Animation
                 updates.Add((singleBase, singleOverride));
             }
 
-            // Batch form.
             object multiRaw = SimpleJson.GetValue(args, "overrides");
             if (multiRaw is List<object> multiList)
             {
@@ -100,8 +85,7 @@ namespace Dreamer.AgentBridge.Animation
                 if (orig == null) continue;
                 foreach (var u in updates)
                 {
-                    // baseClip can be a name (no path) or an asset path. Match
-                    // either by clip.name or by AssetDatabase.GetAssetPath.
+                    // baseClip accepts a clip name or an asset path.
                     bool nameMatch = orig.name == u.baseName;
                     bool pathMatch = !string.IsNullOrEmpty(u.baseName) && AssetDatabase.GetAssetPath(orig) == u.baseName;
                     if (!nameMatch && !pathMatch) continue;
@@ -130,8 +114,6 @@ namespace Dreamer.AgentBridge.Animation
                 .Put("requestedCount", updates.Count)
                 .ToString());
         }
-
-        // ── inspect-animator-override-controller ──────────────────────────
 
         public static CommandResult InspectAnimatorOverrideController(Dictionary<string, object> args)
         {

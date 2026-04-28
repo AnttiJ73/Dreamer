@@ -8,19 +8,11 @@ using UnityEngine.UI;
 
 namespace Dreamer.AgentBridge
 {
-    /// <summary>
-    /// Visual feedback for agents — render Unity assets to PNG so Claude can
-    /// "see" what it's building. PreviewRenderUtility handles the off-screen
-    /// scene/camera/lights setup; we frame the camera on the prefab's
-    /// combined renderer bounds for an automatic best-effort thumbnail.
-    /// </summary>
+    /// <summary>Render Unity assets/scenes to PNG so agents can "see" what they're building.</summary>
     public static class PreviewOps
     {
-        // Screenshots live at the project root (not Library/) so they're
-        // visible in VS Code's Explorer — Library/ is gitignored by default
-        // and many editors / .vscode settings hide it. The folder ships with
-        // a self-ignoring .gitignore so file contents stay out of source
-        // control without requiring a project-level .gitignore edit.
+        // Screenshots live at the project root (not Library/) so they're visible in
+        // editors that hide Library/. The folder ships a self-ignoring .gitignore.
         const string DefaultDir = "DreamerScreenshots";
 
         static void EnsureScreenshotDir()
@@ -56,10 +48,7 @@ namespace Dreamer.AgentBridge
             Camera cam = ResolveSceneCamera(cameraArg, out string camErr);
             if (cam == null) return CommandResult.Fail(camErr);
 
-            // Default to Point — sharper than Unity's authored filter modes
-            // (almost always Bilinear) and the right call for agent inspection
-            // even in cases where Bilinear would technically blend better.
-            // Pass --filter-mode bilinear / trilinear to override.
+            // Default to Point — sharper than Bilinear (Unity's UI default) for agent inspection.
             string filterArg = SimpleJson.GetString(args, "filterMode");
             FilterMode? filterOverride;
             string filterErr;
@@ -73,11 +62,8 @@ namespace Dreamer.AgentBridge
                 return CommandResult.Fail(filterErr);
             }
 
-            // ScreenSpaceOverlay canvases bypass cameras entirely — they draw
-            // straight to the back buffer in a final compositing pass that
-            // off-screen cam.Render() doesn't trigger. Temporarily flip them
-            // to ScreenSpaceCamera bound to the render camera so they get
-            // drawn into our RT, then restore on cleanup.
+            // ScreenSpaceOverlay canvases bypass cameras (final back-buffer compositing pass that
+            // off-screen cam.Render() doesn't trigger). Flip to ScreenSpaceCamera, restore on cleanup.
             var flipped = new List<(Canvas c, RenderMode mode, Camera worldCam, float planeDist)>();
             foreach (var canvas in UnityEngine.Object.FindObjectsByType<Canvas>(FindObjectsSortMode.None))
             {
@@ -90,19 +76,14 @@ namespace Dreamer.AgentBridge
                     canvas.planeDistance = Mathf.Max(cam.nearClipPlane * 2f, 1f);
                 }
             }
-            // Force a layout pass after the flip so canvas geometry rebuilds
-            // for the new camera context.
+            // Layout pass after the flip so canvas geometry rebuilds for the new camera context.
             Canvas.ForceUpdateCanvases();
 
-            // Optional filter-mode swap on every UI source texture (Image,
-            // RawImage, sprite atlases). Bilinear is Unity's UI default and
-            // softens edges noticeably at non-1:1 scales — Point preserves
-            // pixel-perfect crispness for stylized / pixel-art UI.
+            // Swap UI texture filter modes (Image/RawImage/SpriteRenderer share atlases). Default Bilinear
+            // softens edges; Point preserves pixel-perfect crispness for stylized/pixel-art UI.
             var filterSwaps = filterOverride.HasValue ? SwizzleUITextureFilters(filterOverride.Value) : null;
 
-            // No MSAA — we want pixel-accurate output, not anti-aliased.
-            // Default RT antiAliasing inherits QualitySettings, which can
-            // be 2/4/8 and softens hard edges via supersampling.
+            // antiAliasing=1 — default inherits QualitySettings (2/4/8) which softens hard edges.
             var rt = RenderTexture.GetTemporary(width, height, 24, RenderTextureFormat.ARGB32, RenderTextureReadWrite.Default, 1);
             if (filterOverride.HasValue) rt.filterMode = filterOverride.Value;
             rt.Create();
@@ -131,7 +112,6 @@ namespace Dreamer.AgentBridge
                 cam.targetTexture = prevTarget;
                 RenderTexture.active = prevActive;
                 RenderTexture.ReleaseTemporary(rt);
-                // Restore any flipped overlay canvases.
                 foreach (var f in flipped)
                 {
                     if (f.c == null) continue;
@@ -139,7 +119,6 @@ namespace Dreamer.AgentBridge
                     f.c.worldCamera = f.worldCam;
                     f.c.planeDistance = f.planeDist;
                 }
-                // Restore source-texture filter modes.
                 RestoreUITextureFilters(filterSwaps);
             }
 
@@ -188,7 +167,7 @@ namespace Dreamer.AgentBridge
                 }
                 return any;
             }
-            // Try by name first (handles "Main Camera"), then by scene path.
+            // Name match first (handles "Main Camera"), then scene path.
             foreach (var c in UnityEngine.Object.FindObjectsByType<Camera>(FindObjectsSortMode.None))
             {
                 if (c == null) continue;
@@ -213,7 +192,7 @@ namespace Dreamer.AgentBridge
         {
             mode = null;
             error = null;
-            if (string.IsNullOrEmpty(s)) return true; // unset → no override
+            if (string.IsNullOrEmpty(s)) return true;
             switch (s.Trim().ToLowerInvariant())
             {
                 case "point":     mode = FilterMode.Point; return true;
@@ -225,13 +204,9 @@ namespace Dreamer.AgentBridge
             }
         }
 
+        // Override every UI source texture's filterMode; dedupe by Texture (atlases shared across Images).
         static List<(Texture tex, FilterMode original)> SwizzleUITextureFilters(FilterMode newMode)
         {
-            // Override every UI source texture's filterMode for the duration
-            // of this render. Bilinear (the Unity default) softens edges at
-            // non-1:1 scales — Point preserves pixel-perfect detail. We
-            // dedupe by Texture instance (multiple Images often share an
-            // atlas) and restore originals in the finally block.
             var swaps = new List<(Texture, FilterMode)>();
             var seen = new HashSet<Texture>();
 
@@ -312,10 +287,8 @@ namespace Dreamer.AgentBridge
             string angle = angleArg ?? "iso";
             bool angleExplicit = !string.IsNullOrEmpty(angleArg);
 
-            // Optional UI-mode size override: --size [w,h] sets the prefab
-            // RectTransform's sizeDelta after instantiation. Useful for prefabs
-            // that are designed to be sized by a parent layout group at runtime
-            // and have zero/tiny size in standalone form.
+            // --size sets the prefab RectTransform's sizeDelta — useful for prefabs sized by a
+            // runtime layout group that come back zero/tiny in standalone form.
             Vector2? sizeOverride = null;
             if (args.TryGetValue("size", out object sizeObj) && sizeObj is List<object> sizeArr && sizeArr.Count >= 2)
             {
@@ -350,19 +323,11 @@ namespace Dreamer.AgentBridge
 
                 pru.camera.clearFlags = CameraClearFlags.SolidColor;
                 pru.camera.backgroundColor = background;
-                // Transparent backgrounds need the camera to use a render
-                // target with an alpha channel — PreviewRenderUtility's
-                // internal RT is ARGB32 by default, so EncodeToPNG below
-                // preserves alpha. If the resulting PNG is opaque despite
-                // alpha=0, the platform's preview RT format isn't ARGB32
-                // and we'd need a custom RT (not done here yet).
                 pru.camera.allowHDR = false;
                 pru.camera.fieldOfView = 30f;
                 pru.camera.nearClipPlane = 0.05f;
                 pru.camera.farClipPlane = 5000f;
-                // Render everything — PreviewRenderUtility's default culling
-                // mask excludes most layers, so UI prefabs (layer 5) and
-                // anything else outside the default come back invisible.
+                // PRU's default culling mask excludes most layers — UI (5) and others come back invisible.
                 pru.camera.cullingMask = ~0;
 
                 // Two-light rim setup — key from upper-front, fill from lower-back.
@@ -375,10 +340,8 @@ namespace Dreamer.AgentBridge
                 }
                 pru.ambientColor = new Color(0.28f, 0.28f, 0.32f);
 
-                // Spawn the prefab. Stay in the active scene initially so the
-                // Canvas rebuild / LayoutRebuilder pipeline runs (these only
-                // tick on real scenes — PRU's preview scene is a stripped-down
-                // context where Canvas geometry doesn't get built).
+                // Spawn in the active scene so Canvas rebuild / LayoutRebuilder ticks — PRU's
+                // preview scene is stripped-down and Canvas geometry doesn't build there.
                 instance = UnityEngine.Object.Instantiate(prefab);
                 instance.hideFlags = HideFlags.HideAndDontSave;
 
@@ -388,10 +351,8 @@ namespace Dreamer.AgentBridge
 
                 if (isFragment)
                 {
-                    // Wrap the fragment in a temporary WorldSpace canvas so it
-                    // has a render target. Layout-group-driven prefabs come
-                    // back at their authored size — usually small or zero —
-                    // so we also resize the prefab's RectTransform here.
+                    // Wrap the fragment in a temporary WorldSpace canvas. Layout-group-driven prefabs
+                    // come back at their authored size (usually zero/tiny) so SizeFragment handles that.
                     wrapperCanvasGO = CreateWrappingCanvas();
                     var wrapperRT = wrapperCanvasGO.GetComponent<RectTransform>();
                     instance.transform.SetParent(wrapperCanvasGO.transform, worldPositionStays: false);
@@ -406,27 +367,17 @@ namespace Dreamer.AgentBridge
                     if (!angleExplicit) angle = "front";
                 }
 
-                // For 3D mode, move into PRU's preview scene. UI mode renders
-                // via a temp camera in the active scene (PRU's preview scene
-                // doesn't run the Canvas mesh-build pipeline), so we leave
-                // the instance in the active scene.
+                // 3D mode → PRU's preview scene. UI mode → temp camera in active scene
+                // (PRU's preview scene doesn't run the Canvas mesh-build pipeline).
                 if (!uiMode) pru.AddSingleGO(instance);
 
-                // Frame the camera on combined bounds.
                 GameObject uiRoot = isFragment ? wrapperCanvasGO : instance;
                 Bounds bounds = uiMode ? ComputeUIBounds(uiRoot) : ComputeBounds(instance);
                 Vector3 dirLocal = AngleToCameraDir(angle);
                 if (uiMode)
                 {
-                    // UI canvases render their visible face on the -Z side of
-                    // the rect transform (matches Unity's Scene-view default
-                    // — drag a canvas into the scene and its text reads
-                    // correctly when the editor camera looks down +Z toward
-                    // the canvas at origin). AngleToCameraDir's "front" already
-                    // returns Vector3.back which puts the camera at -Z looking
-                    // +Z, so no flip is needed.
-
-                    // Orthographic camera framed on the UI's world-corner extent.
+                    // Orthographic camera framed on the UI's world-corner extent. UI canvases render
+                    // their visible face on -Z; AngleToCameraDir's "front" already places camera at -Z.
                     pru.camera.orthographic = true;
                     pru.camera.orthographicSize = Mathf.Max(bounds.extents.y, bounds.extents.x * (float)height / Mathf.Max(width, 1), 1f);
                     float dist = Mathf.Max(bounds.extents.z + 100f, 200f);
@@ -444,20 +395,12 @@ namespace Dreamer.AgentBridge
                     pru.camera.transform.LookAt(bounds.center);
                 }
 
-                // Render off-screen → Texture2D. Use a custom ARGB32 RT instead
-                // of PreviewRenderUtility.BeginStaticPreview / EndStaticPreview:
-                // the latter allocates an RGB-only RT internally, so an alpha=0
-                // background would silently come back as solid black. Using our
-                // own ARGB32 RT preserves the alpha channel through to PNG.
+                // Custom ARGB32 RT (not BeginStaticPreview, which uses RGB-only and silently
+                // turns alpha=0 into solid black). UI mode uses a temp camera in the active scene
+                // because PRU's preview scene doesn't run the Canvas/CanvasRenderer mesh-build pipeline.
                 Texture2D rendered;
                 if (uiMode)
                 {
-                    // PreviewRenderUtility's preview scene doesn't run the
-                    // Canvas/CanvasRenderer mesh-build pipeline, so UI prefabs
-                    // come back invisible no matter what we do with pru.camera.
-                    // Workaround: render via a temporary camera in the active
-                    // scene, with the prefab parked off-screen briefly. We
-                    // reset all the temporary state in the finally block.
                     rendered = RenderUIOffscreen(uiRoot, rootCanvas, width, height, background, dirLocal, bounds);
                 }
                 else
@@ -549,8 +492,7 @@ namespace Dreamer.AgentBridge
             }
             finally
             {
-                // Destroy wrapper first — if instance is parented under it,
-                // DestroyImmediate(wrapper) takes the instance with it.
+                // Destroy wrapper first — instance parented under it gets taken with DestroyImmediate(wrapper).
                 if (wrapperCanvasGO != null) UnityEngine.Object.DestroyImmediate(wrapperCanvasGO);
                 if (instance != null && instance) UnityEngine.Object.DestroyImmediate(instance);
                 if (pru != null) pru.Cleanup();
@@ -559,13 +501,10 @@ namespace Dreamer.AgentBridge
 
         // ── Helpers ───────────────────────────────────────────────────────
 
+        // Compute from mesh data, NOT Renderer.bounds — the latter is lazily initialized
+        // and reports (0,0,0) for un-rendered PreviewScene objects (our case here).
         static Bounds ComputeBounds(GameObject root)
         {
-            // Compute from mesh data, NOT from Renderer.bounds. Renderer.bounds
-            // is initialized lazily by the rendering pipeline and comes back
-            // (0,0,0) for objects in a PreviewScene that haven't been rendered
-            // yet — which is exactly our case (we compute bounds before the
-            // first Render() to know where to place the camera).
             Bounds? combined = null;
 
             foreach (var mf in root.GetComponentsInChildren<MeshFilter>(includeInactive: true))
@@ -578,7 +517,6 @@ namespace Dreamer.AgentBridge
             foreach (var smr in root.GetComponentsInChildren<SkinnedMeshRenderer>(includeInactive: true))
             {
                 if (smr == null || smr.sharedMesh == null) continue;
-                // SkinnedMeshRenderer.localBounds is the asset's bind-pose extent.
                 var w = TransformBounds(smr.localBounds, smr.transform.localToWorldMatrix);
                 combined = combined.HasValue ? Encapsulate(combined.Value, w) : w;
             }
@@ -590,23 +528,20 @@ namespace Dreamer.AgentBridge
                 combined = combined.HasValue ? Encapsulate(combined.Value, w) : w;
             }
 
-            // ParticleSystemRenderer / TrailRenderer / LineRenderer rarely have
-            // a useful pre-render extent — skip them; their bounds are dynamic.
-
+            // Skip ParticleSystem/Trail/LineRenderer — their bounds are dynamic with no useful pre-render extent.
             if (combined.HasValue && combined.Value.size != Vector3.zero)
                 return combined.Value;
 
-            // No mesh-bearing renderers — union child transforms as a coarse
-            // proxy (works for empty containers, lights-only prefabs, etc).
+            // No mesh renderers — coarse fallback for empty containers / lights-only prefabs.
             var transforms = root.GetComponentsInChildren<Transform>(includeInactive: true);
             Bounds tb = new Bounds(root.transform.position, Vector3.one);
             foreach (var t in transforms) tb.Encapsulate(t.position);
             return tb;
         }
 
+        // AABB transform: new extents pick up rotation/scale via |m_ij| sums.
         static Bounds TransformBounds(Bounds local, Matrix4x4 m)
         {
-            // AABB transform: new extents pick up rotation/scale via |m_ij| sums.
             var center = m.MultiplyPoint3x4(local.center);
             var ext = local.extents;
             var newExt = new Vector3(
@@ -621,17 +556,13 @@ namespace Dreamer.AgentBridge
 
         // ── UI / Canvas mode ─────────────────────────────────────────────
 
+        // A "UI fragment" uses uGUI but has no own Canvas — list items, rows, buttons meant to be
+        // parented under an existing Canvas at runtime. We render by wrapping in a temp Canvas.
         static bool IsUIFragment(GameObject root)
         {
-            // A "UI fragment" is a prefab that uses uGUI components but doesn't
-            // wrap them in its own Canvas — typically a list-item / row / button
-            // meant to be parented under an existing Canvas at runtime. We can
-            // still render it by wrapping in a temporary Canvas of our own.
             if (root.GetComponent<RectTransform>() == null) return false;
             if (root.GetComponent<Graphic>() != null) return true;
             if (root.GetComponentInChildren<Graphic>(includeInactive: true) != null) return true;
-            // Also accept LayoutElement-only roots — sometimes a fragment is
-            // a wrapper with LayoutElement and the Graphics live in children.
             if (root.GetComponent<LayoutElement>() != null) return true;
             return false;
         }
@@ -644,15 +575,10 @@ namespace Dreamer.AgentBridge
             var canvas = go.AddComponent<Canvas>();
             canvas.renderMode = RenderMode.WorldSpace;
             canvas.sortingOrder = 0;
-            // CanvasScaler in ConstantPixelSize keeps the world-space units
-            // matching pixels, so a 200×80 RectTransform sizeDelta means
-            // 200×80 world units — predictable framing.
+            // ConstantPixelSize keeps world units == pixels, so sizeDelta maps directly to framing.
             var scaler = go.AddComponent<CanvasScaler>();
             scaler.uiScaleMode = CanvasScaler.ScaleMode.ConstantPixelSize;
             scaler.scaleFactor = 1f;
-            // Give the wrapping canvas RT a generous size — children can
-            // anchor however they want, the camera frames the actual content
-            // bounds (not the canvas rect).
             var rt = go.GetComponent<RectTransform>();
             if (rt != null) rt.sizeDelta = new Vector2(2000f, 2000f);
             return go;
@@ -663,7 +589,6 @@ namespace Dreamer.AgentBridge
             var rt = instance.GetComponent<RectTransform>();
             if (rt == null) return;
 
-            // Explicit override always wins.
             if (sizeOverride.HasValue)
             {
                 rt.sizeDelta = sizeOverride.Value;
@@ -673,7 +598,6 @@ namespace Dreamer.AgentBridge
                 return;
             }
 
-            // Use LayoutElement preferred/min hints if the prefab has them.
             var le = instance.GetComponent<LayoutElement>();
             Vector2 size = rt.sizeDelta;
             if (le != null)
@@ -683,9 +607,7 @@ namespace Dreamer.AgentBridge
                 if (le.preferredHeight > 0) size.y = le.preferredHeight;
                 else if (le.minHeight > 0) size.y = le.minHeight;
             }
-            // Fallback for genuinely zero-sized prefabs (no hints, no authored
-            // size). 400×100 is a plausible "list item" footprint that fits
-            // most fragments without being silly.
+            // 400×100 — plausible "list item" footprint for genuinely zero-sized prefabs.
             if (size.x < 1f) size.x = 400f;
             if (size.y < 1f) size.y = 100f;
 
@@ -699,31 +621,23 @@ namespace Dreamer.AgentBridge
         {
             var c = root.GetComponent<Canvas>();
             if (c != null) return c;
-            // Some prefabs nest a Canvas one level deep (a "PageRoot" with a
-            // Canvas child). Pick the topmost-found Canvas — we don't try to
-            // synthesize a wrapping Canvas for prefabs that have none, since
-            // those are usually fragments meant to be parented under an
-            // existing Canvas, not standalone screens.
             return root.GetComponentInChildren<Canvas>(includeInactive: true);
         }
 
         static void SetupCanvasForPreview(GameObject root, Canvas canvas, Camera previewCamera)
         {
-            // World-space rendering binds to a specific camera. Without this,
-            // ScreenSpaceOverlay draws directly to the screen and Camera.Render
-            // never sees the canvas.
+            // WorldSpace + worldCamera binding. ScreenSpaceOverlay draws straight to the screen
+            // and Camera.Render() never sees the canvas.
             canvas.renderMode = RenderMode.WorldSpace;
             canvas.worldCamera = previewCamera;
             canvas.sortingOrder = 0;
 
-            // Reset transform — prefab may have a non-zero position/rotation.
             root.transform.position = Vector3.zero;
             root.transform.rotation = Quaternion.identity;
             root.transform.localScale = Vector3.one;
 
-            // Lock the CanvasScaler to constant pixel size so the layout pass
-            // produces a predictable extent. ScaleWithScreenSize would scale
-            // by the (irrelevant) preview RT dimensions vs reference resolution.
+            // ConstantPixelSize gives a predictable layout-pass extent; ScaleWithScreenSize would
+            // scale against the (irrelevant) preview RT dimensions.
             var scaler = canvas.GetComponent<CanvasScaler>();
             if (scaler != null)
             {
@@ -731,27 +645,21 @@ namespace Dreamer.AgentBridge
                 scaler.scaleFactor = 1f;
             }
 
-            // Force a full layout rebuild — instantiated prefabs come back
-            // with zero-sized RectTransforms until the LayoutRebuilder runs.
+            // Instantiated prefabs come back with zero-sized RectTransforms until LayoutRebuilder runs.
             Canvas.ForceUpdateCanvases();
             foreach (var rt in root.GetComponentsInChildren<RectTransform>(includeInactive: true))
             {
                 LayoutRebuilder.ForceRebuildLayoutImmediate(rt);
             }
-            // Force every Graphic to rebuild its CanvasRenderer mesh — disabling
-            // and re-enabling triggers OnDisable/OnEnable which mark the mesh
-            // dirty. Without this, nested Graphics often render as zero-vertex.
+            // SetAllDirty forces CanvasRenderer mesh rebuild — without this, nested Graphics often
+            // render zero-vertex.
             foreach (var g in root.GetComponentsInChildren<Graphic>(includeInactive: true))
             {
                 if (g == null) continue;
                 g.SetAllDirty();
             }
-            // TextMeshPro has its own mesh-build pipeline that doesn't tick
-            // from Canvas.ForceUpdateCanvases — it relies on a per-frame
-            // OnPreRenderText callback, which doesn't fire in our preview
-            // path. Reach into TMP via reflection to call ForceMeshUpdate()
-            // on each TMP component, which forces an immediate mesh build.
-            // Reflection avoids a hard package dependency on com.unity.textmeshpro.
+            // TMP's mesh-build pipeline runs from a per-frame OnPreRenderText callback that doesn't
+            // fire in this preview path; ForceMeshUpdate via reflection avoids a hard TMP dependency.
             ForceTMPMeshUpdate(root);
             Canvas.ForceUpdateCanvases();
         }
@@ -762,8 +670,7 @@ namespace Dreamer.AgentBridge
 
         static void ForceTMPMeshUpdate(GameObject root)
         {
-            // Resolve TMP_Text + ForceMeshUpdate once. If the project doesn't
-            // have TMP installed, both stay null and we skip every call cheaply.
+            // Resolved once; nulls if TMP isn't installed (cheap skip per call).
             if (!_tmpReflectionResolved)
             {
                 _tmpReflectionResolved = true;
@@ -773,8 +680,6 @@ namespace Dreamer.AgentBridge
                     if (t != null)
                     {
                         _tmpTextBaseTypeCached = t;
-                        // ForceMeshUpdate() — parameterless overload triggers
-                        // the immediate rebuild we want.
                         _tmpForceMeshUpdateCached = t.GetMethod("ForceMeshUpdate", Type.EmptyTypes);
                         break;
                     }
@@ -782,8 +687,7 @@ namespace Dreamer.AgentBridge
             }
             if (_tmpTextBaseTypeCached == null || _tmpForceMeshUpdateCached == null) return;
 
-            // GetComponentsInChildren typed by base TMP_Text catches both
-            // TextMeshProUGUI (Canvas) and TextMeshPro (3D) subclasses.
+            // Base TMP_Text catches both TextMeshProUGUI (Canvas) and TextMeshPro (3D).
             var components = root.GetComponentsInChildren(_tmpTextBaseTypeCached, includeInactive: true);
             foreach (var c in components)
             {
@@ -795,17 +699,11 @@ namespace Dreamer.AgentBridge
 
         static Texture2D RenderUIOffscreen(GameObject instance, Canvas rootCanvas, int width, int height, Color background, Vector3 dirLocal, Bounds bounds)
         {
-            // Park the canvas at a far-off position so it doesn't interfere
-            // with the visible scene if user happens to be looking at the
-            // editor. Canvas world position is preserved via parent transform —
-            // we offset by adding to the root, render, then the caller's
-            // finally block destroys the instance.
+            // Park the canvas far off so it doesn't interfere with the visible scene during render.
             var offset = new Vector3(0f, 0f, -100000f);
             instance.transform.position += offset;
             var offsetCenter = bounds.center + offset;
 
-            // Temp camera GameObject in the active scene. HideFlags so it
-            // doesn't appear in the user's hierarchy / get saved.
             var camGO = new GameObject("DreamerPreviewCamera");
             camGO.hideFlags = HideFlags.HideAndDontSave;
             var cam = camGO.AddComponent<Camera>();
@@ -821,9 +719,8 @@ namespace Dreamer.AgentBridge
             cam.transform.LookAt(offsetCenter);
             cam.allowHDR = false;
             cam.allowMSAA = true;
-            cam.enabled = false; // we'll call Render() manually
+            cam.enabled = false;
 
-            // Bind canvas to this temp camera too, so it knows where to submit.
             rootCanvas.worldCamera = cam;
 
             var rt = RenderTexture.GetTemporary(width, height, 24, RenderTextureFormat.ARGB32);
@@ -853,12 +750,10 @@ namespace Dreamer.AgentBridge
             return rendered;
         }
 
+        // Union of visible Graphics' world-corner rects after the layout pass; excludes
+        // disabled/inactive so off-screen panels don't invisibly extend bounds.
         static Bounds ComputeUIBounds(GameObject root)
         {
-            // Take the union of every visible UI Graphic's world-space rect.
-            // RectTransform.GetWorldCorners yields the four corners after the
-            // layout pass. Disabled/inactive elements are excluded so the camera
-            // doesn't frame off-screen panels invisibly extending the bounds.
             var corners = new Vector3[4];
             Bounds? combined = null;
 
@@ -870,14 +765,13 @@ namespace Dreamer.AgentBridge
                 rt.GetWorldCorners(corners);
                 Bounds b = new Bounds(corners[0], Vector3.zero);
                 for (int i = 1; i < 4; i++) b.Encapsulate(corners[i]);
-                if (b.size.x < 0.01f && b.size.y < 0.01f) continue; // skip zero-sized
+                if (b.size.x < 0.01f && b.size.y < 0.01f) continue;
                 combined = combined.HasValue ? Encapsulate(combined.Value, b) : b;
             }
 
             if (combined.HasValue && combined.Value.size != Vector3.zero)
                 return combined.Value;
 
-            // Fallback to the canvas's own RectTransform if no Graphics found.
             var rootRT = root.GetComponent<RectTransform>();
             if (rootRT != null)
             {

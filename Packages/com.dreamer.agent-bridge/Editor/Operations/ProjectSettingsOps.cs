@@ -7,14 +7,7 @@ using UnityEngine;
 
 namespace Dreamer.AgentBridge
 {
-    /// <summary>
-    /// Project Settings authoring. ProjectSettings/*.asset files are not under
-    /// Assets/, so AssetDatabase.LoadAssetAtPath returns null on them — they
-    /// must be loaded via LoadAllAssetsAtPath which returns the singleton
-    /// SerializedObject root. This file holds the convenience commands
-    /// (layers/tags/sorting layers/collision matrix/gravity); the generic
-    /// SerializedObject editor for arbitrary settings lives elsewhere.
-    /// </summary>
+    /// <summary>Project Settings authoring. ProjectSettings/*.asset isn't under Assets/, so AssetDatabase.LoadAssetAtPath returns null — load via LoadAllAssetsAtPath which yields the singleton root.</summary>
     public static class ProjectSettingsOps
     {
         // ─── Common load helpers ──────────────────────────────────────────
@@ -59,10 +52,8 @@ namespace Dreamer.AgentBridge
             if (!string.IsNullOrEmpty(file))
                 return InspectOneFile(file);
 
-            // Default summary: tags, layers, sorting layers, physics
             var json = SimpleJson.Object();
 
-            // Layers
             var layersArr = SimpleJson.Array();
             for (int i = 0; i < 32; i++)
             {
@@ -75,20 +66,15 @@ namespace Dreamer.AgentBridge
             }
             json.PutRaw("layers", layersArr.ToString());
 
-            // Tags
             var tagsArr = SimpleJson.Array();
             foreach (var t in InternalEditorUtility.tags) tagsArr.Add(t);
             json.PutRaw("tags", tagsArr.ToString());
 
-            // Sorting layers — UnityEngine.SortingLayer.layers is the public
-            // accessor (InternalEditorUtility.sortingLayerNames was removed in
-            // Unity 6). Iteration order matches the TagManager order, lowest
-            // sort value first.
+            // SortingLayer.layers is the only accessor (InternalEditorUtility.sortingLayerNames was removed in Unity 6).
             var sortingArr = SimpleJson.Array();
             foreach (var s in SortingLayer.layers) sortingArr.Add(s.name);
             json.PutRaw("sortingLayers", sortingArr.ToString());
 
-            // Physics 3D
             var p3d = SimpleJson.Object()
                 .PutRaw("gravity", VecToJson(Physics.gravity))
                 .Put("defaultContactOffset", Physics.defaultContactOffset)
@@ -97,14 +83,12 @@ namespace Dreamer.AgentBridge
                 .PutRaw("disabledCollisionPairs", DisabledCollisionPairs(twoD: false));
             json.PutRaw("physics3D", p3d.ToString());
 
-            // Physics 2D
             var p2d = SimpleJson.Object()
                 .PutRaw("gravity", Vec2ToJson(Physics2D.gravity))
                 .PutRaw("disabledCollisionPairs", DisabledCollisionPairs(twoD: true));
             json.PutRaw("physics2D", p2d.ToString());
 
-            // List of all .asset files in ProjectSettings/ — agent uses these
-            // names with --file or with set-project-setting.
+            // ProjectSettings/*.asset filenames — agents pass these with --file or set-project-setting.
             var filesArr = SimpleJson.Array();
             foreach (var f in Directory.GetFiles("ProjectSettings", "*.asset"))
                 filesArr.Add(Path.GetFileName(f));
@@ -115,7 +99,6 @@ namespace Dreamer.AgentBridge
 
         static CommandResult InspectOneFile(string file)
         {
-            // Accept short name ("TagManager") or full ("ProjectSettings/TagManager.asset")
             string fileName = NormalizeFileName(file);
             var so = OpenSettings(fileName, out string error);
             if (so == null) return CommandResult.Fail(error);
@@ -260,7 +243,6 @@ namespace Dreamer.AgentBridge
             if (arr == null || !arr.isArray)
                 return CommandResult.Fail("TagManager.asset has no 'm_SortingLayers' array — Unity layout changed?");
 
-            // Reject duplicates
             for (int i = 0; i < arr.arraySize; i++)
             {
                 var existing = arr.GetArrayElementAtIndex(i);
@@ -344,8 +326,7 @@ namespace Dreamer.AgentBridge
             int b = ResolveLayer(layerB, out string bErr);
             if (b < 0) return CommandResult.Fail(bErr);
 
-            // Unity's API: IgnoreLayerCollision(a, b, ignore). Our --collide flag
-            // is the inverse — friendlier to read but means we negate here.
+            // Unity's API takes `ignore`; --collide is the inverse, so negate here.
             bool ignore = !collide;
             if (twoD)
             {
@@ -355,9 +336,7 @@ namespace Dreamer.AgentBridge
             {
                 Physics.IgnoreLayerCollision(a, b, ignore);
             }
-            // The IgnoreLayerCollision setters persist automatically (Unity
-            // writes the matrix back to DynamicsManager.asset / Physics2DSettings.asset).
-            // Still flush AssetDatabase so the change is visible to subsequent reads.
+            // IgnoreLayerCollision persists automatically; flush AssetDatabase so subsequent reads see it.
             AssetDatabase.SaveAssets();
 
             return CommandResult.Ok(SimpleJson.Object()
@@ -458,7 +437,6 @@ namespace Dreamer.AgentBridge
             var so = OpenSettings(fileName, out string error);
             if (so == null) return CommandResult.Fail(error);
 
-            // No propertyPath → return the full top-level field listing
             if (string.IsNullOrEmpty(propertyPath))
                 return InspectOneFile(fileName);
 
@@ -476,9 +454,9 @@ namespace Dreamer.AgentBridge
 
         // ─── Helpers ───────────────────────────────────────────────────────
 
+        // Accepts "TagManager", "TagManager.asset", "ProjectSettings/TagManager.asset".
         static string NormalizeFileName(string file)
         {
-            // Accept "TagManager", "TagManager.asset", "ProjectSettings/TagManager.asset"
             string f = file.Trim().Replace("\\", "/");
             if (f.StartsWith("ProjectSettings/", StringComparison.OrdinalIgnoreCase))
                 f = f.Substring("ProjectSettings/".Length);

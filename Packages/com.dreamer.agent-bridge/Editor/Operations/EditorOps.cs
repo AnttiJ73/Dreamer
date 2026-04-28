@@ -9,22 +9,15 @@ namespace Dreamer.AgentBridge
 {
     public static class EditorOps
     {
-        /// <summary>
-        /// Execute a Unity Editor menu item.
-        /// Args: { menuItem: "GameObject/UI/Canvas" }
-        /// </summary>
+        /// <summary>Execute a Unity Editor menu item. Args: { menuItem }</summary>
         public static CommandResult ExecuteMenuItem(Dictionary<string, object> args)
         {
             string menuItem = SimpleJson.GetString(args, "menuItem");
             if (string.IsNullOrEmpty(menuItem))
                 return CommandResult.Fail("'menuItem' is required.");
 
-            // Auto-route play-mode menu items. EditorApplication.ExecuteMenuItem
-            // silently returns false for items with validation handlers, which
-            // includes Edit/Play and Edit/Pause — so calling them via the menu
-            // path simply doesn't work. Forward to the proper API instead so
-            // existing agent code that does `execute-menu-item Edit/Play`
-            // gets the same behavior as `set-play-mode --state toggle`.
+            // ExecuteMenuItem silently returns false for items with validation handlers
+            // (Edit/Play, Edit/Pause), so route to PlayModeOps for matching behavior.
             string routedState = TryRedirectPlayMenu(menuItem);
             if (routedState != null)
             {
@@ -32,8 +25,6 @@ namespace Dreamer.AgentBridge
                 return PlayModeOps.SetPlayMode(routedArgs);
             }
 
-            // Validate the menu item exists by checking if it's enabled
-            // EditorApplication.ExecuteMenuItem returns false if the item doesn't exist
             bool executed = EditorApplication.ExecuteMenuItem(menuItem);
             if (!executed)
                 return CommandResult.Fail($"Menu item not found or not executable: {menuItem}");
@@ -46,8 +37,7 @@ namespace Dreamer.AgentBridge
             return CommandResult.Ok(json);
         }
 
-        // Static-method invoker. Args coerced against the resolved overload's
-        // parameter list (SimpleJson-parsed values won't auto-cast long->int).
+        /// <summary>Static-method invoker. Args coerced against the resolved overload's parameter list (SimpleJson-parsed values won't auto-cast long→int).</summary>
         public static CommandResult ExecuteMethod(Dictionary<string, object> args)
         {
             string typeName = SimpleJson.GetString(args, "typeName");
@@ -119,10 +109,7 @@ namespace Dreamer.AgentBridge
             string m = menuItem.Trim();
             if (string.Equals(m, "Edit/Play", StringComparison.OrdinalIgnoreCase)) return "toggle";
             if (string.Equals(m, "Edit/Pause", StringComparison.OrdinalIgnoreCase)) return "toggle-pause";
-            // Edit/Step is "advance one frame while paused" — no equivalent in
-            // PlayModeOps. Let it fall through (it'll likely also be silently
-            // rejected, but the agent will see the menu-item failure and can
-            // pivot to set-play-mode unpause/pause to single-step manually).
+            // Edit/Step has no PlayModeOps equivalent — fall through (agent can pivot to manual pause/unpause).
             return null;
         }
 

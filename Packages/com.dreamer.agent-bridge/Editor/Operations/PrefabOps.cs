@@ -8,19 +8,7 @@ namespace Dreamer.AgentBridge
 {
     public static class PrefabOps
     {
-        /// <summary>
-        /// Unload a prefab-contents temporary scene without letting a failure
-        /// here override the caller's actual outcome. After
-        /// <c>PrefabUtility.SaveAsPrefabAsset</c>, Unity may have already torn
-        /// down the internal scene backing <paramref name="prefabRoot"/>, so
-        /// calling <c>UnloadPrefabContents</c> throws
-        /// "Specified object is not part of Prefab contents" — despite the
-        /// save having succeeded. The mutation has already landed, the cleanup
-        /// is a no-op anyway, so swallow the error and log a diagnostic.
-        /// Every prefab-editing op should use this helper in its finally
-        /// block instead of calling <c>PrefabUtility.UnloadPrefabContents</c>
-        /// directly.
-        /// </summary>
+        /// <summary>Unload prefab-contents without letting cleanup override the caller's outcome. After SaveAsPrefabAsset Unity may have torn down the backing scene, so UnloadPrefabContents throws "Specified object is not part of Prefab contents" despite the save succeeding. Every prefab-editing op should use this in its finally block.</summary>
         public static void SafeUnloadPrefabContents(GameObject prefabRoot)
         {
             if (prefabRoot == null) return;
@@ -30,18 +18,12 @@ namespace Dreamer.AgentBridge
             }
             catch (Exception ex)
             {
-                // Not fatal — the prefab asset on disk is already correct if
-                // the caller reached this point. Emit a diagnostic in case
-                // something else is going wrong, but don't propagate.
                 DreamerLog.Warn($"SafeUnloadPrefabContents: ignored cleanup error ({ex.GetType().Name}: {ex.Message}). The prefab mutation itself was not affected.");
             }
         }
 
 
-        /// <summary>
-        /// Create a new empty prefab.
-        /// Args: { name: "MyPrefab", path?: "Assets/Prefabs" }
-        /// </summary>
+        /// <summary>Create a new empty prefab. Args: { name, path? }</summary>
         public static CommandResult CreatePrefab(Dictionary<string, object> args)
         {
             string name = SimpleJson.GetString(args, "name");
@@ -50,12 +32,10 @@ namespace Dreamer.AgentBridge
 
             string folder = SimpleJson.GetString(args, "path", "Assets/Prefabs");
 
-            // Sanitize name
             name = SanitizeFileName(name);
             if (name.EndsWith(".prefab", StringComparison.OrdinalIgnoreCase))
                 name = name.Substring(0, name.Length - 7);
 
-            // Ensure directory exists
             string fullDir = Path.GetFullPath(folder);
             if (!Directory.Exists(fullDir))
             {
@@ -65,11 +45,9 @@ namespace Dreamer.AgentBridge
 
             string assetPath = $"{folder}/{name}.prefab";
 
-            // Don't overwrite existing
             if (File.Exists(Path.GetFullPath(assetPath)))
                 return CommandResult.Fail($"Prefab already exists at: {assetPath}");
 
-            // Create temporary GameObject, save as prefab, destroy temp
             var tempGo = new GameObject(name);
             try
             {
@@ -94,10 +72,7 @@ namespace Dreamer.AgentBridge
             return CommandResult.Ok(json);
         }
 
-        /// <summary>
-        /// Add a child GameObject to an existing prefab.
-        /// Args: { assetPath?: "path", guid?: "guid", childName: "ChildObject", parentPath?: "SubParent" }
-        /// </summary>
+        /// <summary>Add a child GameObject to an existing prefab. Args: { assetPath?, guid?, childName, parentPath? }</summary>
         public static CommandResult AddChildToPrefab(Dictionary<string, object> args)
         {
             string assetPath = AssetOps.ResolveAssetPath(args);
@@ -124,7 +99,6 @@ namespace Dreamer.AgentBridge
 
                 if (!string.IsNullOrEmpty(parentPath))
                 {
-                    // Strip leading / if present
                     string searchPath = parentPath.StartsWith("/") ? parentPath.Substring(1) : parentPath;
                     Transform found = prefabRoot.transform.Find(searchPath);
                     if (found == null)
@@ -157,10 +131,7 @@ namespace Dreamer.AgentBridge
             return CommandResult.Ok(json);
         }
 
-        /// <summary>
-        /// Save a scene object as a new prefab asset.
-        /// Args: { sceneObjectPath: "/MyObject", savePath?: "Assets/Prefabs", name?: "MyPrefab" }
-        /// </summary>
+        /// <summary>Save a scene object as a new prefab. Args: { sceneObjectPath, savePath?, name? }</summary>
         public static CommandResult SaveAsPrefab(Dictionary<string, object> args)
         {
             string sceneObjectPath = SimpleJson.GetString(args, "sceneObjectPath");
@@ -180,7 +151,6 @@ namespace Dreamer.AgentBridge
             if (name.EndsWith(".prefab", StringComparison.OrdinalIgnoreCase))
                 name = name.Substring(0, name.Length - 7);
 
-            // Ensure directory exists
             string fullDir = Path.GetFullPath(folder);
             if (!Directory.Exists(fullDir))
             {

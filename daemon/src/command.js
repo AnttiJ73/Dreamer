@@ -2,8 +2,6 @@
 
 const crypto = require('crypto');
 
-// ── Known command kinds and their default requirements ──────────────────────
-
 const KIND_DEFS = {
   find_assets:      { label: 'Find Assets',       requirements: null },
   inspect_asset:    { label: 'Inspect Asset',      requirements: null },
@@ -124,8 +122,6 @@ const KIND_DEFS = {
   inspect_animator_override_controller:{ label: 'Inspect Animator Override Controller', requirements: null },
 };
 
-// ── Valid states and allowed transitions ─────────────────────────────────────
-
 const STATES = [
   'queued', 'waiting', 'dispatched', 'running',
   'succeeded', 'failed', 'blocked', 'cancelled',
@@ -133,18 +129,10 @@ const STATES = [
 
 const TERMINAL_STATES = new Set(['succeeded', 'failed', 'blocked', 'cancelled']);
 
-/**
- * Kinds that Unity's CommandDispatcher will execute even during compilation.
- * Mirror of the Unity-side IsCompileSafe list in
- * Packages/com.dreamer.agent-bridge/Editor/Core/CommandDispatcher.cs —
- * keep the two in sync when adding commands.
- *
- * Every other kind must wait for compilation to finish before dispatch,
- * or Unity will reject it mid-flight with "Cannot execute this command
- * while Unity is compiling." That rejection surfaces as a terminal
- * `failed` state, which is worse than holding the command in `waiting`
- * until Unity is ready.
- */
+// Kinds Unity will execute mid-compile. KEEP IN SYNC with the C# IsCompileSafe
+// list in Packages/com.dreamer.agent-bridge/Editor/Core/CommandDispatcher.cs.
+// Anything not listed gets held in `waiting` until compile finishes — Unity
+// would otherwise reject mid-flight and the command would terminate as failed.
 const COMPILE_SAFE_KINDS = new Set([
   'find_assets',
   'inspect_asset',
@@ -167,22 +155,10 @@ function isCompileSafe(kind) {
 }
 
 /**
- * Decide whether a command (kind + args) mutates scene state that would be
- * lost when Unity exits Play Mode. The scheduler gates such commands when
- * `unityState.playMode` is true — a scene-edit made during Play Mode looks
- * successful in the agent's result JSON but silently reverts the moment
- * Play Mode ends, which is a miserable debugging experience.
- *
- * Persistent edits (prefab assets, scene save-asset files, materials,
- * scripts) are fine in Play Mode — only live-scene mutations need gating.
- *
- * Most ambiguous kinds (add_component, set_property, etc.) branch on
- * whether `sceneObjectPath` is present in args — that's the daemon's
- * signal that the target is a live scene object vs. an on-disk prefab.
- *
- * @param {string} kind
- * @param {object} [args]
- * @returns {boolean}
+ * True if (kind, args) edits scene state that would revert on Play Mode exit.
+ * Scheduler gates these when playMode is true. Persistent edits (prefabs,
+ * scene asset files, materials, scripts) are safe — only live-scene mutations
+ * need gating. Ambiguous kinds branch on sceneObjectPath being present.
  */
 function mutatesScene(kind, args) {
   const a = args || {};
@@ -234,10 +210,7 @@ function mutatesScene(kind, args) {
   }
 }
 
-/**
- * Map from current state → set of states it may transition to.
- * Any transition not listed here is illegal.
- */
+/** State → set of legal next states. Anything else is rejected. */
 const TRANSITIONS = {
   queued:      new Set(['waiting', 'dispatched', 'blocked', 'cancelled']),
   // waiting → waiting is intentional: lets the scheduler update waitingReason
@@ -251,12 +224,6 @@ const TRANSITIONS = {
   cancelled:   new Set(),
 };
 
-/**
- * Validate that a state transition is allowed.
- * @param {string} from
- * @param {string} to
- * @returns {{ valid: boolean, reason?: string }}
- */
 function validateTransition(from, to) {
   if (!TRANSITIONS[from]) return { valid: false, reason: `Unknown state: ${from}` };
   if (!TRANSITIONS[from].has(to)) {
@@ -265,22 +232,7 @@ function validateTransition(from, to) {
   return { valid: true };
 }
 
-/**
- * Create a new command object.
- * @param {string} kind - One of the known command kinds
- * @param {object} args - Command-specific arguments
- * @param {object} [options] - Optional overrides
- * @param {string} [options.originTaskId]
- * @param {string} [options.humanLabel]
- * @param {number} [options.priority]
- * @param {string} [options.dependsOn]
- * @param {object} [options.requirements] - Override auto-detected requirements
- * @param {boolean} [options.allowPlayMode] - Bypass the Play Mode scene-edit
- *   gate for this command. Use sparingly — scene edits made during Play Mode
- *   revert on exit, so setting this flag is a claim that the caller knows
- *   the effect is intentional (e.g. runtime debugging).
- * @returns {object} Command object
- */
+/** Build a new command object. options.allowPlayMode bypasses the play-mode scene-edit gate. */
 function createCommand(kind, args, options = {}) {
   const def = KIND_DEFS[kind];
   if (!def) {
@@ -289,7 +241,6 @@ function createCommand(kind, args, options = {}) {
 
   const now = new Date().toISOString();
 
-  // Merge auto requirements with explicit overrides
   const autoReqs = def.requirements ? { ...def.requirements } : null;
   const reqs = options.requirements
     ? { ...(autoReqs || {}), ...options.requirements }
@@ -317,18 +268,10 @@ function createCommand(kind, args, options = {}) {
   };
 }
 
-/**
- * @param {string} kind
- * @returns {boolean}
- */
 function isKnownKind(kind) {
   return kind in KIND_DEFS;
 }
 
-/**
- * @param {string} state
- * @returns {boolean}
- */
 function isTerminalState(state) {
   return TERMINAL_STATES.has(state);
 }

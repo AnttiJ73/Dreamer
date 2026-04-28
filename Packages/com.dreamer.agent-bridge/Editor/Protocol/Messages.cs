@@ -178,7 +178,6 @@ namespace Dreamer.AgentBridge
                 return;
             }
 
-            // Fallback: treat as string
             WriteString(sb, val.ToString());
         }
 
@@ -276,7 +275,7 @@ namespace Dreamer.AgentBridge
 
         static string ParseString(string json, ref int idx)
         {
-            idx++; // skip opening quote
+            idx++;
             var sb = new StringBuilder();
             while (idx < json.Length)
             {
@@ -325,7 +324,7 @@ namespace Dreamer.AgentBridge
         static Dictionary<string, object> ParseObject(string json, ref int idx)
         {
             var dict = new Dictionary<string, object>();
-            idx++; // skip '{'
+            idx++;
             SkipWhitespace(json, ref idx);
 
             if (idx < json.Length && json[idx] == '}')
@@ -340,15 +339,13 @@ namespace Dreamer.AgentBridge
                 if (idx >= json.Length) break;
                 if (json[idx] == '}') { idx++; break; }
 
-                // key
                 if (json[idx] != '"') break;
                 string key = ParseString(json, ref idx);
 
                 SkipWhitespace(json, ref idx);
                 if (idx >= json.Length || json[idx] != ':') break;
-                idx++; // skip ':'
+                idx++;
 
-                // value
                 object val = ParseValue(json, ref idx);
                 dict[key] = val;
 
@@ -370,7 +367,7 @@ namespace Dreamer.AgentBridge
         static List<object> ParseArray(string json, ref int idx)
         {
             var list = new List<object>();
-            idx++; // skip '['
+            idx++;
             SkipWhitespace(json, ref idx);
 
             if (idx < json.Length && json[idx] == ']')
