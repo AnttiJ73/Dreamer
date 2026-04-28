@@ -35,8 +35,8 @@ module.exports = {
   examples: [
     {
       title: 'Create a new menu Canvas',
-      cli: './bin/dreamer create-ui-tree --wait --json \'{"mode":"create","canvas":{"name":"MainMenu","renderMode":"overlay"},"tree":{"type":"VStack","name":"Menu","anchor":"center","size":[400,400],"padding":20,"spacing":10,"children":[{"type":"Text","text":"My Game","fontSize":32,"size":[0,48],"alignment":"middle-center"},{"type":"Button","name":"PlayBtn","text":"Play","size":[0,48]}]}}\'',
-      args: { mode: 'create', canvas: { name: 'MainMenu', renderMode: 'overlay' }, tree: { type: 'VStack', name: 'Menu', anchor: 'center', size: [400, 400], padding: 20, spacing: 10, children: [{ type: 'Text', text: 'My Game', fontSize: 32, size: [0, 48], alignment: 'middle-center' }, { type: 'Button', name: 'PlayBtn', text: 'Play', size: [0, 48] }] } },
+      cli: './bin/dreamer create-ui-tree --wait --json \'{"mode":"create","canvas":{"name":"MainMenu","renderMode":"overlay"},"tree":{"type":"VStack","name":"Menu","anchor":"center","size":[400,400],"padding":20,"spacing":10,"children":[{"type":"Text","text":"My Game","fontSize":32,"size":[0,48],"alignment":"middle-center"},{"type":"Button","name":"PlayBtn","label":"Play","size":[0,48]}]}}\'',
+      args: { mode: 'create', canvas: { name: 'MainMenu', renderMode: 'overlay' }, tree: { type: 'VStack', name: 'Menu', anchor: 'center', size: [400, 400], padding: 20, spacing: 10, children: [{ type: 'Text', text: 'My Game', fontSize: 32, size: [0, 48], alignment: 'middle-center' }, { type: 'Button', name: 'PlayBtn', label: 'Play', size: [0, 48] }] } },
     },
     {
       title: 'Replace a panel\'s children (preserves the canvas envelope, rebuilds inside)',

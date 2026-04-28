@@ -8,8 +8,9 @@ module.exports = {
     type: {
       type: 'string',
       cli: '--type',
-      enum: ['prefab', 'script', 'scene', 'material', 'texture', 'any'],
-      description: 'Asset type filter. Defaults to "any".',
+      description:
+        'Asset type filter. Common values: prefab, script, scene, material, texture, shader, animation, animatorcontroller, scriptableobject, font, audioclip, model, sprite. ' +
+        'Any other value is forwarded to Unity\'s AssetDatabase as `t:<type>` — pass any class name Unity recognizes (e.g. "TextAsset", "ComputeShader"). Defaults to "any".',
     },
     name: {
       type: 'string',
