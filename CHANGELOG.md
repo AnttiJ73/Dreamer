@@ -12,8 +12,13 @@ tags, breaking changes bump the minor version (0.x.0), fixes bump patch.
 ### Changed — Default screenshot folder moved to project root
 - Screenshots now save to `DreamerScreenshots/` at project root instead of `Library/DreamerScreenshots/`. Library/ is hidden in VS Code Explorer (gitignored, often in `files.exclude`), making screenshots inconvenient to browse. The new folder is auto-created on first write with a self-ignoring `.gitignore` (`*` + `!.gitignore`) so PNGs stay out of source control while the folder remains visible. Existing `--save-to` overrides are unaffected.
 
-### Changed — sharper screenshots
-- **`screenshot-scene` default resolution bumped to 2560×1440** (from 1920×1080). UI screenshots are now crisp enough that label text and small icons stay readable when read by the agent.
+### Changed — sharper screenshots, on-demand resolution presets
+- **`screenshot-scene` default resolution is 1280×720** (HD). Earlier defaults of 1920×1080 / 2560×1440 produced larger files than necessary for typical layout reviews; HD keeps file sizes ~60 KB while remaining legible.
+- **`--preset layout|normal|text`** for one-shot resolution selection without remembering pixel counts:
+  - `layout` → 800×450 (quick composition check, smallest file)
+  - `normal` → 1280×720 (same as default — explicit name)
+  - `text` → 2560×1440 (text readability, dense detail)
+  - Explicit `--width` / `--height` override the preset's value for that dimension; mix freely.
 - **`--filter-mode point|bilinear|trilinear`** flag on `screenshot-scene`. When set, every UI source texture (`Image`, `RawImage`, `SpriteRenderer`) has its `filterMode` temporarily overridden for the duration of the render, then restored. Bilinear (Unity's UI default) softens edges at non-1:1 scales — `point` preserves pixel-perfect crispness for stylized / pixel-art UI. Render targets also inherit this filter and MSAA is forced off (`antiAliasing=1`) so renders are pixel-accurate rather than supersampled.
 - Result reports `filterMode` (the resolved mode) and `textureFiltersSwapped` (count of distinct source textures whose filter was overridden, deduped by atlas).
 

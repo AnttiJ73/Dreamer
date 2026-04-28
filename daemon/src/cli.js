@@ -475,7 +475,7 @@ async function run(argv) {
         'add-build-scene --scene PATH [--enabled false]   (append; updates enabled flag if already present)',
         'remove-build-scene --scene PATH',
         'screenshot-prefab --asset Assets/X.prefab [--width 512] [--height 512] [--angle iso|front|side|top|...] [--save-to PATH]   (renders to PNG; open with Read tool to view)',
-        'screenshot-scene [--camera "Main Camera"|"/Path"] [--width 2560] [--height 1440] [--filter-mode point|bilinear|trilinear] [--background-color HEX] [--transparent] [--save-to PATH]   (renders any scene Camera to PNG; auto-flips overlay canvases)',
+        'screenshot-scene [--camera "Main Camera"|"/Path"] [--preset layout|normal|text] [--width N] [--height N] [--filter-mode point|bilinear|trilinear] [--background-color HEX] [--transparent] [--save-to PATH]   (renders any scene Camera to PNG; auto-flips overlay canvases)',
         'create-scene --name NAME [--path FOLDER] [--set-active]',
         'open-scene PATH [--mode single|additive]',
         'save-scene [--path PATH]',
@@ -1581,6 +1581,13 @@ async function run(argv) {
       case 'screenshot-scene': {
         const args = {};
         if (flags.camera) args.camera = String(flags.camera);
+        // Resolve preset first; explicit --width/--height override below.
+        if (flags.preset) {
+          const PRESETS = { layout: [800, 450], normal: [1280, 720], text: [2560, 1440] };
+          const p = PRESETS[String(flags.preset).toLowerCase()];
+          if (!p) fail(`--preset must be one of: ${Object.keys(PRESETS).join(', ')}`);
+          [args.width, args.height] = p;
+        }
         if (flags.width !== undefined) args.width = parseInt(flags.width, 10);
         if (flags.height !== undefined) args.height = parseInt(flags.height, 10);
         if (flags['save-to']) args.savePath = String(flags['save-to']);

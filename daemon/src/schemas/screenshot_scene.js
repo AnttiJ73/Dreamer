@@ -16,8 +16,18 @@ module.exports = {
       cli: '--camera',
       description: 'Camera by name (`Main Camera`) or scene path (`/Cameras/SpectatorCam`). When unset: uses `Camera.main`, falling back to the first Camera in the active scene.',
     },
-    width: { type: 'integer', cli: '--width', description: 'Render width in pixels. Default 2560. Max 4096.' },
-    height: { type: 'integer', cli: '--height', description: 'Render height. Default 1440. Max 4096.' },
+    preset: {
+      type: 'string',
+      cli: '--preset',
+      enum: ['layout', 'normal', 'text'],
+      description:
+        'Resolution preset. **layout** = 800×450 (quick composition check, small file), ' +
+        '**normal** = 1280×720 (balanced — same as default), ' +
+        '**text** = 2560×1440 (text readability, dense detail). ' +
+        'Explicit --width/--height override the preset for either dimension.',
+    },
+    width: { type: 'integer', cli: '--width', description: 'Render width in pixels. Default 1280 (or `preset` value). Max 4096.' },
+    height: { type: 'integer', cli: '--height', description: 'Render height. Default 720 (or `preset` value). Max 4096.' },
     filterMode: {
       type: 'string',
       cli: '--filter-mode',
@@ -57,9 +67,19 @@ module.exports = {
   },
   examples: [
     {
-      title: 'Default 1080p screenshot of the main camera',
+      title: 'Default 720p screenshot of the main camera',
       cli: './bin/dreamer screenshot-scene --wait',
       args: {},
+    },
+    {
+      title: 'Quick layout check at 800×450',
+      cli: './bin/dreamer screenshot-scene --preset layout --wait',
+      args: { preset: 'layout' },
+    },
+    {
+      title: '1440p sharp render with point-filtered UI textures (text readability)',
+      cli: './bin/dreamer screenshot-scene --preset text --filter-mode point --wait',
+      args: { preset: 'text', filterMode: 'point' },
     },
     {
       title: '4K screenshot of a specific camera',

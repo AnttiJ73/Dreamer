@@ -40,8 +40,8 @@ namespace Dreamer.AgentBridge
 
         public static CommandResult ScreenshotScene(Dictionary<string, object> args)
         {
-            int width = SimpleJson.GetInt(args, "width", 2560);
-            int height = SimpleJson.GetInt(args, "height", 1440);
+            int width = SimpleJson.GetInt(args, "width", 1280);
+            int height = SimpleJson.GetInt(args, "height", 720);
             if (width <= 0 || height <= 0)
                 return CommandResult.Fail("'width' and 'height' must be positive.");
             if (width > 4096 || height > 4096)
