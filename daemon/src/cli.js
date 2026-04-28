@@ -143,14 +143,19 @@ const SCENE_PATH_FLAGS = new Set(['scene-object', 'parent', 'parent-path']);
 function maybeDetectGitBashPath(flagName, value) {
   if (typeof value !== 'string') return value;
   if (!SCENE_PATH_FLAGS.has(flagName)) return value;
-  const translated = /^[A-Za-z]:[\\/]Program Files[\\/]Git[\\/]/i;
-  if (translated.test(value)) {
+  // Git-Bash rewrites leading '/X' to 'C:/Program Files/Git/X'. Detect AND
+  // auto-correct so the command actually works — previously we only warned,
+  // letting the broken path reach Unity for a mysterious "not found".
+  const translated = /^([A-Za-z]:[\\/]Program Files[\\/]Git[\\/])(.+)$/i;
+  const m = value.match(translated);
+  if (m) {
+    const fixed = '/' + m[2].replace(/\\/g, '/');
     process.stderr.write(
-      `warn: --${flagName}='${value}' looks like a Git-Bash path-translated value.\n` +
-      `      Git-Bash rewrites leading '/X' to 'C:/Program Files/Git/X'. To pass a\n` +
-      `      scene path, drop the leading slash (e.g. 'MainMenuCanvas/Child') or\n` +
-      `      use a double slash ('//MainMenuCanvas/Child').\n`
+      `warn: --${flagName}='${value}' was Git-Bash path-translated;\n` +
+      `      auto-corrected to '${fixed}'. Drop the leading '/' (e.g. '${fixed.slice(1)}')\n` +
+      `      or use '//' to avoid translation entirely.\n`
     );
+    return fixed;
   }
   return value;
 }
@@ -1127,11 +1132,20 @@ async function run(argv) {
           fail('--scene-object NAME or --asset PATH is required for set-rect-transform');
         }
         if (flags.anchor) rtArgs.anchor = flags.anchor;
-        if (flags.size) rtArgs.size = flags.size;
-        if (flags.pivot) rtArgs.pivot = flags.pivot;
-        if (flags.offset) rtArgs.offset = flags.offset;
-        if (flags['offset-min']) rtArgs.offsetMin = flags['offset-min'];
-        if (flags['offset-max']) rtArgs.offsetMax = flags['offset-max'];
+        // Vector-ish flags accept JSON arrays (`[w,h]`), strings (`WxH`,
+        // `X,Y`), or dicts. Parse JSON when the value looks like one so the
+        // C# side gets a real array, not the literal string.
+        const tryJson = (v) => {
+          if (typeof v !== 'string') return v;
+          const t = v.trim();
+          if (!(t.startsWith('[') || t.startsWith('{'))) return v;
+          try { return JSON.parse(t); } catch { return v; }
+        };
+        if (flags.size !== undefined) rtArgs.size = tryJson(flags.size);
+        if (flags.pivot !== undefined) rtArgs.pivot = tryJson(flags.pivot);
+        if (flags.offset !== undefined) rtArgs.offset = tryJson(flags.offset);
+        if (flags['offset-min'] !== undefined) rtArgs.offsetMin = tryJson(flags['offset-min']);
+        if (flags['offset-max'] !== undefined) rtArgs.offsetMax = tryJson(flags['offset-max']);
         await submitCommand('set_rect_transform', rtArgs, flags);
         break;
       }

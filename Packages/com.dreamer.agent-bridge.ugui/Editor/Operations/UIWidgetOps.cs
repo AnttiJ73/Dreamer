@@ -322,7 +322,9 @@ namespace Dreamer.AgentBridge
             if (!string.IsNullOrEmpty(parentErr) && parent == null) return CommandResult.Fail(parentErr);
 
             string name = SimpleJson.GetString(args, "name", "Button");
-            string label = SimpleJson.GetString(args, "text", "Button");
+            // `label` is canonical; `text` is back-compat alias.
+            string label = SimpleJson.GetString(args, "label")
+                        ?? SimpleJson.GetString(args, "text", "Button");
             float fontSize = SimpleJson.GetFloat(args, "fontSize", 18f);
 
             Color bg = new Color(0.9f, 0.9f, 0.9f, 1f);

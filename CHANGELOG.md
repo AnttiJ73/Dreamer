@@ -9,6 +9,12 @@ tags, breaking changes bump the minor version (0.x.0), fixes bump patch.
 
 ## [Unreleased]
 
+### Fixed — UX papercuts (4 bugs across daemon/bridge/ugui)
+- **Button label silently dropped** in `create-ui-tree` — `{type:"Button", label:"Cancel"}` rendered as the literal text "Button". Asymmetry between widgets: `Button`'s tree builder only forwarded `text` (not `label`) to its widget op, while `Toggle` / `Slider` already used `label`. Fixed both `BuildButton` (UITreeOps.cs) and `CreateButton` (UIWidgetOps.cs) to accept either, preferring `label`. The widget set is now consistent.
+- **`set-rect-transform --size '[300,60]'` rejected** by daemon schema validator with "must be string, got array". The C# side already supported all three forms (string `WxH`, array `[w,h]`, dict `{w,h}`); only the schema entry constrained it to `string`. Loosened to `any` for `size`, `pivot`, `offset`, `offsetMin`, `offsetMax`. CLI now also pre-parses bracketed strings as JSON before submitting, so the array form survives shell quoting.
+- **Git-Bash leading-slash path translation now auto-corrected** instead of merely warned. `--parent /Foo` on Git-Bash gets rewritten by MSYS to `C:/Program Files/Git/Foo` before reaching the CLI; previously the CLI warned but still passed the broken path to Unity, producing a mysterious "not found". Now the CLI detects the translated form, strips the prefix back to `/Foo`, and prints a notice with the recovery action.
+- **Scene-object "not found" errors include near-match suggestions.** Walks all loaded scenes' transforms scoring leaf names by (1) case-insensitive equal, (2) bidirectional substring contains, (3) bounded Levenshtein distance ≤ 2. Returns up to 5 candidate scene paths. `windoww` → "Did you mean: /MainMenu/Window?". `Toog` → "Did you mean: /MainMenu/Window/Tog?". Implementation in `SuggestNearMatches` + `LevenshteinAtMost` in PropertyOps.cs (used by every command that does scene-path resolution: rename, delete, set-property, add-component, etc.).
+
 ### Changed — Default screenshot folder moved to project root
 - Screenshots now save to `DreamerScreenshots/` at project root instead of `Library/DreamerScreenshots/`. Library/ is hidden in VS Code Explorer (gitignored, often in `files.exclude`), making screenshots inconvenient to browse. The new folder is auto-created on first write with a self-ignoring `.gitignore` (`*` + `!.gitignore`) so PNGs stay out of source control while the folder remains visible. Existing `--save-to` overrides are unaffected.
 

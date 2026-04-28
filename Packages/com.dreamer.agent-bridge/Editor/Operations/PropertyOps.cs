@@ -977,7 +977,9 @@ namespace Dreamer.AgentBridge
             // Absolute path with no root match — do not fall back to deep search.
             if (rooted)
             {
-                error = $"Scene object not found at absolute path: /{stripped}. (Leading '/' requires a root-level object; drop the slash to search all descendants.)";
+                string sugg = SuggestNearMatches(parts[parts.Length - 1], allRoots);
+                error = $"Scene object not found at absolute path: /{stripped}. (Leading '/' requires a root-level object; drop the slash to search all descendants.)"
+                      + (sugg != null ? $" Did you mean: {sugg}?" : "");
                 return null;
             }
 
@@ -993,8 +995,85 @@ namespace Dreamer.AgentBridge
                 return null;
             }
 
-            error = $"Scene object not found at path: {path}.";
+            string suggDeep = SuggestNearMatches(parts[parts.Length - 1], allRoots);
+            error = $"Scene object not found at path: {path}."
+                  + (suggDeep != null ? $" Did you mean: {suggDeep}?" : "");
             return null;
+        }
+
+        // Suggest scene paths whose leaf name is similar to `targetLeaf`.
+        // Used to turn dead-end "not found" errors into actionable hints —
+        // typos, casing differences, partial-name lookups. Ranking:
+        //   1. Case-insensitive equal              (perfect match, wrong path)
+        //   2. Case-insensitive contains either way (substring match)
+        //   3. Levenshtein distance ≤ 2            (typo: 'windoww' → 'Window')
+        static string SuggestNearMatches(string targetLeaf, List<GameObject> allRoots)
+        {
+            if (string.IsNullOrEmpty(targetLeaf)) return null;
+            var hits = new List<(int rank, int distance, GameObject go)>();
+            string targetLo = targetLeaf.ToLowerInvariant();
+
+            void Visit(Transform t)
+            {
+                string n = t.name;
+                string nLo = n.ToLowerInvariant();
+                if (string.Equals(n, targetLeaf, StringComparison.OrdinalIgnoreCase))
+                    hits.Add((1, 0, t.gameObject));
+                else if (nLo.Contains(targetLo) || targetLo.Contains(nLo))
+                    hits.Add((2, Math.Abs(n.Length - targetLeaf.Length), t.gameObject));
+                else
+                {
+                    // Levenshtein with early exit at threshold 2.
+                    int d = LevenshteinAtMost(targetLo, nLo, 2);
+                    if (d >= 0) hits.Add((3, d, t.gameObject));
+                }
+                for (int i = 0; i < t.childCount; i++) Visit(t.GetChild(i));
+            }
+            foreach (var r in allRoots) Visit(r.transform);
+            if (hits.Count == 0) return null;
+
+            hits.Sort((a, b) =>
+            {
+                int rc = a.rank.CompareTo(b.rank);
+                return rc != 0 ? rc : a.distance.CompareTo(b.distance);
+            });
+            const int Max = 5;
+            int take = Math.Min(Max, hits.Count);
+            var paths = new string[take];
+            for (int i = 0; i < take; i++) paths[i] = GetScenePath(hits[i].go);
+            string joined = string.Join(", ", paths);
+            if (hits.Count > Max) joined += $", +{hits.Count - Max} more";
+            return joined;
+        }
+
+        // Bounded Levenshtein — returns the distance if ≤ maxDistance, else -1.
+        // Quick reject: any pair whose lengths differ by more than maxDistance.
+        static int LevenshteinAtMost(string a, string b, int maxDistance)
+        {
+            if (a == null || b == null) return -1;
+            if (Math.Abs(a.Length - b.Length) > maxDistance) return -1;
+            int la = a.Length, lb = b.Length;
+            if (la == 0) return lb <= maxDistance ? lb : -1;
+            if (lb == 0) return la <= maxDistance ? la : -1;
+
+            var prev = new int[lb + 1];
+            var cur = new int[lb + 1];
+            for (int j = 0; j <= lb; j++) prev[j] = j;
+            for (int i = 1; i <= la; i++)
+            {
+                cur[0] = i;
+                int rowMin = cur[0];
+                for (int j = 1; j <= lb; j++)
+                {
+                    int cost = a[i - 1] == b[j - 1] ? 0 : 1;
+                    cur[j] = Math.Min(Math.Min(cur[j - 1] + 1, prev[j] + 1), prev[j - 1] + cost);
+                    if (cur[j] < rowMin) rowMin = cur[j];
+                }
+                if (rowMin > maxDistance) return -1;
+                var tmp = prev; prev = cur; cur = tmp;
+            }
+            int dist = prev[lb];
+            return dist <= maxDistance ? dist : -1;
         }
 
         static GameObject TraverseFromRoot(Transform anchor, string[] parts)

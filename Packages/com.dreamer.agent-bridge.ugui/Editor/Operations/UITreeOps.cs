@@ -352,7 +352,12 @@ namespace Dreamer.AgentBridge
             var wArgs = CopyRectArgs(spec);
             wArgs["_parentInstanceId"] = parent.gameObject.GetInstanceID();
             if (spec.TryGetValue("name", out object n)) wArgs["name"] = n;
-            if (spec.TryGetValue("text", out object t)) wArgs["text"] = t;
+            // Accept both `label` and `text` for the button caption — `label`
+            // matches the rest of the widget set (Toggle uses `label`) and
+            // mirrors how Unity's Inspector names control text. `text` stays
+            // as a back-compat alias.
+            if (spec.TryGetValue("label", out object lbl)) wArgs["text"] = lbl;
+            else if (spec.TryGetValue("text", out object t)) wArgs["text"] = t;
             if (spec.TryGetValue("fontSize", out object fs)) wArgs["fontSize"] = fs;
             if (spec.TryGetValue("bgColor", out object bg)) wArgs["bgColor"] = bg;
             if (spec.TryGetValue("textColor", out object tc)) wArgs["textColor"] = tc;
