@@ -9,6 +9,14 @@ tags, breaking changes bump the minor version (0.x.0), fixes bump patch.
 
 ## [Unreleased]
 
+### Changed — Default screenshot folder moved to project root
+- Screenshots now save to `DreamerScreenshots/` at project root instead of `Library/DreamerScreenshots/`. Library/ is hidden in VS Code Explorer (gitignored, often in `files.exclude`), making screenshots inconvenient to browse. The new folder is auto-created on first write with a self-ignoring `.gitignore` (`*` + `!.gitignore`) so PNGs stay out of source control while the folder remains visible. Existing `--save-to` overrides are unaffected.
+
+### Added — `screenshot-scene` + TextMeshPro support
+- **`./bin/dreamer screenshot-scene [--camera NAME] [--width 1920] [--height 1080] [--background-color HEX] [--transparent] [--save-to PATH]`** — render any Camera in the active scene to a PNG. Defaults to `Camera.main`, falling back to the first Camera in the scene. Captures 3D, 2D sprites, particles, post-processing, and UI canvases.
+- **ScreenSpaceOverlay canvases handled automatically** — they bypass cameras (drawing directly to the back buffer in a final compositing pass), so off-screen `cam.Render()` doesn't see them. `screenshot-scene` temporarily flips every active overlay canvas to `ScreenSpaceCamera` bound to the render camera, runs the layout pass, captures, then restores the original `renderMode` / `worldCamera` / `planeDistance`. Result reports `flippedOverlayCanvases` count. Verified against the DreamerUIDemos scene with 16 overlay canvases — all rendered correctly into one screenshot.
+- **TextMeshPro rendering in `screenshot-prefab`** — `TextMeshProUGUI` and `TextMeshPro` text now renders. TMP has its own mesh-build pipeline that doesn't tick from `Canvas.ForceUpdateCanvases`; resolved via reflection on `TMPro.TMP_Text.ForceMeshUpdate()` in `SetupCanvasForPreview` (zero hard dependency on the TMP package — if not installed, the call is skipped silently). Verified with a hand-built prefab containing both `UnityEngine.UI.Text` and `TextMeshProUGUI` — both rendered.
+
 ### Added — `screenshot-prefab` (visual feedback for agents)
 - **`./bin/dreamer screenshot-prefab --asset Assets/X.prefab [--width 512] [--height 512] [--angle iso|front|back|side|right|left|top|bottom] [--background-color "#RRGGBB[AA]"|JSON-rgba] [--transparent] [--save-to PATH]`** — renders a prefab to a PNG using Unity's `PreviewRenderUtility`. Camera auto-frames the prefab's combined mesh bounds (computed from `MeshFilter.sharedMesh.bounds` / `SkinnedMeshRenderer.localBounds` / `Sprite.bounds` and transformed to world-space, NOT from `Renderer.bounds` — the latter is uninitialized for objects in a PreviewScene that haven't rendered yet). Two-light rim setup, configurable background.
 - **Custom `--background-color`** accepts hex (`#1a3a8a`, `#1a3a8a80`) or JSON RGB(A) array of 0..1 floats (`[1.0, 0.95, 0.7]`). Default neutral gray.

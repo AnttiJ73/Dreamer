@@ -55,6 +55,7 @@ const KIND_DEFS = {
 
   // Visual feedback — render assets to PNG.
   screenshot_prefab:       { label: 'Screenshot Prefab',      requirements: null },
+  screenshot_scene:        { label: 'Screenshot Scene',       requirements: null },
 
   // EditorBuildSettings build-scenes.
   inspect_build_scenes:    { label: 'Inspect Build Scenes',   requirements: null },

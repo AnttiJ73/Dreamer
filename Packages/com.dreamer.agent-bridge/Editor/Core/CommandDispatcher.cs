@@ -88,6 +88,7 @@ namespace Dreamer.AgentBridge
 
             // Visual feedback — render assets to PNG so agents can "see".
             _handlers["screenshot_prefab"]        = PreviewOps.ScreenshotPrefab;
+            _handlers["screenshot_scene"]         = PreviewOps.ScreenshotScene;
 
             // EditorBuildSettings.scenes — the build-scenes list.
             _handlers["inspect_build_scenes"]     = BuildSettingsOps.InspectBuildScenes;

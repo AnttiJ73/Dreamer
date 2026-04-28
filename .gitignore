@@ -8,6 +8,7 @@ Obj/
 Build/
 Builds/
 Logs/
+DreamerScreenshots/
 *.csproj
 *.sln
 *.slnx

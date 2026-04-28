@@ -24,7 +24,7 @@ module.exports = {
     savePath: {
       type: 'string',
       cli: '--save-to',
-      description: 'Optional output path. Default `Library/DreamerScreenshots/<stem>-<guid8>-<ts>.png`. Library/ is gitignored — pick somewhere else only if you want the PNG persisted.',
+      description: 'Optional output path. Default `DreamerScreenshots/<stem>-<guid8>-<ts>.png` at the project root. The folder is auto-created with a self-ignoring `.gitignore` so PNGs stay out of source control while remaining visible in VS Code\'s Explorer.',
     },
     backgroundColor: {
       type: 'any',
