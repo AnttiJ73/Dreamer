@@ -67,8 +67,8 @@ module.exports = {
     },
   ],
   pitfalls: [
-    'UI/Canvas prefabs come back blank — Canvas/CanvasRenderer needs a parent Canvas in the preview scene, which this v1 doesn\'t set up. Use `screenshot-scene` (when available) on a scene that uses the prefab, or render the underlying scene\'s Game view.',
-    'Prefabs with no MeshRenderer/SkinnedMeshRenderer/SpriteRenderer (logic-only prefabs, scripts + Rigidbody, etc.) render an empty scene. The result\'s `boundsSize` will be `[1,1,1]` (the fallback) — that\'s the signal.',
+    'UI/Canvas prefabs render via a separate code path (auto-detected when the prefab has a Canvas at root or as a descendant): result includes `mode: "ui"`, camera switches to orthographic, default angle becomes `front`. The Canvas is temporarily flipped to WorldSpace + bound to a temp camera in the active scene, the LayoutRebuilder is forced, and graphics are dirtied. Standard uGUI (Image, Text, Button, Slider, Toggle, Panel) renders correctly. **TextMeshProUGUI (TMP) text often comes back invisible** — TMP has its own mesh-build pipeline that doesn\'t tick from `Canvas.ForceUpdateCanvases`. UI fragments without a root Canvas (button-only prefabs meant to be parented under an existing Canvas) fall through to 3D mode and render blank.',
+    'Prefabs with no MeshRenderer/SkinnedMeshRenderer/SpriteRenderer/Canvas (logic-only prefabs, scripts + Rigidbody, etc.) render an empty scene. The result\'s `boundsSize` will be `[1,1,1]` (the fallback) — that\'s the signal.',
     'Larger images consume more multimodal tokens when read. Default 512 is a good balance; go smaller (256) for batch overviews, larger (1024+) when you need detail.',
     'On Windows, Unity must have focus or the render may come back black on some GPU/driver combos. If you get an all-black PNG, run `dreamer focus-unity` first.',
     'Particle systems, trail/line renderers, lights, and post-processing effects don\'t contribute to bounds (they render dynamically) — the camera frames the static-mesh extent only.',

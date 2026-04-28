@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using UnityEditor;
 using UnityEngine;
+using UnityEngine.UI;
 
 namespace Dreamer.AgentBridge
 {
@@ -32,7 +33,9 @@ namespace Dreamer.AgentBridge
                 return CommandResult.Fail("'width' and 'height' max 4096.");
 
             string savePath = SimpleJson.GetString(args, "savePath");
-            string angle = SimpleJson.GetString(args, "angle") ?? "iso";
+            string angleArg = SimpleJson.GetString(args, "angle");
+            string angle = angleArg ?? "iso";
+            bool angleExplicit = !string.IsNullOrEmpty(angleArg);
             bool transparent = SimpleJson.GetBool(args, "transparent", false);
             Color background;
             if (transparent)
@@ -71,6 +74,10 @@ namespace Dreamer.AgentBridge
                 pru.camera.fieldOfView = 30f;
                 pru.camera.nearClipPlane = 0.05f;
                 pru.camera.farClipPlane = 5000f;
+                // Render everything — PreviewRenderUtility's default culling
+                // mask excludes most layers, so UI prefabs (layer 5) and
+                // anything else outside the default come back invisible.
+                pru.camera.cullingMask = ~0;
 
                 // Two-light rim setup — key from upper-front, fill from lower-back.
                 if (pru.lights != null && pru.lights.Length >= 2)
@@ -82,44 +89,96 @@ namespace Dreamer.AgentBridge
                 }
                 pru.ambientColor = new Color(0.28f, 0.28f, 0.32f);
 
-                // Spawn the prefab into PRU's preview scene.
+                // Spawn the prefab. Stay in the active scene initially so the
+                // Canvas rebuild / LayoutRebuilder pipeline runs (these only
+                // tick on real scenes — PRU's preview scene is a stripped-down
+                // context where Canvas geometry doesn't get built).
                 instance = UnityEngine.Object.Instantiate(prefab);
                 instance.hideFlags = HideFlags.HideAndDontSave;
-                pru.AddSingleGO(instance);
 
-                // Frame the camera on combined renderer bounds.
-                Bounds bounds = ComputeBounds(instance);
+                Canvas rootCanvas = FindCanvas(instance);
+                bool uiMode = rootCanvas != null;
+                if (uiMode)
+                {
+                    SetupCanvasForPreview(instance, rootCanvas, pru.camera);
+                    if (!angleExplicit) angle = "front";
+                }
+
+                // For 3D mode, move into PRU's preview scene. UI mode renders
+                // via a temp camera in the active scene (PRU's preview scene
+                // doesn't run the Canvas mesh-build pipeline), so we leave
+                // the instance in the active scene.
+                if (!uiMode) pru.AddSingleGO(instance);
+
+                // Frame the camera on combined bounds.
+                Bounds bounds = uiMode ? ComputeUIBounds(instance) : ComputeBounds(instance);
                 Vector3 dirLocal = AngleToCameraDir(angle);
-                float radius = Mathf.Max(bounds.extents.magnitude, 0.5f);
-                float distance = radius / Mathf.Sin(pru.camera.fieldOfView * 0.5f * Mathf.Deg2Rad);
-                pru.camera.transform.position = bounds.center + dirLocal.normalized * distance * 1.35f;
-                pru.camera.transform.LookAt(bounds.center);
+                if (uiMode)
+                {
+                    // UI canvases render their visible face on the -Z side of
+                    // the rect transform (matches Unity's Scene-view default
+                    // — drag a canvas into the scene and its text reads
+                    // correctly when the editor camera looks down +Z toward
+                    // the canvas at origin). AngleToCameraDir's "front" already
+                    // returns Vector3.back which puts the camera at -Z looking
+                    // +Z, so no flip is needed.
+
+                    // Orthographic camera framed on the UI's world-corner extent.
+                    pru.camera.orthographic = true;
+                    pru.camera.orthographicSize = Mathf.Max(bounds.extents.y, bounds.extents.x * (float)height / Mathf.Max(width, 1), 1f);
+                    float dist = Mathf.Max(bounds.extents.z + 100f, 200f);
+                    pru.camera.transform.position = bounds.center + dirLocal.normalized * dist;
+                    pru.camera.transform.LookAt(bounds.center);
+                    pru.camera.nearClipPlane = 0.01f;
+                    pru.camera.farClipPlane = dist * 4f;
+                }
+                else
+                {
+                    pru.camera.orthographic = false;
+                    float radius = Mathf.Max(bounds.extents.magnitude, 0.5f);
+                    float distance = radius / Mathf.Sin(pru.camera.fieldOfView * 0.5f * Mathf.Deg2Rad);
+                    pru.camera.transform.position = bounds.center + dirLocal.normalized * distance * 1.35f;
+                    pru.camera.transform.LookAt(bounds.center);
+                }
 
                 // Render off-screen → Texture2D. Use a custom ARGB32 RT instead
                 // of PreviewRenderUtility.BeginStaticPreview / EndStaticPreview:
                 // the latter allocates an RGB-only RT internally, so an alpha=0
                 // background would silently come back as solid black. Using our
                 // own ARGB32 RT preserves the alpha channel through to PNG.
-                var rt = RenderTexture.GetTemporary(width, height, 24, RenderTextureFormat.ARGB32);
-                rt.Create();
-                var prevTarget = pru.camera.targetTexture;
-                var prevActive = RenderTexture.active;
                 Texture2D rendered;
-                try
+                if (uiMode)
                 {
-                    pru.camera.targetTexture = rt;
-                    RenderTexture.active = rt;
-                    GL.Clear(true, true, background);
-                    pru.camera.Render();
-                    rendered = new Texture2D(width, height, TextureFormat.RGBA32, mipChain: false);
-                    rendered.ReadPixels(new Rect(0, 0, width, height), 0, 0);
-                    rendered.Apply();
+                    // PreviewRenderUtility's preview scene doesn't run the
+                    // Canvas/CanvasRenderer mesh-build pipeline, so UI prefabs
+                    // come back invisible no matter what we do with pru.camera.
+                    // Workaround: render via a temporary camera in the active
+                    // scene, with the prefab parked off-screen briefly. We
+                    // reset all the temporary state in the finally block.
+                    rendered = RenderUIOffscreen(instance, rootCanvas, width, height, background, dirLocal, bounds);
                 }
-                finally
+                else
                 {
-                    RenderTexture.active = prevActive;
-                    pru.camera.targetTexture = prevTarget;
-                    RenderTexture.ReleaseTemporary(rt);
+                    var rt = RenderTexture.GetTemporary(width, height, 24, RenderTextureFormat.ARGB32);
+                    rt.Create();
+                    var prevTarget = pru.camera.targetTexture;
+                    var prevActive = RenderTexture.active;
+                    try
+                    {
+                        pru.camera.targetTexture = rt;
+                        RenderTexture.active = rt;
+                        GL.Clear(true, true, background);
+                        pru.camera.Render();
+                        rendered = new Texture2D(width, height, TextureFormat.RGBA32, mipChain: false);
+                        rendered.ReadPixels(new Rect(0, 0, width, height), 0, 0);
+                        rendered.Apply();
+                    }
+                    finally
+                    {
+                        RenderTexture.active = prevActive;
+                        pru.camera.targetTexture = prevTarget;
+                        RenderTexture.ReleaseTemporary(rt);
+                    }
                 }
 
                 if (rendered == null)
@@ -143,17 +202,43 @@ namespace Dreamer.AgentBridge
 
                 File.WriteAllBytes(savePath, png);
 
-                return CommandResult.Ok(SimpleJson.Object()
+                var resultJson = SimpleJson.Object()
                     .Put("asset", assetPath)
                     .Put("path", savePath)
                     .Put("width", width)
                     .Put("height", height)
                     .Put("byteCount", png.Length)
                     .Put("angle", angle)
+                    .Put("mode", uiMode ? "ui" : "3d")
                     .PutRaw("boundsCenter", $"[{bounds.center.x},{bounds.center.y},{bounds.center.z}]")
-                    .PutRaw("boundsSize", $"[{bounds.size.x},{bounds.size.y},{bounds.size.z}]")
-                    .Put("hint", "Open the PNG with the Read tool to view the rendered prefab.")
-                    .ToString());
+                    .PutRaw("boundsSize", $"[{bounds.size.x},{bounds.size.y},{bounds.size.z}]");
+
+                if (uiMode)
+                {
+                    int graphicCount = 0;
+                    int activeGraphicCount = 0;
+                    int totalVertices = 0;
+                    foreach (var g in instance.GetComponentsInChildren<Graphic>(includeInactive: true))
+                    {
+                        graphicCount++;
+                        if (g.enabled && g.gameObject.activeInHierarchy) activeGraphicCount++;
+                        var cr = g.canvasRenderer;
+                        if (cr != null) totalVertices += cr.relativeDepth >= 0 ? 0 : 0; // CanvasRenderer doesn't expose vertex count directly; placeholder
+                    }
+                    resultJson
+                        .Put("uiCanvasRenderMode", rootCanvas.renderMode.ToString())
+                        .Put("uiCanvasWorldCameraSet", rootCanvas.worldCamera != null)
+                        .Put("uiGraphicCount", graphicCount)
+                        .Put("uiActiveGraphicCount", activeGraphicCount)
+                        .Put("uiCullingMask", pru.camera.cullingMask)
+                        .Put("uiCameraOrtho", pru.camera.orthographic)
+                        .Put("uiCameraOrthoSize", pru.camera.orthographicSize)
+                        .PutRaw("uiCameraPos", $"[{pru.camera.transform.position.x},{pru.camera.transform.position.y},{pru.camera.transform.position.z}]")
+                        .Put("uiInstanceLayer", instance.layer);
+                }
+
+                resultJson.Put("hint", "Open the PNG with the Read tool to view the rendered prefab.");
+                return CommandResult.Ok(resultJson.ToString());
             }
             catch (Exception ex)
             {
@@ -227,6 +312,158 @@ namespace Dreamer.AgentBridge
         }
 
         static Bounds Encapsulate(Bounds a, Bounds b) { a.Encapsulate(b); return a; }
+
+        // ── UI / Canvas mode ─────────────────────────────────────────────
+
+        static Canvas FindCanvas(GameObject root)
+        {
+            var c = root.GetComponent<Canvas>();
+            if (c != null) return c;
+            // Some prefabs nest a Canvas one level deep (a "PageRoot" with a
+            // Canvas child). Pick the topmost-found Canvas — we don't try to
+            // synthesize a wrapping Canvas for prefabs that have none, since
+            // those are usually fragments meant to be parented under an
+            // existing Canvas, not standalone screens.
+            return root.GetComponentInChildren<Canvas>(includeInactive: true);
+        }
+
+        static void SetupCanvasForPreview(GameObject root, Canvas canvas, Camera previewCamera)
+        {
+            // World-space rendering binds to a specific camera. Without this,
+            // ScreenSpaceOverlay draws directly to the screen and Camera.Render
+            // never sees the canvas.
+            canvas.renderMode = RenderMode.WorldSpace;
+            canvas.worldCamera = previewCamera;
+            canvas.sortingOrder = 0;
+
+            // Reset transform — prefab may have a non-zero position/rotation.
+            root.transform.position = Vector3.zero;
+            root.transform.rotation = Quaternion.identity;
+            root.transform.localScale = Vector3.one;
+
+            // Lock the CanvasScaler to constant pixel size so the layout pass
+            // produces a predictable extent. ScaleWithScreenSize would scale
+            // by the (irrelevant) preview RT dimensions vs reference resolution.
+            var scaler = canvas.GetComponent<CanvasScaler>();
+            if (scaler != null)
+            {
+                scaler.uiScaleMode = CanvasScaler.ScaleMode.ConstantPixelSize;
+                scaler.scaleFactor = 1f;
+            }
+
+            // Force a full layout rebuild — instantiated prefabs come back
+            // with zero-sized RectTransforms until the LayoutRebuilder runs.
+            Canvas.ForceUpdateCanvases();
+            foreach (var rt in root.GetComponentsInChildren<RectTransform>(includeInactive: true))
+            {
+                LayoutRebuilder.ForceRebuildLayoutImmediate(rt);
+            }
+            // Force every Graphic to rebuild its CanvasRenderer mesh — disabling
+            // and re-enabling triggers OnDisable/OnEnable which mark the mesh
+            // dirty. Without this, nested Graphics often render as zero-vertex.
+            foreach (var g in root.GetComponentsInChildren<Graphic>(includeInactive: true))
+            {
+                if (g == null) continue;
+                g.SetAllDirty();
+            }
+            Canvas.ForceUpdateCanvases();
+        }
+
+        static Texture2D RenderUIOffscreen(GameObject instance, Canvas rootCanvas, int width, int height, Color background, Vector3 dirLocal, Bounds bounds)
+        {
+            // Park the canvas at a far-off position so it doesn't interfere
+            // with the visible scene if user happens to be looking at the
+            // editor. Canvas world position is preserved via parent transform —
+            // we offset by adding to the root, render, then the caller's
+            // finally block destroys the instance.
+            var offset = new Vector3(0f, 0f, -100000f);
+            instance.transform.position += offset;
+            var offsetCenter = bounds.center + offset;
+
+            // Temp camera GameObject in the active scene. HideFlags so it
+            // doesn't appear in the user's hierarchy / get saved.
+            var camGO = new GameObject("DreamerPreviewCamera");
+            camGO.hideFlags = HideFlags.HideAndDontSave;
+            var cam = camGO.AddComponent<Camera>();
+            cam.cullingMask = ~0;
+            cam.clearFlags = CameraClearFlags.SolidColor;
+            cam.backgroundColor = background;
+            cam.orthographic = true;
+            cam.orthographicSize = Mathf.Max(bounds.extents.y, bounds.extents.x * (float)height / Mathf.Max(width, 1), 1f);
+            cam.nearClipPlane = 0.01f;
+            float dist = Mathf.Max(bounds.extents.z + 100f, 200f);
+            cam.farClipPlane = dist * 4f;
+            cam.transform.position = offsetCenter + dirLocal.normalized * dist;
+            cam.transform.LookAt(offsetCenter);
+            cam.allowHDR = false;
+            cam.allowMSAA = true;
+            cam.enabled = false; // we'll call Render() manually
+
+            // Bind canvas to this temp camera too, so it knows where to submit.
+            rootCanvas.worldCamera = cam;
+
+            var rt = RenderTexture.GetTemporary(width, height, 24, RenderTextureFormat.ARGB32);
+            rt.Create();
+            var prevTarget = cam.targetTexture;
+            var prevActive = RenderTexture.active;
+            Texture2D rendered;
+            try
+            {
+                cam.targetTexture = rt;
+                RenderTexture.active = rt;
+                GL.Clear(true, true, background);
+                Canvas.ForceUpdateCanvases();
+                cam.Render();
+                rendered = new Texture2D(width, height, TextureFormat.RGBA32, mipChain: false);
+                rendered.ReadPixels(new Rect(0, 0, width, height), 0, 0);
+                rendered.Apply();
+            }
+            finally
+            {
+                RenderTexture.active = prevActive;
+                cam.targetTexture = prevTarget;
+                RenderTexture.ReleaseTemporary(rt);
+                UnityEngine.Object.DestroyImmediate(camGO);
+                instance.transform.position -= offset;
+            }
+            return rendered;
+        }
+
+        static Bounds ComputeUIBounds(GameObject root)
+        {
+            // Take the union of every visible UI Graphic's world-space rect.
+            // RectTransform.GetWorldCorners yields the four corners after the
+            // layout pass. Disabled/inactive elements are excluded so the camera
+            // doesn't frame off-screen panels invisibly extending the bounds.
+            var corners = new Vector3[4];
+            Bounds? combined = null;
+
+            foreach (var graphic in root.GetComponentsInChildren<Graphic>(includeInactive: false))
+            {
+                if (graphic == null || !graphic.enabled) continue;
+                var rt = graphic.rectTransform;
+                if (rt == null) continue;
+                rt.GetWorldCorners(corners);
+                Bounds b = new Bounds(corners[0], Vector3.zero);
+                for (int i = 1; i < 4; i++) b.Encapsulate(corners[i]);
+                if (b.size.x < 0.01f && b.size.y < 0.01f) continue; // skip zero-sized
+                combined = combined.HasValue ? Encapsulate(combined.Value, b) : b;
+            }
+
+            if (combined.HasValue && combined.Value.size != Vector3.zero)
+                return combined.Value;
+
+            // Fallback to the canvas's own RectTransform if no Graphics found.
+            var rootRT = root.GetComponent<RectTransform>();
+            if (rootRT != null)
+            {
+                rootRT.GetWorldCorners(corners);
+                Bounds b = new Bounds(corners[0], Vector3.zero);
+                for (int i = 1; i < 4; i++) b.Encapsulate(corners[i]);
+                if (b.size != Vector3.zero) return b;
+            }
+            return new Bounds(root.transform.position, Vector3.one);
+        }
 
         static bool TryParseColor(object raw, out Color color, out string error)
         {

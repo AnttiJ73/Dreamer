@@ -15,9 +15,11 @@ tags, breaking changes bump the minor version (0.x.0), fixes bump patch.
 - **`--transparent` flag** — outputs PNG with full alpha channel (color type 6 / RGBA). Skips PreviewRenderUtility's `BeginStaticPreview`/`EndStaticPreview` (which uses an RGB-only internal RenderTexture and silently drops alpha) in favor of a custom ARGB32 RT bound to the preview camera, then `ReadPixels` into an RGBA32 Texture2D. PNGs are now always RGBA regardless of background opacity, so transparency is ready when you need it.
 - Output goes to `Library/DreamerScreenshots/<stem>-<guid8>-<ticks>.png` by default (Library/ is gitignored). Override with `--save-to`.
 - Result includes `path`, `boundsCenter`, `boundsSize`, `byteCount`. Open the PNG with the Read tool — Claude Code is multimodal, Read returns the image inline so the agent can see what it built.
+- **UI/Canvas prefabs now render** (auto-detected when the prefab has a `Canvas` at root or descendant). Result includes `mode: "ui"`, camera switches to orthographic, default angle becomes `front`. PreviewRenderUtility's preview scene doesn't tick the Canvas mesh-build pipeline, so UI mode parks the prefab off-screen in the active scene, runs `LayoutRebuilder.ForceRebuildLayoutImmediate` on every RectTransform, dirties every Graphic, then renders via a temporary camera. Standard uGUI (Image/Text/Button/Slider/Toggle/Panel) renders correctly — verified against a hand-built test canvas with a panel + inner box + label, all three rendered with correct text orientation.
 - Known limitations (documented in the schema's `pitfalls`):
-  - UI/Canvas prefabs render blank (no Canvas set up in the preview scene). Use Game-view screenshots on a scene that hosts the prefab — that command isn't built yet.
-  - Logic-only prefabs (no MeshFilter/SkinnedMeshRenderer/SpriteRenderer) come back as an empty gray frame; the `boundsSize: [1,1,1]` fallback is the tell.
+  - **TextMeshProUGUI text often invisible** — TMP has its own mesh-build pipeline that doesn't tick from `Canvas.ForceUpdateCanvases`. Standard `UnityEngine.UI.Text` works.
+  - **Canvas-less UI fragments** (button-only prefabs meant to be parented under an existing Canvas) fall through to 3D mode and render blank — would need a temporary wrapping Canvas.
+  - Logic-only prefabs (no MeshFilter/SkinnedMeshRenderer/SpriteRenderer/Canvas) come back as an empty gray frame; the `boundsSize: [1,1,1]` fallback is the tell.
   - Particles, trails, lines, lights, and post-processing don't contribute to bounds — camera frames static-mesh extent only.
 
 ### Fixed — `create-script --path` accepting a `.cs` file path
