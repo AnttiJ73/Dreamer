@@ -449,6 +449,21 @@ async function run(argv) {
         'add-animator-transition --asset PATH_OR_GUID --from STATE --to STATE [--layer N] [--has-exit-time true|false] [--exit-time N] [--duration N] [--conditions JSON]',
         'set-animator-default-state --asset PATH_OR_GUID --state NAME [--layer N]',
         'inspect-animator-controller --asset PATH_OR_GUID',
+        'remove-animator-parameter --asset PATH_OR_GUID --name NAME [--force]',
+        'remove-animator-state --asset PATH_OR_GUID --name NAME [--layer N]',
+        'remove-animator-transition --asset PATH_OR_GUID --from STATE --to STATE [--layer N] [--index N]',
+        'update-animator-state --asset PATH_OR_GUID --name NAME [--layer N] [--rename NEW] [--motion CLIP] [--speed N] [--mirror T] [--cycle-offset N] [--write-defaults T]',
+        'update-animator-transition --asset PATH_OR_GUID --from STATE --to STATE [--layer N] [--index N] [--has-exit-time T] [--exit-time N] [--duration N] [--offset N] [--can-self T] [--interruption-source SRC] [--conditions JSON]',
+        'add-animator-layer --asset PATH_OR_GUID --name NAME [--weight N] [--blending Override|Additive] [--mask AVATAR_MASK_PATH] [--ik-pass T]',
+        'remove-animator-layer --asset PATH_OR_GUID --layer N',
+        'set-animator-layer --asset PATH_OR_GUID --layer N [--name X] [--weight N] [--blending B] [--mask P] [--ik-pass T] [--synced-layer N] [--sync-timing T]',
+        'add-animator-blend-tree --asset PATH_OR_GUID --name STATE --type 1d|2d-simple|2d-freeform-directional|2d-freeform-cartesian|direct [--layer N] [--blend-parameter P] [--blend-parameter-y P] [--children JSON]',
+        'create-avatar-mask --name X [--path FOLDER] [--humanoid JSON] [--transforms JSON]',
+        'set-avatar-mask --asset PATH_OR_GUID [--humanoid JSON] [--transforms JSON]',
+        'inspect-avatar-mask --asset PATH_OR_GUID',
+        'create-animator-override-controller --name X --base BASE_CONTROLLER [--path FOLDER]',
+        'set-animator-override-clip --asset PATH_OR_GUID (--base-clip ORIG --override-clip NEW | --overrides JSON)',
+        'inspect-animator-override-controller --asset PATH_OR_GUID',
         'status [--id CMD_ID]',
         'queue [--state STATE] [--task TASK_ID]',
         'compile-status',
@@ -864,6 +879,222 @@ async function run(argv) {
         const isGuidIAC = /^[0-9a-f]{32}$/i.test(flags.asset);
         Object.assign(iacArgs, isGuidIAC ? { guid: flags.asset } : { assetPath: flags.asset });
         await submitCommand('inspect_animator_controller', iacArgs, flags);
+        break;
+      }
+
+      // ── Phase 2: remove + update ───────────────────────────────────────
+
+      case 'remove-animator-parameter': {
+        if (!flags.asset) fail('--asset PATH_OR_GUID is required');
+        if (!flags.name) fail('--name is required');
+        const a = { name: flags.name };
+        if (flags.force === true || flags.force === 'true') a.force = true;
+        const isGuid = /^[0-9a-f]{32}$/i.test(flags.asset);
+        Object.assign(a, isGuid ? { guid: flags.asset } : { assetPath: flags.asset });
+        await submitCommand('remove_animator_parameter', a, flags);
+        break;
+      }
+
+      case 'remove-animator-state': {
+        if (!flags.asset) fail('--asset PATH_OR_GUID is required');
+        if (!flags.name) fail('--name is required');
+        const a = { name: flags.name };
+        if (flags.layer !== undefined) a.layer = parseInt(flags.layer, 10);
+        const isGuid = /^[0-9a-f]{32}$/i.test(flags.asset);
+        Object.assign(a, isGuid ? { guid: flags.asset } : { assetPath: flags.asset });
+        await submitCommand('remove_animator_state', a, flags);
+        break;
+      }
+
+      case 'remove-animator-transition': {
+        if (!flags.asset) fail('--asset PATH_OR_GUID is required');
+        if (!flags.from || !flags.to) fail('--from and --to are required');
+        const a = { from: flags.from, to: flags.to };
+        if (flags.layer !== undefined) a.layer = parseInt(flags.layer, 10);
+        if (flags.index !== undefined) a.index = parseInt(flags.index, 10);
+        const isGuid = /^[0-9a-f]{32}$/i.test(flags.asset);
+        Object.assign(a, isGuid ? { guid: flags.asset } : { assetPath: flags.asset });
+        await submitCommand('remove_animator_transition', a, flags);
+        break;
+      }
+
+      case 'update-animator-state': {
+        if (!flags.asset) fail('--asset PATH_OR_GUID is required');
+        if (!flags.name) fail('--name (existing state name) is required');
+        const a = { name: flags.name };
+        if (flags.layer !== undefined) a.layer = parseInt(flags.layer, 10);
+        if (flags.rename) a.rename = flags.rename;
+        if (flags.motion !== undefined) a.motion = flags.motion;
+        if (flags.speed !== undefined) a.speed = parseFloat(flags.speed);
+        if (flags.mirror !== undefined) a.mirror = flags.mirror === 'true' || flags.mirror === true;
+        if (flags['cycle-offset'] !== undefined) a.cycleOffset = parseFloat(flags['cycle-offset']);
+        if (flags['write-defaults'] !== undefined) a.writeDefaultValues = flags['write-defaults'] === 'true' || flags['write-defaults'] === true;
+        const isGuid = /^[0-9a-f]{32}$/i.test(flags.asset);
+        Object.assign(a, isGuid ? { guid: flags.asset } : { assetPath: flags.asset });
+        await submitCommand('update_animator_state', a, flags);
+        break;
+      }
+
+      case 'update-animator-transition': {
+        if (!flags.asset) fail('--asset PATH_OR_GUID is required');
+        if (!flags.from || !flags.to) fail('--from and --to are required');
+        const a = { from: flags.from, to: flags.to };
+        if (flags.layer !== undefined) a.layer = parseInt(flags.layer, 10);
+        if (flags.index !== undefined) a.index = parseInt(flags.index, 10);
+        if (flags['has-exit-time'] !== undefined) a.hasExitTime = flags['has-exit-time'] === 'true' || flags['has-exit-time'] === true;
+        if (flags['exit-time'] !== undefined) a.exitTime = parseFloat(flags['exit-time']);
+        if (flags.duration !== undefined) a.duration = parseFloat(flags.duration);
+        if (flags.offset !== undefined) a.offset = parseFloat(flags.offset);
+        if (flags['can-self'] !== undefined) a.canTransitionToSelf = flags['can-self'] === 'true' || flags['can-self'] === true;
+        if (flags['interruption-source']) a.interruptionSource = flags['interruption-source'];
+        if (flags.conditions) {
+          try { a.conditions = JSON.parse(flags.conditions); }
+          catch (e) { fail('--conditions must be valid JSON: ' + e.message); }
+        }
+        const isGuid = /^[0-9a-f]{32}$/i.test(flags.asset);
+        Object.assign(a, isGuid ? { guid: flags.asset } : { assetPath: flags.asset });
+        await submitCommand('update_animator_transition', a, flags);
+        break;
+      }
+
+      // ── Phase 2: layer management ──────────────────────────────────────
+
+      case 'add-animator-layer': {
+        if (!flags.asset) fail('--asset PATH_OR_GUID is required');
+        if (!flags.name) fail('--name (layer name) is required');
+        const a = { name: flags.name };
+        if (flags.weight !== undefined) a.weight = parseFloat(flags.weight);
+        if (flags.blending) a.blending = flags.blending;
+        if (flags.mask) a.mask = flags.mask;
+        if (flags['ik-pass'] !== undefined) a.ikPass = flags['ik-pass'] === 'true' || flags['ik-pass'] === true;
+        const isGuid = /^[0-9a-f]{32}$/i.test(flags.asset);
+        Object.assign(a, isGuid ? { guid: flags.asset } : { assetPath: flags.asset });
+        await submitCommand('add_animator_layer', a, flags);
+        break;
+      }
+
+      case 'remove-animator-layer': {
+        if (!flags.asset) fail('--asset PATH_OR_GUID is required');
+        if (flags.layer === undefined) fail('--layer N is required');
+        const a = { layer: parseInt(flags.layer, 10) };
+        const isGuid = /^[0-9a-f]{32}$/i.test(flags.asset);
+        Object.assign(a, isGuid ? { guid: flags.asset } : { assetPath: flags.asset });
+        await submitCommand('remove_animator_layer', a, flags);
+        break;
+      }
+
+      case 'set-animator-layer': {
+        if (!flags.asset) fail('--asset PATH_OR_GUID is required');
+        if (flags.layer === undefined) fail('--layer N is required');
+        const a = { layer: parseInt(flags.layer, 10) };
+        if (flags.name !== undefined) a.name = flags.name;
+        if (flags.weight !== undefined) a.weight = parseFloat(flags.weight);
+        if (flags.blending) a.blending = flags.blending;
+        if (flags.mask !== undefined) a.mask = flags.mask;
+        if (flags['ik-pass'] !== undefined) a.ikPass = flags['ik-pass'] === 'true' || flags['ik-pass'] === true;
+        if (flags['synced-layer'] !== undefined) a.syncedLayerIndex = parseInt(flags['synced-layer'], 10);
+        if (flags['sync-timing'] !== undefined) a.syncedLayerAffectsTiming = flags['sync-timing'] === 'true' || flags['sync-timing'] === true;
+        const isGuid = /^[0-9a-f]{32}$/i.test(flags.asset);
+        Object.assign(a, isGuid ? { guid: flags.asset } : { assetPath: flags.asset });
+        await submitCommand('set_animator_layer', a, flags);
+        break;
+      }
+
+      // ── Phase 2: blend trees ───────────────────────────────────────────
+
+      case 'add-animator-blend-tree': {
+        if (!flags.asset) fail('--asset PATH_OR_GUID is required');
+        if (!flags.name) fail('--name (blend tree state name) is required');
+        const a = { name: flags.name, type: flags.type || '1d' };
+        if (flags.layer !== undefined) a.layer = parseInt(flags.layer, 10);
+        if (flags['blend-parameter']) a.blendParameter = flags['blend-parameter'];
+        if (flags['blend-parameter-y']) a.blendParameterY = flags['blend-parameter-y'];
+        if (flags.children) {
+          try { a.children = JSON.parse(flags.children); }
+          catch (e) { fail('--children must be valid JSON: ' + e.message); }
+        }
+        const isGuid = /^[0-9a-f]{32}$/i.test(flags.asset);
+        Object.assign(a, isGuid ? { guid: flags.asset } : { assetPath: flags.asset });
+        await submitCommand('add_animator_blend_tree', a, flags);
+        break;
+      }
+
+      // ── Phase 2: avatar masks ──────────────────────────────────────────
+
+      case 'create-avatar-mask': {
+        if (!flags.name) fail('--name is required');
+        const a = { name: flags.name };
+        if (flags.path) a.path = flags.path;
+        if (flags.humanoid) {
+          try { a.humanoid = JSON.parse(flags.humanoid); }
+          catch (e) { fail('--humanoid must be valid JSON: ' + e.message); }
+        }
+        if (flags.transforms) {
+          try { a.transforms = JSON.parse(flags.transforms); }
+          catch (e) { fail('--transforms must be valid JSON: ' + e.message); }
+        }
+        await submitCommand('create_avatar_mask', a, flags);
+        break;
+      }
+
+      case 'set-avatar-mask': {
+        if (!flags.asset) fail('--asset PATH_OR_GUID is required');
+        const a = {};
+        if (flags.humanoid) {
+          try { a.humanoid = JSON.parse(flags.humanoid); }
+          catch (e) { fail('--humanoid must be valid JSON: ' + e.message); }
+        }
+        if (flags.transforms) {
+          try { a.transforms = JSON.parse(flags.transforms); }
+          catch (e) { fail('--transforms must be valid JSON: ' + e.message); }
+        }
+        const isGuid = /^[0-9a-f]{32}$/i.test(flags.asset);
+        Object.assign(a, isGuid ? { guid: flags.asset } : { assetPath: flags.asset });
+        await submitCommand('set_avatar_mask', a, flags);
+        break;
+      }
+
+      case 'inspect-avatar-mask': {
+        if (!flags.asset) fail('--asset PATH_OR_GUID is required');
+        const a = {};
+        const isGuid = /^[0-9a-f]{32}$/i.test(flags.asset);
+        Object.assign(a, isGuid ? { guid: flags.asset } : { assetPath: flags.asset });
+        await submitCommand('inspect_avatar_mask', a, flags);
+        break;
+      }
+
+      // ── Phase 2: override controllers ──────────────────────────────────
+
+      case 'create-animator-override-controller': {
+        if (!flags.name) fail('--name is required');
+        if (!flags.base) fail('--base PATH_TO_BASE_CONTROLLER is required');
+        const a = { name: flags.name, base: flags.base };
+        if (flags.path) a.path = flags.path;
+        await submitCommand('create_animator_override_controller', a, flags);
+        break;
+      }
+
+      case 'set-animator-override-clip': {
+        if (!flags.asset) fail('--asset PATH_OR_GUID is required');
+        const a = {};
+        if (flags['base-clip']) a.baseClip = flags['base-clip'];
+        if (flags['override-clip'] !== undefined) a.overrideClip = flags['override-clip'];
+        if (flags.overrides) {
+          try { a.overrides = JSON.parse(flags.overrides); }
+          catch (e) { fail('--overrides must be valid JSON: ' + e.message); }
+        }
+        const isGuid = /^[0-9a-f]{32}$/i.test(flags.asset);
+        Object.assign(a, isGuid ? { guid: flags.asset } : { assetPath: flags.asset });
+        await submitCommand('set_animator_override_clip', a, flags);
+        break;
+      }
+
+      case 'inspect-animator-override-controller': {
+        if (!flags.asset) fail('--asset PATH_OR_GUID is required');
+        const a = {};
+        const isGuid = /^[0-9a-f]{32}$/i.test(flags.asset);
+        Object.assign(a, isGuid ? { guid: flags.asset } : { assetPath: flags.asset });
+        await submitCommand('inspect_animator_override_controller', a, flags);
         break;
       }
 

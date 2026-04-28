@@ -38,13 +38,38 @@ namespace Dreamer.AgentBridge.Animation
             handlers["delete_sprite_curve"]      = AnimationClipOps.DeleteSpriteCurve;
             handlers["set_animation_events"]     = AnimationClipOps.SetAnimationEvents;
 
-            // AnimatorController authoring
+            // AnimatorController authoring (Phase 1 — already shipped)
             handlers["create_animator_controller"] = AnimatorOps.CreateAnimatorController;
             handlers["add_animator_parameter"]     = AnimatorOps.AddAnimatorParameter;
             handlers["add_animator_state"]         = AnimatorOps.AddAnimatorState;
             handlers["add_animator_transition"]    = AnimatorOps.AddAnimatorTransition;
             handlers["set_animator_default_state"] = AnimatorOps.SetAnimatorDefaultState;
             handlers["inspect_animator_controller"]= AnimatorOps.InspectAnimatorController;
+
+            // Phase 2 — iteration ergonomics (remove + update)
+            handlers["remove_animator_parameter"]  = AnimatorOps.RemoveAnimatorParameter;
+            handlers["remove_animator_state"]      = AnimatorOps.RemoveAnimatorState;
+            handlers["remove_animator_transition"] = AnimatorOps.RemoveAnimatorTransition;
+            handlers["update_animator_state"]      = AnimatorOps.UpdateAnimatorState;
+            handlers["update_animator_transition"] = AnimatorOps.UpdateAnimatorTransition;
+
+            // Phase 2 — layer management (multi-layer controllers)
+            handlers["add_animator_layer"]         = AnimatorOps.AddAnimatorLayer;
+            handlers["remove_animator_layer"]      = AnimatorOps.RemoveAnimatorLayer;
+            handlers["set_animator_layer"]         = AnimatorOps.SetAnimatorLayer;
+
+            // Phase 2 — blend trees
+            handlers["add_animator_blend_tree"]    = AnimatorOps.AddAnimatorBlendTree;
+
+            // Phase 2 — avatar masks
+            handlers["create_avatar_mask"]         = AvatarMaskOps.CreateAvatarMask;
+            handlers["set_avatar_mask"]            = AvatarMaskOps.SetAvatarMask;
+            handlers["inspect_avatar_mask"]        = AvatarMaskOps.InspectAvatarMask;
+
+            // Phase 2 — override controllers
+            handlers["create_animator_override_controller"] = AnimatorOverrideOps.CreateAnimatorOverrideController;
+            handlers["set_animator_override_clip"]          = AnimatorOverrideOps.SetAnimatorOverrideClip;
+            handlers["inspect_animator_override_controller"]= AnimatorOverrideOps.InspectAnimatorOverrideController;
         }
     }
 }

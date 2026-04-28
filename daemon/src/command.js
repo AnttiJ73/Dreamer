@@ -105,6 +105,23 @@ const KIND_DEFS = {
   add_animator_transition:    { label: 'Add Animator Transition',    requirements: null },
   set_animator_default_state: { label: 'Set Animator Default State', requirements: null },
   inspect_animator_controller:{ label: 'Inspect Animator Controller',requirements: null },
+
+  // Phase 2 — iteration ergonomics + multi-layer + blend trees + masks + overrides
+  remove_animator_parameter:  { label: 'Remove Animator Parameter',  requirements: null },
+  remove_animator_state:      { label: 'Remove Animator State',      requirements: null },
+  remove_animator_transition: { label: 'Remove Animator Transition', requirements: null },
+  update_animator_state:      { label: 'Update Animator State',      requirements: null },
+  update_animator_transition: { label: 'Update Animator Transition', requirements: null },
+  add_animator_layer:         { label: 'Add Animator Layer',         requirements: null },
+  remove_animator_layer:      { label: 'Remove Animator Layer',      requirements: null },
+  set_animator_layer:         { label: 'Set Animator Layer',         requirements: null },
+  add_animator_blend_tree:    { label: 'Add Animator BlendTree',     requirements: null },
+  create_avatar_mask:         { label: 'Create AvatarMask',          requirements: null },
+  set_avatar_mask:            { label: 'Set AvatarMask',             requirements: null },
+  inspect_avatar_mask:        { label: 'Inspect AvatarMask',         requirements: null },
+  create_animator_override_controller: { label: 'Create Animator Override Controller', requirements: null },
+  set_animator_override_clip:          { label: 'Set Animator Override Clip',          requirements: null },
+  inspect_animator_override_controller:{ label: 'Inspect Animator Override Controller', requirements: null },
 };
 
 // ── Valid states and allowed transitions ─────────────────────────────────────

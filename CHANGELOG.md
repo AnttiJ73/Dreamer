@@ -9,6 +9,38 @@ tags, breaking changes bump the minor version (0.x.0), fixes bump patch.
 
 ## [Unreleased]
 
+### Added — Animation tooling Phase 2 (15 commands across 5 areas)
+Comprehensive animator authoring beyond the Phase 1 surface (create + add states/parameters/transitions). Phase 2 adds iteration safety, multi-layer controllers, blend trees, avatar masks, and override controllers — verified end-to-end.
+
+**Iteration ergonomics — modify mistakes without recreating the controller**:
+- `remove-animator-parameter --name X [--force]` — refuses by default if any transition condition references the parameter; `--force` removes anyway and reports `orphanedConditions` count.
+- `remove-animator-state --name X [--layer N]` — removes the state and scrubs dangling incoming transitions on the source side.
+- `remove-animator-transition --from STATE --to STATE [--layer N] [--index N]` — by ordinal among matching pairs (multiple transitions between the same states are common for OR-semantics).
+- `update-animator-state --name X [--layer N] [--rename NEW] [--motion CLIP] [--speed N] [--mirror T] [--cycle-offset N] [--write-defaults T]` — partial update, only listed fields change; reports `changedFields[]`.
+- `update-animator-transition --from --to [--index N] [--has-exit-time T] [--exit-time N] [--duration N] [--offset N] [--can-self T] [--interruption-source SRC] [--conditions JSON]` — same partial-update model; conditions wholesale-replace when given.
+
+**Layer management — multi-layer controllers (upper/lower body, additive overlays)**:
+- `add-animator-layer --name X [--weight N] [--blending Override|Additive] [--mask AVATAR_MASK_PATH] [--ik-pass T]`
+- `remove-animator-layer --layer N` — refuses on layer 0 (every controller needs a base layer).
+- `set-animator-layer --layer N [--name X] [--weight N] [--blending B] [--mask P] [--ik-pass T] [--synced-layer N] [--sync-timing T]`
+
+**Blend trees — the most-requested gap**:
+- `add-animator-blend-tree --name STATE --type 1d|2d-simple|2d-freeform-directional|2d-freeform-cartesian|direct [--blend-parameter P] [--blend-parameter-y P] [--children JSON]` — creates a state whose Motion is a BlendTree, sub-asset of the controller. Children declared in one shot via JSON: 1D uses `threshold`, 2D uses `position [x,y]`, Direct uses `directBlendParameter`.
+
+**Avatar masks — restrict layers to specific bones / humanoid parts**:
+- `create-avatar-mask --name X [--path P] [--humanoid JSON] [--transforms JSON]` — humanoid JSON: `{"Body":true,"Head":true,"LeftLeg":false}` (Root, Body, Head, LeftLeg, RightLeg, LeftArm, RightArm, LeftFingers, RightFingers, LeftFootIK, RightFootIK, LeftHandIK, RightHandIK).
+- `set-avatar-mask --asset PATH [--humanoid JSON] [--transforms JSON]` — humanoid is partial-update, transforms is total-replace.
+- `inspect-avatar-mask --asset PATH` — full humanoid + transforms readout.
+
+**Override controllers — variant characters reusing a base graph**:
+- `create-animator-override-controller --name X --base BASE_CONTROLLER [--path P]`
+- `set-animator-override-clip --asset OVR (--base-clip ORIG --override-clip NEW | --overrides JSON)` — single or batch.
+- `inspect-animator-override-controller --asset OVR` — base + per-clip overrides with override-vs-passthrough state.
+
+**Inspect enhancement**: `inspect-animator-controller` now surfaces every layer's `defaultWeight`, `blending`, `ikPass`, `syncedLayerIndex`, `avatarMaskPath`. States with a BlendTree motion include `motionType:"BlendTree"` + nested `blendTree` object (type, blendParameter, blendParameterY, childCount, full children list with motion paths, thresholds/positions, timeScale, mirror, cycleOffset).
+
+End-to-end verified: 3 parameters → 3 states → transitions → remove parameter → rename state → update transition → add layer → add 1D blend tree → create avatar mask → assign mask to layer → create override controller → inspect → all consistent.
+
 ### Fixed — UX papercuts (4 bugs across daemon/bridge/ugui)
 - **Button label silently dropped** in `create-ui-tree` — `{type:"Button", label:"Cancel"}` rendered as the literal text "Button". Asymmetry between widgets: `Button`'s tree builder only forwarded `text` (not `label`) to its widget op, while `Toggle` / `Slider` already used `label`. Fixed both `BuildButton` (UITreeOps.cs) and `CreateButton` (UIWidgetOps.cs) to accept either, preferring `label`. The widget set is now consistent.
 - **`set-rect-transform --size '[300,60]'` rejected** by daemon schema validator with "must be string, got array". The C# side already supported all three forms (string `WxH`, array `[w,h]`, dict `{w,h}`); only the schema entry constrained it to `string`. Loosened to `any` for `size`, `pivot`, `offset`, `offsetMin`, `offsetMax`. CLI now also pre-parses bracketed strings as JSON before submitting, so the array form survives shell quoting.
