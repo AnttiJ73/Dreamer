@@ -34,8 +34,9 @@ module.exports = {
       enum: ['point', 'bilinear', 'trilinear'],
       description:
         'Override the filter mode of every UI source texture (Image, RawImage, SpriteRenderer) for the duration of the render, then restore. ' +
-        'Bilinear (Unity\'s UI default) softens edges at non-1:1 scales — use **point** for pixel-perfect crispness on stylized / pixel-art UI. ' +
-        'When unset, source textures keep their authored filter mode. Render targets also inherit this filter and MSAA is disabled (antiAliasing=1).',
+        '**Default: point** — sharper than Unity\'s authored filter modes (almost always Bilinear) and the right call for agent inspection. ' +
+        'Pass `bilinear` / `trilinear` to override (rarely needed; bilinear can look slightly smoother for downscaled / non-integer-scaled / rotated UI but the difference is minor in screenshots). ' +
+        'Render targets also inherit this filter and MSAA is disabled (antiAliasing=1) so output is pixel-accurate.',
     },
     backgroundColor: {
       type: 'any',
@@ -77,9 +78,9 @@ module.exports = {
       args: { preset: 'layout' },
     },
     {
-      title: '1440p sharp render with point-filtered UI textures (text readability)',
-      cli: './bin/dreamer screenshot-scene --preset text --filter-mode point --wait',
-      args: { preset: 'text', filterMode: 'point' },
+      title: '1440p sharp render for text readability (point filter is the default)',
+      cli: './bin/dreamer screenshot-scene --preset text --wait',
+      args: { preset: 'text' },
     },
     {
       title: '4K screenshot of a specific camera',

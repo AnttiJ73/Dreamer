@@ -19,7 +19,7 @@ tags, breaking changes bump the minor version (0.x.0), fixes bump patch.
   - `normal` → 1280×720 (same as default — explicit name)
   - `text` → 2560×1440 (text readability, dense detail)
   - Explicit `--width` / `--height` override the preset's value for that dimension; mix freely.
-- **`--filter-mode point|bilinear|trilinear`** flag on `screenshot-scene`. When set, every UI source texture (`Image`, `RawImage`, `SpriteRenderer`) has its `filterMode` temporarily overridden for the duration of the render, then restored. Bilinear (Unity's UI default) softens edges at non-1:1 scales — `point` preserves pixel-perfect crispness for stylized / pixel-art UI. Render targets also inherit this filter and MSAA is forced off (`antiAliasing=1`) so renders are pixel-accurate rather than supersampled.
+- **`--filter-mode point|bilinear|trilinear`** flag on `screenshot-scene`. **Default is now `point`** — sharper than Unity's authored filter modes (almost always Bilinear) and the right call for agent inspection. Every UI source texture (`Image`, `RawImage`, `SpriteRenderer`) has its `filterMode` temporarily overridden for the duration of the render, then restored. Pass `bilinear` / `trilinear` to override (rarely needed). Render targets also inherit this filter and MSAA is forced off (`antiAliasing=1`) so renders are pixel-accurate rather than supersampled.
 - Result reports `filterMode` (the resolved mode) and `textureFiltersSwapped` (count of distinct source textures whose filter was overridden, deduped by atlas).
 
 ### Added — `screenshot-scene` + TextMeshPro support

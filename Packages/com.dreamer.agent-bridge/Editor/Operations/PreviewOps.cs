@@ -56,9 +56,22 @@ namespace Dreamer.AgentBridge
             Camera cam = ResolveSceneCamera(cameraArg, out string camErr);
             if (cam == null) return CommandResult.Fail(camErr);
 
+            // Default to Point — sharper than Unity's authored filter modes
+            // (almost always Bilinear) and the right call for agent inspection
+            // even in cases where Bilinear would technically blend better.
+            // Pass --filter-mode bilinear / trilinear to override.
             string filterArg = SimpleJson.GetString(args, "filterMode");
-            if (!TryParseFilterMode(filterArg, out FilterMode? filterOverride, out string filterErr))
+            FilterMode? filterOverride;
+            string filterErr;
+            if (string.IsNullOrEmpty(filterArg))
+            {
+                filterOverride = FilterMode.Point;
+                filterErr = null;
+            }
+            else if (!TryParseFilterMode(filterArg, out filterOverride, out filterErr))
+            {
                 return CommandResult.Fail(filterErr);
+            }
 
             // ScreenSpaceOverlay canvases bypass cameras entirely — they draw
             // straight to the back buffer in a final compositing pass that
