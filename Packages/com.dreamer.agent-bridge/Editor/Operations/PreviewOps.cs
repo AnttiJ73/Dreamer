@@ -40,8 +40,8 @@ namespace Dreamer.AgentBridge
 
         public static CommandResult ScreenshotScene(Dictionary<string, object> args)
         {
-            int width = SimpleJson.GetInt(args, "width", 1920);
-            int height = SimpleJson.GetInt(args, "height", 1080);
+            int width = SimpleJson.GetInt(args, "width", 2560);
+            int height = SimpleJson.GetInt(args, "height", 1440);
             if (width <= 0 || height <= 0)
                 return CommandResult.Fail("'width' and 'height' must be positive.");
             if (width > 4096 || height > 4096)
@@ -55,6 +55,10 @@ namespace Dreamer.AgentBridge
             string cameraArg = SimpleJson.GetString(args, "camera");
             Camera cam = ResolveSceneCamera(cameraArg, out string camErr);
             if (cam == null) return CommandResult.Fail(camErr);
+
+            string filterArg = SimpleJson.GetString(args, "filterMode");
+            if (!TryParseFilterMode(filterArg, out FilterMode? filterOverride, out string filterErr))
+                return CommandResult.Fail(filterErr);
 
             // ScreenSpaceOverlay canvases bypass cameras entirely — they draw
             // straight to the back buffer in a final compositing pass that
@@ -77,7 +81,17 @@ namespace Dreamer.AgentBridge
             // for the new camera context.
             Canvas.ForceUpdateCanvases();
 
-            var rt = RenderTexture.GetTemporary(width, height, 24, RenderTextureFormat.ARGB32);
+            // Optional filter-mode swap on every UI source texture (Image,
+            // RawImage, sprite atlases). Bilinear is Unity's UI default and
+            // softens edges noticeably at non-1:1 scales — Point preserves
+            // pixel-perfect crispness for stylized / pixel-art UI.
+            var filterSwaps = filterOverride.HasValue ? SwizzleUITextureFilters(filterOverride.Value) : null;
+
+            // No MSAA — we want pixel-accurate output, not anti-aliased.
+            // Default RT antiAliasing inherits QualitySettings, which can
+            // be 2/4/8 and softens hard edges via supersampling.
+            var rt = RenderTexture.GetTemporary(width, height, 24, RenderTextureFormat.ARGB32, RenderTextureReadWrite.Default, 1);
+            if (filterOverride.HasValue) rt.filterMode = filterOverride.Value;
             rt.Create();
             var prevTarget = cam.targetTexture;
             var prevActive = RenderTexture.active;
@@ -112,6 +126,8 @@ namespace Dreamer.AgentBridge
                     f.c.worldCamera = f.worldCam;
                     f.c.planeDistance = f.planeDist;
                 }
+                // Restore source-texture filter modes.
+                RestoreUITextureFilters(filterSwaps);
             }
 
             byte[] png = rendered.EncodeToPNG();
@@ -138,6 +154,8 @@ namespace Dreamer.AgentBridge
                 .Put("height", height)
                 .Put("byteCount", png.Length)
                 .Put("flippedOverlayCanvases", flipped.Count)
+                .Put("filterMode", filterOverride.HasValue ? filterOverride.Value.ToString() : "unchanged")
+                .Put("textureFiltersSwapped", filterSwaps?.Count ?? 0)
                 .Put("hint", "Open the PNG with the Read tool to view the rendered scene.")
                 .ToString());
         }
@@ -176,6 +194,69 @@ namespace Dreamer.AgentBridge
                 return null;
             }
             return cam;
+        }
+
+        static bool TryParseFilterMode(string s, out FilterMode? mode, out string error)
+        {
+            mode = null;
+            error = null;
+            if (string.IsNullOrEmpty(s)) return true; // unset → no override
+            switch (s.Trim().ToLowerInvariant())
+            {
+                case "point":     mode = FilterMode.Point; return true;
+                case "bilinear":  mode = FilterMode.Bilinear; return true;
+                case "trilinear": mode = FilterMode.Trilinear; return true;
+                default:
+                    error = $"filterMode must be 'point', 'bilinear', or 'trilinear'; got '{s}'.";
+                    return false;
+            }
+        }
+
+        static List<(Texture tex, FilterMode original)> SwizzleUITextureFilters(FilterMode newMode)
+        {
+            // Override every UI source texture's filterMode for the duration
+            // of this render. Bilinear (the Unity default) softens edges at
+            // non-1:1 scales — Point preserves pixel-perfect detail. We
+            // dedupe by Texture instance (multiple Images often share an
+            // atlas) and restore originals in the finally block.
+            var swaps = new List<(Texture, FilterMode)>();
+            var seen = new HashSet<Texture>();
+
+            void Track(Texture tex)
+            {
+                if (tex == null || !seen.Add(tex)) return;
+                swaps.Add((tex, tex.filterMode));
+                tex.filterMode = newMode;
+            }
+
+            foreach (var img in UnityEngine.Object.FindObjectsByType<Image>(FindObjectsSortMode.None))
+            {
+                if (img == null) continue;
+                Track(img.mainTexture);
+                if (img.sprite != null) Track(img.sprite.texture);
+            }
+            foreach (var raw in UnityEngine.Object.FindObjectsByType<RawImage>(FindObjectsSortMode.None))
+            {
+                if (raw == null) continue;
+                Track(raw.mainTexture);
+                Track(raw.texture);
+            }
+            foreach (var sr in UnityEngine.Object.FindObjectsByType<SpriteRenderer>(FindObjectsSortMode.None))
+            {
+                if (sr == null || sr.sprite == null) continue;
+                Track(sr.sprite.texture);
+            }
+            return swaps;
+        }
+
+        static void RestoreUITextureFilters(List<(Texture tex, FilterMode original)> swaps)
+        {
+            if (swaps == null) return;
+            foreach (var s in swaps)
+            {
+                if (s.tex == null) continue;
+                s.tex.filterMode = s.original;
+            }
         }
 
         static string SanitizeFilename(string s)

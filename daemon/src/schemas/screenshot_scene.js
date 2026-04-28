@@ -16,8 +16,17 @@ module.exports = {
       cli: '--camera',
       description: 'Camera by name (`Main Camera`) or scene path (`/Cameras/SpectatorCam`). When unset: uses `Camera.main`, falling back to the first Camera in the active scene.',
     },
-    width: { type: 'integer', cli: '--width', description: 'Render width in pixels. Default 1920. Max 4096.' },
-    height: { type: 'integer', cli: '--height', description: 'Render height. Default 1080. Max 4096.' },
+    width: { type: 'integer', cli: '--width', description: 'Render width in pixels. Default 2560. Max 4096.' },
+    height: { type: 'integer', cli: '--height', description: 'Render height. Default 1440. Max 4096.' },
+    filterMode: {
+      type: 'string',
+      cli: '--filter-mode',
+      enum: ['point', 'bilinear', 'trilinear'],
+      description:
+        'Override the filter mode of every UI source texture (Image, RawImage, SpriteRenderer) for the duration of the render, then restore. ' +
+        'Bilinear (Unity\'s UI default) softens edges at non-1:1 scales — use **point** for pixel-perfect crispness on stylized / pixel-art UI. ' +
+        'When unset, source textures keep their authored filter mode. Render targets also inherit this filter and MSAA is disabled (antiAliasing=1).',
+    },
     backgroundColor: {
       type: 'any',
       cli: '--background-color',
@@ -64,6 +73,7 @@ module.exports = {
     },
   ],
   pitfalls: [
+    'PNGs invisible in VS Code Explorer? Unity\'s auto-generated `.vscode/settings.json` hides `**/*.png` (and other image extensions) globally. Scope the exclusion to `Assets/**/*.png` etc. to keep imported-texture clutter hidden while making screenshots visible.',
     'Cameras with `clearFlags: Skybox` still render the skybox even when --transparent is passed. To get a transparent render, the camera must use `SolidColor` clear flags (Dreamer overrides backgroundColor but not clearFlags by design — clearFlags affects what the camera composites against the rest of the scene).',
     'Post-processing volumes that depend on screen dimensions may produce slightly different results than the editor Game view if --width/--height differ from the Game view aspect ratio.',
     'TextMeshPro text in ScreenSpaceOverlay canvases sometimes comes back partially built — TMP\'s mesh-build pipeline expects a runtime tick. Try rendering twice, or set the canvas to ScreenSpaceCamera in the project for stable previews.',

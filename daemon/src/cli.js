@@ -475,7 +475,7 @@ async function run(argv) {
         'add-build-scene --scene PATH [--enabled false]   (append; updates enabled flag if already present)',
         'remove-build-scene --scene PATH',
         'screenshot-prefab --asset Assets/X.prefab [--width 512] [--height 512] [--angle iso|front|side|top|...] [--save-to PATH]   (renders to PNG; open with Read tool to view)',
-        'screenshot-scene [--camera "Main Camera"|"/Path"] [--width 1920] [--height 1080] [--background-color HEX] [--transparent] [--save-to PATH]   (renders any scene Camera to PNG; auto-flips overlay canvases)',
+        'screenshot-scene [--camera "Main Camera"|"/Path"] [--width 2560] [--height 1440] [--filter-mode point|bilinear|trilinear] [--background-color HEX] [--transparent] [--save-to PATH]   (renders any scene Camera to PNG; auto-flips overlay canvases)',
         'create-scene --name NAME [--path FOLDER] [--set-active]',
         'open-scene PATH [--mode single|additive]',
         'save-scene [--path PATH]',
@@ -1591,6 +1591,7 @@ async function run(argv) {
           args.backgroundColor = bg;
         }
         if (flags.transparent === true || flags.transparent === 'true') args.transparent = true;
+        if (flags['filter-mode']) args.filterMode = String(flags['filter-mode']);
         await submitCommand('screenshot_scene', args, flags);
         break;
       }

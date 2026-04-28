@@ -81,6 +81,7 @@ module.exports = {
     },
   ],
   pitfalls: [
+    'PNGs invisible in VS Code Explorer? Unity\'s auto-generated `.vscode/settings.json` includes `"**/*.png": true` in `files.exclude`, hiding every PNG in the workspace — including the ones in `DreamerScreenshots/`. Fix: change `**/*.png` (and the other image extensions: `gif`, `jpg`, `jpeg`, `psd`, `tga`, `tif`, `tiff`, `ico`) to `Assets/**/*.png` etc. Scoping the exclusion to `Assets/` keeps Unity\'s imported-texture clutter hidden while making screenshots visible.',
     'UI/Canvas prefabs render via a separate code path (auto-detected when the prefab has a Canvas at root, a Canvas descendant, OR is a fragment with uGUI components but no Canvas). Result includes `mode: "ui"`, camera switches to orthographic, default angle becomes `front`. Standard uGUI (Image, Text, Button, Slider, Toggle, Dropdown, Panel) renders correctly.',
     'Fragment prefabs (no Canvas — list items, button rows, slot prefabs etc) are wrapped in a temporary WorldSpace Canvas. Their RectTransform is sized from `LayoutElement.preferredWidth/Height` if present, else 400×100. Override with `--size [w,h]` for prefabs whose authored size is wrong (zero-sized layout-driven prefabs are common).',
     '**TextMeshProUGUI (TMP) text often comes back invisible** — TMP has its own mesh-build pipeline that doesn\'t tick from `Canvas.ForceUpdateCanvases`. Standard `UnityEngine.UI.Text` works.',
