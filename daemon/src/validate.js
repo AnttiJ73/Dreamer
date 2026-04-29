@@ -3,7 +3,7 @@
 // Tiny schema validator (not full JSON Schema). Schema shape:
 //   { args: { <name>: { type, required?, enum?, description? } },
 //     constraints?: [ { rule: 'exactlyOne'|'atLeastOne', fields: [...] } ] }
-// Types: string, number, integer, boolean, object, array, any. Returns { valid, errors }.
+// Types: string, number, integer, boolean, object, array, any. Union: ['string', 'number']. Returns { valid, errors }.
 
 const KNOWN_TYPES = new Set(['string', 'number', 'integer', 'boolean', 'object', 'array', 'any']);
 
@@ -29,7 +29,6 @@ function validate(schema, args) {
     }
 
     if (field.type && field.type !== 'any') {
-      // Union type: ['string', 'number'] etc. Accepts the value if any listed type matches.
       const types = Array.isArray(field.type) ? field.type : [field.type];
       const unknown = types.find(t => t !== 'any' && !KNOWN_TYPES.has(t));
       if (unknown) {

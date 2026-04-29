@@ -1108,9 +1108,8 @@ async function run(argv) {
           Object.assign(slArgs, isGuidSL ? { guid: flags.asset } : { assetPath: flags.asset });
         }
         if (flags['child-path']) slArgs.childPath = flags['child-path'];
-        // Numeric strings → number; other strings stay as layer names.
-        const numLayer = Number(flags.layer);
-        slArgs.layer = (typeof flags.layer === 'string' && /^\d+$/.test(flags.layer.trim())) ? numLayer : flags.layer;
+        slArgs.layer = (typeof flags.layer === 'string' && /^\d+$/.test(flags.layer.trim()))
+          ? Number(flags.layer) : flags.layer;
         if (flags.recursive) slArgs.recursive = true;
         await submitCommand('set_layer', slArgs, flags);
         break;
@@ -1424,8 +1423,6 @@ async function run(argv) {
         const filterState = flags.state;
         const filterTask = flags.task;
 
-        // Single-id form. Daemon enforces "no terminal-state cancellation"; we
-        // surface its error verbatim.
         if (id) {
           const resp = await httpRequest('DELETE', `/api/commands/${encodeURIComponent(id)}`);
           if (resp.status >= 400) fail(resp.data.error || `HTTP ${resp.status}`);
@@ -1441,7 +1438,6 @@ async function run(argv) {
             '  ./bin/dreamer cancel --task agent-A:setup     # cancel everything labelled with that task');
         }
 
-        // Bulk form: list with the filter, cancel each non-terminal.
         const params = new URLSearchParams();
         if (filterState) params.set('state', filterState);
         if (filterTask)  params.set('originTaskId', filterTask);

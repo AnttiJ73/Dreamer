@@ -513,10 +513,6 @@ namespace Dreamer.AgentBridge
             }
         }
 
-        // Returns null on success; populates layerIndex + layerName.
-        // Numeric form: validate 0–31. Named form: LayerMask.NameToLayer; on
-        // miss, error includes the current named-layer list so the caller can
-        // spot typos vs missing-from-TagManager.
         static string ResolveLayer(object layerArg, out int layerIndex, out string layerName)
         {
             layerIndex = -1;
@@ -557,8 +553,6 @@ namespace Dreamer.AgentBridge
             return null;
         }
 
-        // Apply layer to GameObject (and optionally all descendants). Returns count touched.
-        // undoLabel != null → register undo per-GO (scene mode); pass null inside prefab-edit scenes.
         static int ApplyLayer(GameObject go, int layerIndex, bool recursive, string undoLabel)
         {
             int count = 0;

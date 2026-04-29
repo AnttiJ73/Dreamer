@@ -115,8 +115,6 @@ namespace Dreamer.AgentBridge
                     "Use `./bin/dreamer rename --scene-object <path> --name <new-name> --wait` " +
                     "(or for a prefab: `--asset <prefab.prefab> [--child-path <subpath>] --name <new-name>`).");
             }
-            // Same anchor problem as m_Name. Numeric layer wouldn't even produce the
-            // right answer for name-based callers — set-layer accepts both forms.
             if (string.Equals(propertyPath, "m_Layer", StringComparison.Ordinal) ||
                 string.Equals(propertyPath, "layer",   StringComparison.Ordinal))
             {
