@@ -149,7 +149,7 @@ const conventions = {
       'Bracket shorthand on propertyPath: `entries[24]` is rewritten internally to `entries.Array.data[24]`. Works for nested paths too: `entries[24].itemGuid`.',
     ],
     propertyNames: 'Built-in Unity components (Transform, SpriteRenderer, Collider, Camera, etc.) serialize as `m_Pascal` (e.g. `m_Sprite`, `m_LocalPosition`). Dreamer accepts the C# camelCase form (`sprite`, `localPosition`) and falls back to `m_Sprite` etc. on lookup failure. The result JSON includes `resolvedPath`.',
-    forbidden: '`m_Name` / `name` cannot be set via set-property — m_Name lives on the GameObject anchor, not a Component. Use the `rename` command.',
+    forbidden: 'GameObject anchor fields (`m_Name`, `m_Layer`) cannot be set via set-property — they live on the GameObject anchor, not a Component. Use `rename` for `m_Name`, `set-layer` for `m_Layer`.',
   },
 
   playModeGate: {
@@ -179,6 +179,7 @@ const conventions = {
     rules: [
       'NEVER hand-edit `.unity` / `.prefab` / `.asset` / `.meta` YAML. Always go through Dreamer or the Unity Editor UI.',
       'NEVER use `set-property --property m_Name` to rename — use the `rename` command.',
+      'NEVER use `set-property --property m_Layer` to assign a layer — use the `set-layer` command (accepts layer names).',
       'NEVER work around a missing capability with `execute-menu-item` / `execute-method` if there\'s a first-class command. Surface the gap to the user instead.',
     ],
   },
@@ -189,6 +190,10 @@ const conventions = {
       {
         wrong: '`set-property --property m_Name --value \'"NewName"\'` to rename a GameObject.',
         right: 'Use `./bin/dreamer rename --scene-object PATH --name NEW --wait` (or `--asset PREFAB.prefab [--child-path SUB]` for prefab mode). m_Name lives on the GameObject anchor, not a Component, so set-property can\'t reach it. The CLI now intercepts this with a directive error.',
+      },
+      {
+        wrong: '`set-property --property m_Layer --value 6` to put a GameObject on a layer.',
+        right: 'Use `./bin/dreamer set-layer --scene-object PATH --layer Terrain --wait` (name OR numeric index, plus `--recursive` to mirror Unity\'s "set children too?" prompt). Layer names auto-resolve. Same anchor-field reason as m_Name. The CLI intercepts this with a directive error.',
       },
       {
         wrong: 'Calling `save-scene` AFTER `save-assets`.',

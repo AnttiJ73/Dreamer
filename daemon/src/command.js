@@ -16,6 +16,7 @@ const KIND_DEFS = {
   create_gameobject:{ label: 'Create GameObject',  requirements: null },
   delete_gameobject:{ label: 'Delete GameObject',  requirements: null },
   rename_gameobject:{ label: 'Rename',             requirements: null },
+  set_layer:        { label: 'Set Layer',          requirements: null },
   reparent_gameobject:{ label: 'Reparent GameObject', requirements: null },
   duplicate:        { label: 'Duplicate',           requirements: null },
   instantiate_prefab:{ label: 'Instantiate Prefab', requirements: null },
@@ -176,6 +177,7 @@ function mutatesScene(kind, args) {
     // Ambiguous kinds: scene-edit only when targeting a scene object.
     case 'delete_gameobject':
     case 'rename_gameobject':
+    case 'set_layer':
     case 'duplicate':
     case 'set_property':
     case 'set_particle_property':

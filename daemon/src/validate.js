@@ -29,16 +29,17 @@ function validate(schema, args) {
     }
 
     if (field.type && field.type !== 'any') {
-      if (!KNOWN_TYPES.has(field.type)) {
-        errors.push(`Schema bug: unknown type '${field.type}' on arg '${name}'`);
-      } else {
+      // Union type: ['string', 'number'] etc. Accepts the value if any listed type matches.
+      const types = Array.isArray(field.type) ? field.type : [field.type];
+      const unknown = types.find(t => t !== 'any' && !KNOWN_TYPES.has(t));
+      if (unknown) {
+        errors.push(`Schema bug: unknown type '${unknown}' on arg '${name}'`);
+      } else if (!types.includes('any')) {
         const actual = typeOf(value);
-        const expected = field.type;
-        // 'number' accepts integer + float; 'integer' requires exact int.
-        const ok = expected === actual
-          || (expected === 'number' && actual === 'integer');
+        const ok = types.some(expected =>
+          expected === actual || (expected === 'number' && actual === 'integer'));
         if (!ok) {
-          errors.push(`arg '${name}' must be ${expected}, got ${actual}`);
+          errors.push(`arg '${name}' must be ${types.join(' or ')}, got ${actual}`);
         }
       }
     }

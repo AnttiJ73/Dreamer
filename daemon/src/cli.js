@@ -349,6 +349,7 @@ async function run(argv) {
         'create-gameobject --name NAME [--parent PATH] [--scene SCENE]',
         'delete-gameobject (--scene-object PATH | --asset PATH --child-path PATH)',
         'rename (--scene-object PATH | --asset PATH [--child-path PATH]) --name NEW_NAME',
+        'set-layer (--scene-object PATH | --asset PATH [--child-path PATH]) --layer NAME_OR_INDEX [--recursive]   (USE THIS instead of `set-property --property m_Layer`; layer name auto-resolves)',
         'reparent (--scene-object PATH | --asset PREFAB --child-path SOURCE) [--new-parent PATH] [--keep-world-space true|false] [--sibling-index N]   (omit --new-parent to move to root; prefab paths are relative to the prefab root)',
         'save-assets    (writes both dirty open scenes AND ScriptableObjects/prefabs/materials)',
         'reimport-script --path FILE_OR_FOLDER [--non-recursive]   (force re-import of .cs files Unity misclassified as unknown)',
@@ -395,6 +396,7 @@ async function run(argv) {
         'inspect-animator-override-controller --asset PATH_OR_GUID',
         'status [--id CMD_ID]',
         'queue [--state STATE] [--task TASK_ID]',
+        'cancel <id> | cancel --state waiting|queued | cancel --task TASKID   (cancel one command, or flush all matching non-terminal commands)',
         'compile-status',
         'console [--count N]',
         'activity [--limit N] [--since 90s|5m|1h] [--state X]   (recent commands across the queue, newest first — multi-agent visibility)',
@@ -1093,6 +1095,27 @@ async function run(argv) {
         break;
       }
 
+      case 'set-layer': {
+        if (!flags['scene-object'] && !flags.asset) fail('--scene-object or --asset is required for set-layer');
+        if (flags.layer === undefined || flags.layer === null || flags.layer === '') {
+          fail('--layer is required (layer name like "Terrain", or numeric index 0–31)');
+        }
+        const slArgs = {};
+        if (flags['scene-object']) {
+          slArgs.sceneObjectPath = flags['scene-object'];
+        } else {
+          const isGuidSL = /^[0-9a-f]{32}$/i.test(flags.asset);
+          Object.assign(slArgs, isGuidSL ? { guid: flags.asset } : { assetPath: flags.asset });
+        }
+        if (flags['child-path']) slArgs.childPath = flags['child-path'];
+        // Numeric strings → number; other strings stay as layer names.
+        const numLayer = Number(flags.layer);
+        slArgs.layer = (typeof flags.layer === 'string' && /^\d+$/.test(flags.layer.trim())) ? numLayer : flags.layer;
+        if (flags.recursive) slArgs.recursive = true;
+        await submitCommand('set_layer', slArgs, flags);
+        break;
+      }
+
       case 'duplicate': {
         if (!flags['scene-object'] && !flags.asset) fail('--scene-object or --asset is required for duplicate');
         const dupArgs = {};
@@ -1392,6 +1415,54 @@ async function run(argv) {
             ? 'Queue empty. Submit a command to populate.'
             : 'Pass --all for the full history, --json for raw output, or --state STATE / --task TASKID to filter.',
         });
+        break;
+      }
+
+      case 'cancel': {
+        await ensureDaemon();
+        const id = positional[1];
+        const filterState = flags.state;
+        const filterTask = flags.task;
+
+        // Single-id form. Daemon enforces "no terminal-state cancellation"; we
+        // surface its error verbatim.
+        if (id) {
+          const resp = await httpRequest('DELETE', `/api/commands/${encodeURIComponent(id)}`);
+          if (resp.status >= 400) fail(resp.data.error || `HTTP ${resp.status}`);
+          out({ cancelled: 1, command: resp.data });
+          break;
+        }
+
+        if (!filterState && !filterTask) {
+          fail('cancel requires <id> or --state STATE or --task TASKID. Examples:\n' +
+            '  ./bin/dreamer cancel 7f3a-...                 # cancel one command\n' +
+            '  ./bin/dreamer cancel --state waiting          # flush all waiting (Play Mode parked, etc.)\n' +
+            '  ./bin/dreamer cancel --state queued           # flush all queued\n' +
+            '  ./bin/dreamer cancel --task agent-A:setup     # cancel everything labelled with that task');
+        }
+
+        // Bulk form: list with the filter, cancel each non-terminal.
+        const params = new URLSearchParams();
+        if (filterState) params.set('state', filterState);
+        if (filterTask)  params.set('originTaskId', filterTask);
+        const listResp = await httpRequest('GET', `/api/commands?${params.toString()}`);
+        if (listResp.status >= 400) fail(listResp.data.error || `HTTP ${listResp.status}`);
+
+        const NON_TERMINAL = new Set(['queued', 'waiting', 'dispatched', 'running']);
+        const targets = (listResp.data.commands || []).filter(c => NON_TERMINAL.has(c.state));
+        if (targets.length === 0) {
+          out({ cancelled: 0, hint: 'No non-terminal commands matched.' });
+          break;
+        }
+
+        const results = [];
+        const errors = [];
+        for (const cmd of targets) {
+          const r = await httpRequest('DELETE', `/api/commands/${encodeURIComponent(cmd.id)}`);
+          if (r.status >= 400) errors.push({ id: cmd.id, kind: cmd.kind, error: r.data.error || `HTTP ${r.status}` });
+          else results.push({ id: cmd.id, kind: cmd.kind, previousState: cmd.state });
+        }
+        out({ cancelled: results.length, failed: errors.length, commands: results, errors });
         break;
       }
 

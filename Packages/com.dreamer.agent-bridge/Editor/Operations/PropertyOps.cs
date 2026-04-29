@@ -115,6 +115,17 @@ namespace Dreamer.AgentBridge
                     "Use `./bin/dreamer rename --scene-object <path> --name <new-name> --wait` " +
                     "(or for a prefab: `--asset <prefab.prefab> [--child-path <subpath>] --name <new-name>`).");
             }
+            // Same anchor problem as m_Name. Numeric layer wouldn't even produce the
+            // right answer for name-based callers — set-layer accepts both forms.
+            if (string.Equals(propertyPath, "m_Layer", StringComparison.Ordinal) ||
+                string.Equals(propertyPath, "layer",   StringComparison.Ordinal))
+            {
+                return CommandResult.Fail(
+                    "set-property cannot set GameObject.layer — m_Layer lives on the GameObject anchor, not a component. " +
+                    "Use `./bin/dreamer set-layer --scene-object <path> --layer <name-or-index> [--recursive] --wait` " +
+                    "(or for a prefab: `--asset <prefab.prefab> [--child-path <subpath>] --layer <name-or-index>`). " +
+                    "Layer names auto-resolve via LayerMask.NameToLayer.");
+            }
 
             object value = SimpleJson.GetValue(args, "value");
             string componentTypeName = SimpleJson.GetString(args, "componentType");

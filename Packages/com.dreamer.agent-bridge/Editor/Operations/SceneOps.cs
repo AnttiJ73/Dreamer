@@ -429,6 +429,159 @@ namespace Dreamer.AgentBridge
             }
         }
 
+        /// <summary>Set GameObject.layer (the anchor field set-property can't reach). Scene: { sceneObjectPath, layer, recursive? }. Prefab: { assetPath, childPath?, layer, recursive? }. layer = name (string) or index (0–31).</summary>
+        public static CommandResult SetLayer(Dictionary<string, object> args)
+        {
+            object layerArg = SimpleJson.GetValue(args, "layer");
+            if (layerArg == null)
+                return CommandResult.Fail("'layer' is required (layer name or numeric index 0–31).");
+
+            int layerIndex;
+            string layerName;
+            var resolveErr = ResolveLayer(layerArg, out layerIndex, out layerName);
+            if (resolveErr != null) return CommandResult.Fail(resolveErr);
+
+            bool recursive = SimpleJson.GetBool(args, "recursive", false);
+
+            string sceneObjectPath = SimpleJson.GetString(args, "sceneObjectPath");
+            if (!string.IsNullOrEmpty(sceneObjectPath))
+            {
+                var go = PropertyOps.FindSceneObject(sceneObjectPath, out string findError);
+                if (go == null)
+                    return CommandResult.Fail(findError ?? $"Scene object not found: {sceneObjectPath}");
+
+                int prevLayer = go.layer;
+                int applied = ApplyLayer(go, layerIndex, recursive, "Set Layer");
+
+                return CommandResult.Ok(SimpleJson.Object()
+                    .Put("set", true)
+                    .Put("layerIndex", layerIndex)
+                    .Put("layerName", layerName)
+                    .Put("previousLayerIndex", prevLayer)
+                    .Put("previousLayerName", LayerMask.LayerToName(prevLayer))
+                    .Put("path", GetGameObjectPath(go))
+                    .Put("appliedToCount", applied)
+                    .ToString());
+            }
+
+            string assetPath = AssetOps.ResolveAssetPath(args);
+            if (assetPath == null)
+                return CommandResult.Fail("Provide 'sceneObjectPath' (scene mode) or 'assetPath'/'guid' (prefab mode).");
+
+            if (!assetPath.EndsWith(".prefab", StringComparison.OrdinalIgnoreCase))
+                return CommandResult.Fail($"Asset is not a prefab: {assetPath}. set-layer targets GameObjects only.");
+
+            string childPath = SimpleJson.GetString(args, "childPath");
+
+            var prefabRoot = PrefabUtility.LoadPrefabContents(assetPath);
+            if (prefabRoot == null)
+                return CommandResult.Fail($"Failed to load prefab: {assetPath}");
+
+            try
+            {
+                GameObject target;
+                if (string.IsNullOrEmpty(childPath))
+                {
+                    target = prefabRoot;
+                }
+                else
+                {
+                    Transform child = prefabRoot.transform.Find(childPath);
+                    if (child == null)
+                        return CommandResult.Fail($"Child '{childPath}' not found in prefab '{assetPath}'.");
+                    target = child.gameObject;
+                }
+
+                int prevLayer = target.layer;
+                int applied = ApplyLayer(target, layerIndex, recursive, null); // Undo not applicable inside isolated prefab scene
+                PrefabUtility.SaveAsPrefabAsset(prefabRoot, assetPath);
+
+                return CommandResult.Ok(SimpleJson.Object()
+                    .Put("set", true)
+                    .Put("layerIndex", layerIndex)
+                    .Put("layerName", layerName)
+                    .Put("previousLayerIndex", prevLayer)
+                    .Put("previousLayerName", LayerMask.LayerToName(prevLayer))
+                    .Put("assetPath", assetPath)
+                    .Put("childPath", childPath ?? "")
+                    .Put("appliedToCount", applied)
+                    .ToString());
+            }
+            finally
+            {
+                PrefabOps.SafeUnloadPrefabContents(prefabRoot);
+            }
+        }
+
+        // Returns null on success; populates layerIndex + layerName.
+        // Numeric form: validate 0–31. Named form: LayerMask.NameToLayer; on
+        // miss, error includes the current named-layer list so the caller can
+        // spot typos vs missing-from-TagManager.
+        static string ResolveLayer(object layerArg, out int layerIndex, out string layerName)
+        {
+            layerIndex = -1;
+            layerName = null;
+
+            if (layerArg is int i) { layerIndex = i; }
+            else if (layerArg is long l) { layerIndex = (int)l; }
+            else if (layerArg is double d) { layerIndex = (int)d; }
+            else if (layerArg is string s)
+            {
+                if (int.TryParse(s, out int parsed)) layerIndex = parsed;
+                else
+                {
+                    int byName = LayerMask.NameToLayer(s);
+                    if (byName < 0)
+                    {
+                        var named = new List<string>();
+                        for (int n = 0; n < 32; n++)
+                        {
+                            string nm = LayerMask.LayerToName(n);
+                            if (!string.IsNullOrEmpty(nm)) named.Add($"{n}:{nm}");
+                        }
+                        return $"Layer name '{s}' is not defined. Available: {string.Join(", ", named)}. " +
+                            $"Add it first with `./bin/dreamer set-layer-name --index N --name {s} --wait`.";
+                    }
+                    layerIndex = byName;
+                }
+            }
+            else
+            {
+                return $"'layer' must be a string (name) or number (index). Got: {layerArg.GetType().Name}";
+            }
+
+            if (layerIndex < 0 || layerIndex > 31)
+                return $"Layer index {layerIndex} out of range. Unity layers are 0–31 (32-bit mask).";
+
+            layerName = LayerMask.LayerToName(layerIndex);
+            return null;
+        }
+
+        // Apply layer to GameObject (and optionally all descendants). Returns count touched.
+        // undoLabel != null → register undo per-GO (scene mode); pass null inside prefab-edit scenes.
+        static int ApplyLayer(GameObject go, int layerIndex, bool recursive, string undoLabel)
+        {
+            int count = 0;
+            if (recursive)
+            {
+                foreach (var t in go.GetComponentsInChildren<Transform>(true))
+                {
+                    if (undoLabel != null) Undo.RecordObject(t.gameObject, undoLabel);
+                    t.gameObject.layer = layerIndex;
+                    EditorUtility.SetDirty(t.gameObject);
+                    count++;
+                }
+            }
+            else
+            {
+                if (undoLabel != null) Undo.RecordObject(go, undoLabel);
+                go.layer = layerIndex;
+                EditorUtility.SetDirty(go);
+                count = 1;
+            }
+            return count;
+        }
+
         /// <summary>Inspect scene hierarchy or a prefab's hierarchy. Args: { scene? } or { assetPath?/guid? }</summary>
         public static CommandResult InspectHierarchy(Dictionary<string, object> args)
         {

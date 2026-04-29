@@ -9,6 +9,12 @@ tags, breaking changes bump the minor version (0.x.0), fixes bump patch.
 
 ## [Unreleased]
 
+### Added — Queue control + GameObject layer assignment
+
+- **`cancel <id>`** / **`cancel --state STATE`** / **`cancel --task TASKID`** — cancel queued/waiting/dispatched/running commands. Single-id form for one command; bulk form flushes everything matching the filter (e.g. `cancel --state waiting` clears all Play-Mode-parked commands without exiting Play Mode). Daemon-side cancellation API existed but had no CLI surface.
+- **`set-layer (--scene-object PATH | --asset PATH [--child-path SUB]) --layer NAME_OR_INDEX [--recursive]`** — assigns `GameObject.layer`. Layer names auto-resolve via `LayerMask.NameToLayer`; numeric indices accepted 0–31. `--recursive` mirrors Unity's "set children too?" Inspector prompt. `set-property --property m_Layer` now intercepts with a directive error pointing here (m_Layer lives on the GameObject anchor, not a Component — same pattern as `rename` for m_Name).
+- Schema validator now accepts union types (`type: ['string', 'number']`) so commands like `set-layer` can document both name and index forms.
+
 ### Added — Animation tooling Phase 2 (15 commands across 5 areas)
 Comprehensive animator authoring beyond the Phase 1 surface (create + add states/parameters/transitions). Phase 2 adds iteration safety, multi-layer controllers, blend trees, avatar masks, and override controllers — verified end-to-end.
 
