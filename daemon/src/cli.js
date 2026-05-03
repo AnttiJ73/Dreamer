@@ -426,6 +426,9 @@ async function run(argv) {
         'add-build-scene --scene PATH [--enabled false]   (append; updates enabled flag if already present)',
         'remove-build-scene --scene PATH',
         'screenshot-prefab --asset Assets/X.prefab [--width 512] [--height 512] [--angle iso|front|side|top|...] [--save-to PATH]   (renders to PNG; open with Read tool to view)',
+        'preview-sprite --asset Assets/Sheet.png [--sub-sprite NAME] [--outline-thickness 2] [--save-to PATH]   (PNG: full sheet w/ rect outlines for sliced sheets, or one named sub-sprite)',
+        'slice-sprite --asset Assets/Sheet.png --mode grid|auto|rects|merge [--cell WxH] [--min-size N] [--rects JSON] [--groups JSON] [--name-prefix P] [--alignment NAME] [--pivot JSON]   (grid/auto/rects = author from scratch; merge = combine existing rects into a union-bbox)',
+        'set-import-property --asset Assets/X.png --property NAME --value JSON   (TextureImporter / ModelImporter / AudioImporter fields: spritePixelsPerUnit, filterMode, textureType, isReadable, …)',
         'screenshot-scene [--camera "Main Camera"|"/Path"] [--preset layout|normal|text] [--width N] [--height N] [--filter-mode point|bilinear|trilinear] [--background-color HEX] [--transparent] [--save-to PATH]   (renders any scene Camera to PNG; auto-flips overlay canvases)',
         'create-scene --name NAME [--path FOLDER] [--set-active]',
         'open-scene PATH [--mode single|additive]',
@@ -1858,6 +1861,62 @@ async function run(argv) {
           args.size = sz;
         }
         await submitCommand('screenshot_prefab', args, flags);
+        break;
+      }
+
+      case 'preview-sprite': {
+        const target = flags.asset || positional[1];
+        if (!target) fail('Usage: dreamer preview-sprite --asset Assets/Sheet.png [--sub-sprite NAME] [--outline-thickness 2] [--save-to PATH]');
+        const isGuidPS = /^[0-9a-f]{32}$/i.test(target);
+        const psArgs = isGuidPS ? { guid: target } : { assetPath: target };
+        if (flags['sub-sprite']) psArgs.subSprite = String(flags['sub-sprite']);
+        if (flags['outline-thickness'] !== undefined) psArgs.outlineThickness = parseInt(flags['outline-thickness'], 10);
+        if (flags['save-to']) psArgs.savePath = String(flags['save-to']);
+        await submitCommand('preview_sprite', psArgs, flags);
+        break;
+      }
+
+      case 'slice-sprite': {
+        const target = flags.asset || positional[1];
+        if (!target) fail('Usage: dreamer slice-sprite --asset Assets/Sheet.png --mode grid|auto|rects|merge [...]');
+        if (!flags.mode) fail('--mode is required: grid | auto | rects | merge');
+        const isGuidSS = /^[0-9a-f]{32}$/i.test(target);
+        const ssArgs = isGuidSS ? { guid: target } : { assetPath: target };
+        ssArgs.mode = String(flags.mode);
+        if (flags.cell) ssArgs.cell = String(flags.cell);
+        if (flags.padding) ssArgs.padding = String(flags.padding);
+        if (flags.offset) ssArgs.offset = String(flags.offset);
+        if (flags['min-size'] !== undefined) ssArgs.minSize = parseInt(flags['min-size'], 10);
+        if (flags.extrude !== undefined) ssArgs.extrude = parseInt(flags.extrude, 10);
+        if (flags.rects) {
+          try { ssArgs.rects = JSON.parse(flags.rects); }
+          catch (e) { fail(`--rects must be valid JSON: ${e.message}`); }
+        }
+        if (flags.groups) {
+          try { ssArgs.groups = JSON.parse(flags.groups); }
+          catch (e) { fail(`--groups must be valid JSON: ${e.message}`); }
+        }
+        if (flags['name-prefix']) ssArgs.namePrefix = String(flags['name-prefix']);
+        if (flags.alignment) ssArgs.alignment = String(flags.alignment);
+        if (flags.pivot) {
+          try { ssArgs.pivot = JSON.parse(flags.pivot); }
+          catch (e) { fail(`--pivot must be valid JSON: ${e.message}`); }
+        }
+        await submitCommand('slice_sprite', ssArgs, flags);
+        break;
+      }
+
+      case 'set-import-property': {
+        const target = flags.asset || positional[1];
+        if (!target) fail('Usage: dreamer set-import-property --asset Assets/X.png --property NAME --value JSON');
+        if (!flags.property) fail('--property is required (e.g. spritePixelsPerUnit, filterMode, isReadable)');
+        if (flags.value === undefined) fail('--value is required (JSON: numbers/booleans plain, strings quoted with single quotes around the JSON string e.g. \'"Point"\')');
+        const isGuidIP = /^[0-9a-f]{32}$/i.test(target);
+        const ipArgs = isGuidIP ? { guid: target } : { assetPath: target };
+        ipArgs.propertyName = String(flags.property);
+        try { ipArgs.value = JSON.parse(flags.value); }
+        catch { ipArgs.value = flags.value; } // fall back to literal string for unquoted enum names
+        await submitCommand('set_import_property', ipArgs, flags);
         break;
       }
 

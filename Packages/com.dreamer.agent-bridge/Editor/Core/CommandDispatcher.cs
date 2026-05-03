@@ -97,6 +97,10 @@ namespace Dreamer.AgentBridge
             _handlers["shader_status"]           = ShaderOps.ShaderStatus;
             _handlers["inspect_shader"]          = ShaderOps.InspectShader;
 
+            _handlers["preview_sprite"]          = SpriteOps.PreviewSprite;
+            _handlers["slice_sprite"]            = SpriteOps.SliceSprite;
+            _handlers["set_import_property"]     = ImporterOps.SetImportProperty;
+
             // Add-ons ship a type "Dreamer.AgentBridge.<Name>.Registration" with a static
             // Register(handlers) method. Discovered via reflection so core compiles standalone.
             DiscoverPluginRegistrations();
@@ -205,7 +209,8 @@ namespace Dreamer.AgentBridge
                 || kind == "inspect_project_settings"
                 || kind == "inspect_project_setting"
                 || kind == "inspect_player_settings"
-                || kind == "inspect_build_scenes";
+                || kind == "inspect_build_scenes"
+                || kind == "preview_sprite";
         }
 
         public class CommandRecord

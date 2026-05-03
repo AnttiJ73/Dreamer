@@ -78,6 +78,11 @@ const KIND_DEFS = {
   // ParticleSystem (modules access pattern that generic set_property can't reach)
   set_particle_property: { label: 'Set Particle Property', requirements: null },
 
+  // Sprite-sheet preview + slicing + generic AssetImporter property setter
+  preview_sprite:        { label: 'Preview Sprite',        requirements: null },
+  slice_sprite:          { label: 'Slice Sprite',          requirements: null },
+  set_import_property:   { label: 'Set Import Property',   requirements: null },
+
   // UI Canvas (uGUI) add-on — kinds are known here so the CLI + scheduler
   // treat them uniformly, but the bridge-side handlers only exist when
   // the add-on package is installed. If the add-on is missing, the
@@ -149,6 +154,7 @@ const COMPILE_SAFE_KINDS = new Set([
   'inspect_project_setting',
   'inspect_player_settings',
   'inspect_build_scenes',
+  'preview_sprite',
 ]);
 
 function isCompileSafe(kind) {

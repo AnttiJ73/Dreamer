@@ -9,6 +9,18 @@ tags, breaking changes bump the minor version (0.x.0), fixes bump patch.
 
 ## [Unreleased]
 
+### Added — Sprite-sheet workflow (preview / slice / import settings)
+
+- **`preview-sprite --asset PATH [--sub-sprite NAME] [--save-to PATH]`** — render a sprite (or one named sub-sprite from a sliced sheet) to PNG. Default for Multiple-mode sheets: full texture with colored rect outlines per sub-sprite, plus a `sprites[]` array mapping color→name. Open the resulting PNG with the Read tool to inspect slicing visually.
+- **`slice-sprite --asset PATH --mode grid|auto|rects|merge [...]`** — author the spritesheet rects.
+  - `grid --cell WxH [--padding x,y] [--offset x,y]`: regular tile slicing, skips fully-transparent cells.
+  - `auto --min-size N`: connected-component scan via Unity's `InternalSpriteUtility.GenerateAutomaticSpriteRectangles`.
+  - `rects --rects '[{name,x,y,w,h,...}]'`: explicit JSON.
+  - `merge --groups '[{keep, absorb:[name1,name2,...]}]'`: combine existing rects into a union-bbox (for composite islands — e.g. character + shadow that auto-slice split apart).
+  Auto-flips `spriteImportMode` to Multiple, preserves `spriteID` for name matches across re-slices (keeps prefab/animation references intact).
+- **`set-import-property --asset PATH --property NAME --value JSON`** — generic AssetImporter property setter (TextureImporter / ModelImporter / AudioImporter / etc.). Reflects on the importer subclass and auto-reimports. Closes the gap that `set-property` only reaches the runtime asset, not its importer. Common uses: `spritePixelsPerUnit`, `filterMode "Point"`, `textureType "Sprite"`, `isReadable true` (required before `slice-sprite --mode auto`).
+- Asmdef `versionDefines` gates the sprite ops on `com.unity.2d.sprite`; projects without that package get a clear "install com.unity.2d.sprite" error instead of TypeLoadExceptions.
+
 ### Added — Queue control + GameObject layer assignment
 
 - **`cancel <id>`** / **`cancel --state STATE`** / **`cancel --task TASKID`** — cancel queued/waiting/dispatched/running commands. Single-id form for one command; bulk form flushes everything matching the filter (e.g. `cancel --state waiting` clears all Play-Mode-parked commands without exiting Play Mode). Daemon-side cancellation API existed but had no CLI surface.
