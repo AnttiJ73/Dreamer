@@ -270,7 +270,7 @@ async function submitCommand(kind, args, flags = {}) {
             && /^Unknown command kind/.test(current.error)) {
           const ADDON_HINT = {
             ugui: { kinds: /^(create_ui_tree|inspect_ui_tree|set_rect_transform)$/, addonId: 'ugui', pkg: 'com.dreamer.agent-bridge.ugui' },
-            sprite2d: { kinds: /^(preview_sprite|slice_sprite)$/, addonId: 'sprite-2d', pkg: 'com.dreamer.agent-bridge.sprite-2d' },
+            sprite2d: { kinds: /^(preview_sprite|slice_sprite|extend_sprite)$/, addonId: 'sprite-2d', pkg: 'com.dreamer.agent-bridge.sprite-2d' },
           };
           const matchAddon = Object.values(ADDON_HINT).find(a => a.kinds.test(current.kind));
           if (matchAddon) {
@@ -369,6 +369,7 @@ async function run(argv) {
         '── Sprite 2D add-on (install com.dreamer.agent-bridge.sprite-2d separately; requires com.unity.2d.sprite) ──',
         'preview-sprite --asset Assets/Sheet.png [--sub-sprite NAME] [--outline-thickness 2] [--save-to PATH]   (PNG: full sheet w/ rect outlines for sliced sheets, or one named sub-sprite)',
         'slice-sprite --asset Assets/Sheet.png --mode grid|auto|rects|merge [--cell WxH] [--min-size N] [--rects JSON] [--groups JSON] [--name-prefix P] [--alignment NAME] [--pivot JSON]   (grid/auto/rects = author from scratch; merge = combine existing rects into a union-bbox)',
+        'extend-sprite --asset Assets/Sheet.png [--name-prefix P] [--iou-threshold 0.5] [--match-threshold 0.85]   (non-destructive: preserves existing rect names + spriteIDs, IoU-matches via auto-detect, template-matches relocated sprites against cached snapshots, appends new islands)',
         '── uGUI add-on (install com.dreamer.agent-bridge.ugui separately) ──',
         'create-ui-tree --json JSON_OR_@file.json    (declarative tree: mode=create|append|replace-children|replace-self)',
         'inspect-ui-tree --target PATH [--depth N] [--include-raw true|false] [--include-rect true|false]',
@@ -1910,6 +1911,24 @@ async function run(argv) {
           catch (e) { fail(`--pivot must be valid JSON: ${e.message}`); }
         }
         await submitCommand('slice_sprite', ssArgs, flags);
+        break;
+      }
+
+      case 'extend-sprite': {
+        const target = flags.asset || positional[1];
+        if (!target) fail('Usage: dreamer extend-sprite --asset Assets/Sheet.png [--name-prefix P] [--min-size N] [--iou-threshold 0.5] [--match-threshold 0.85] [--alignment NAME] [--pivot JSON]');
+        const isGuidES = /^[0-9a-f]{32}$/i.test(target);
+        const esArgs = isGuidES ? { guid: target } : { assetPath: target };
+        if (flags['name-prefix']) esArgs.namePrefix = String(flags['name-prefix']);
+        if (flags['min-size'] !== undefined) esArgs.minSize = parseInt(flags['min-size'], 10);
+        if (flags['iou-threshold'] !== undefined) esArgs.iouThreshold = parseFloat(flags['iou-threshold']);
+        if (flags['match-threshold'] !== undefined) esArgs.matchThreshold = parseFloat(flags['match-threshold']);
+        if (flags.alignment) esArgs.alignment = String(flags.alignment);
+        if (flags.pivot) {
+          try { esArgs.pivot = JSON.parse(flags.pivot); }
+          catch (e) { fail(`--pivot must be valid JSON: ${e.message}`); }
+        }
+        await submitCommand('extend_sprite', esArgs, flags);
         break;
       }
 

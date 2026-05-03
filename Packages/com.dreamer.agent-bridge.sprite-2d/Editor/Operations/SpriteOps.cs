@@ -14,6 +14,7 @@ namespace Dreamer.AgentBridge.Sprite2D
     public static class SpriteOps
     {
         const string DefaultDir = "DreamerScreenshots";
+        const string CacheRoot  = "Library/Dreamer/SpriteSlices";
 
         // ─── preview-sprite ───────────────────────────────────────────────
 
@@ -360,6 +361,7 @@ namespace Dreamer.AgentBridge.Sprite2D
             dataProvider.SetSpriteRects(existing.ToArray());
             dataProvider.Apply();
             (dataProvider.targetObject as AssetImporter)?.SaveAndReimport();
+            CacheSpriteRects(assetPath);
 
             return CommandResult.Ok(SimpleJson.Object()
                 .Put("merged", true)
@@ -390,6 +392,7 @@ namespace Dreamer.AgentBridge.Sprite2D
             dataProvider.SetSpriteRects(rects.ToArray());
             dataProvider.Apply();
             importer.SaveAndReimport();
+            CacheSpriteRects(assetPath);
 
             return CommandResult.Ok(SimpleJson.Object()
                 .Put("sliced", true)
@@ -398,6 +401,319 @@ namespace Dreamer.AgentBridge.Sprite2D
                 .Put("flippedToMultipleMode", wasSingle)
                 .Put("hint", "Run `preview-sprite --asset <path>` to view the result with rect highlights.")
                 .ToString());
+        }
+
+        // ─── extend-sprite ────────────────────────────────────────────────
+
+        /// <summary>Re-slice without losing existing rect names/spriteIDs. IoU-matches existing rects to auto-detected islands; for unmatched, falls back to template-matching against cached snapshots (auto-built by previous slice ops). Adds new islands as fresh rects.</summary>
+        public static CommandResult ExtendSprite(Dictionary<string, object> args)
+        {
+            string assetPath = AssetOps.ResolveAssetPath(args);
+            if (assetPath == null)
+                return CommandResult.Fail("Provide 'assetPath' or 'guid'.");
+
+            var importer = AssetImporter.GetAtPath(assetPath) as TextureImporter;
+            if (importer == null)
+                return CommandResult.Fail($"Asset is not a texture: {assetPath}");
+
+            var texture = AssetDatabase.LoadAssetAtPath<Texture2D>(assetPath);
+            if (texture == null)
+                return CommandResult.Fail($"Failed to load texture: {assetPath}");
+
+            if (!texture.isReadable)
+                return CommandResult.Fail("Texture must be readable for auto-detect. Run set-import-property --property isReadable --value true first.");
+
+            int minSize = SimpleJson.GetInt(args, "minSize", 16);
+            float iouThreshold = Mathf.Clamp01(SimpleJson.GetFloat(args, "iouThreshold", 0.5f));
+            float matchThreshold = Mathf.Clamp01(SimpleJson.GetFloat(args, "matchThreshold", 0.85f));
+            string namePrefix = SimpleJson.GetString(args, "namePrefix",
+                Path.GetFileNameWithoutExtension(assetPath));
+            SpriteAlignment alignment = ParseAlignment(SimpleJson.GetString(args, "alignment", "Center"));
+            Vector2 customPivot = ParsePivot(args, "pivot", new Vector2(0.5f, 0.5f));
+
+            var t = Type.GetType("UnityEditorInternal.InternalSpriteUtility, UnityEditor");
+            var m = t?.GetMethod("GenerateAutomaticSpriteRectangles",
+                BindingFlags.Public | BindingFlags.Static);
+            if (m == null) return CommandResult.Fail("InternalSpriteUtility not available in this Unity version.");
+
+            Rect[] candidates;
+            try { candidates = (Rect[])m.Invoke(null, new object[] { texture, minSize, 0 }); }
+            catch (Exception ex) { return CommandResult.Fail($"Auto-detect threw: {ex.InnerException?.Message ?? ex.Message}"); }
+
+            var dataProvider = GetSpriteDataProvider(assetPath, out string dpErr);
+            if (dataProvider == null) return CommandResult.Fail(dpErr);
+            var existingList = dataProvider.GetSpriteRects().ToList();
+
+            var consumed = new HashSet<int>();
+            var keptResult = new List<(SpriteRect rect, string oldPos, string newPos, string method)>();
+            var unmatched = new List<SpriteRect>();
+
+            foreach (var ex in existingList)
+            {
+                int bestIdx = -1;
+                float bestIoU = 0f;
+                for (int i = 0; i < candidates.Length; i++)
+                {
+                    if (consumed.Contains(i)) continue;
+                    float iou = CalcIoU(ex.rect, candidates[i]);
+                    if (iou > bestIoU) { bestIoU = iou; bestIdx = i; }
+                }
+                if (bestIdx >= 0 && bestIoU >= iouThreshold)
+                {
+                    consumed.Add(bestIdx);
+                    var snapped = ex;
+                    string oldPos = RectToString(ex.rect);
+                    snapped.rect = candidates[bestIdx];
+                    keptResult.Add((snapped, oldPos, RectToString(snapped.rect), "iou"));
+                }
+                else
+                {
+                    unmatched.Add(ex);
+                }
+            }
+
+            // Template-match unmatched existing rects against cached snapshots → find where they moved.
+            var realignedResult = new List<(SpriteRect rect, string oldPos, string newPos, string method)>();
+            var orphaned = new List<SpriteRect>();
+            string assetGuid = AssetDatabase.AssetPathToGUID(assetPath);
+            string cacheDir = Path.Combine(CacheRoot, assetGuid);
+            bool cacheAvailable = Directory.Exists(cacheDir);
+
+            if (TryReadPixels(texture, out Color[] curPixels, out int curW, out int curH, out _) && unmatched.Count > 0 && cacheAvailable)
+            {
+                foreach (var ex in unmatched)
+                {
+                    string snapPath = Path.Combine(cacheDir, $"{ex.spriteID}.png");
+                    if (!File.Exists(snapPath)) { orphaned.Add(ex); continue; }
+
+                    byte[] snapBytes = File.ReadAllBytes(snapPath);
+                    var snapTex = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+                    snapTex.LoadImage(snapBytes);
+                    Color[] tplPixels = snapTex.GetPixels();
+                    int tw = snapTex.width;
+                    int th = snapTex.height;
+                    UnityEngine.Object.DestroyImmediate(snapTex);
+
+                    if (TryFindTemplate(curPixels, curW, curH, tplPixels, tw, th, candidates, consumed,
+                                        matchThreshold, out int candIdx, out float score))
+                    {
+                        consumed.Add(candIdx);
+                        var moved = ex;
+                        string oldPos = RectToString(ex.rect);
+                        moved.rect = candidates[candIdx];
+                        realignedResult.Add((moved, oldPos, RectToString(moved.rect), $"template:{score:F2}"));
+                    }
+                    else
+                    {
+                        orphaned.Add(ex);
+                    }
+                }
+            }
+            else
+            {
+                orphaned.AddRange(unmatched);
+            }
+
+            int nextIdx = ExtractMaxIndex(existingList, namePrefix) + 1;
+            var allNames = new HashSet<string>(existingList.Select(r => r.name));
+            var added = new List<SpriteRect>();
+            for (int i = 0; i < candidates.Length; i++)
+            {
+                if (consumed.Contains(i)) continue;
+                string name;
+                do { name = $"{namePrefix}_{nextIdx++}"; } while (allNames.Contains(name));
+                allNames.Add(name);
+                added.Add(BuildRect(name, candidates[i], alignment, customPivot));
+            }
+
+            var final = new List<SpriteRect>();
+            foreach (var k in keptResult) final.Add(k.rect);
+            foreach (var r in realignedResult) final.Add(r.rect);
+            foreach (var a in added) final.Add(a);
+            foreach (var o in orphaned) final.Add(o);
+
+            dataProvider.SetSpriteRects(final.ToArray());
+            dataProvider.Apply();
+            importer.SaveAndReimport();
+            CacheSpriteRects(assetPath);
+
+            return CommandResult.Ok(SimpleJson.Object()
+                .Put("extended", true)
+                .Put("kept", keptResult.Count)
+                .Put("realigned", realignedResult.Count)
+                .Put("added", added.Count)
+                .Put("orphaned", orphaned.Count)
+                .Put("cacheAvailable", cacheAvailable)
+                .PutRaw("realignedDetails", BuildMoveListJson(realignedResult).ToString())
+                .PutRaw("addedRects", BuildRectListJson(added).ToString())
+                .PutRaw("orphanedRects", BuildRectListJson(orphaned).ToString())
+                .Put("hint", orphaned.Count > 0
+                    ? "Some existing rects had no IoU or template match — listed as orphaned but kept in place. Inspect via preview-sprite, then either delete (slice-sprite --mode rects with the survivors) or accept."
+                    : "All existing rects accounted for. New rects (if any) appended; preview-sprite to verify.")
+                .ToString());
+        }
+
+        // ─── snapshot cache (Library/Dreamer/SpriteSlices/<guid>) ─────────
+
+        // Per-rect PNG cache keyed by spriteID. Survives sheet-resize edits because spriteID is stable across slicing
+        // operations whenever a rect's name matches. Used by extend-sprite to template-match relocated rects.
+        static void CacheSpriteRects(string assetPath)
+        {
+            try
+            {
+                string assetGuid = AssetDatabase.AssetPathToGUID(assetPath);
+                if (string.IsNullOrEmpty(assetGuid)) return;
+                string dir = Path.Combine(CacheRoot, assetGuid).Replace('\\', '/');
+
+                var texture = AssetDatabase.LoadAssetAtPath<Texture2D>(assetPath);
+                if (texture == null) return;
+                if (!TryReadPixels(texture, out Color[] pixels, out int texW, out int texH, out _)) return;
+
+                var dp = GetSpriteDataProvider(assetPath, out _);
+                if (dp == null) return;
+                var spriteRects = dp.GetSpriteRects();
+                if (spriteRects == null || spriteRects.Length == 0)
+                {
+                    if (Directory.Exists(dir)) try { Directory.Delete(dir, true); } catch { /* non-fatal */ }
+                    return;
+                }
+
+                if (Directory.Exists(dir))
+                {
+                    try { Directory.Delete(dir, true); } catch { /* non-fatal */ }
+                }
+                Directory.CreateDirectory(dir);
+
+                var manifest = SimpleJson.Array();
+                foreach (var sr in spriteRects)
+                {
+                    var subPixels = ExtractRect(pixels, texW, texH, sr.rect);
+                    var subTex = new Texture2D((int)sr.rect.width, (int)sr.rect.height, TextureFormat.RGBA32, false);
+                    subTex.SetPixels(subPixels);
+                    subTex.Apply();
+                    byte[] png = subTex.EncodeToPNG();
+                    UnityEngine.Object.DestroyImmediate(subTex);
+
+                    string idKey = sr.spriteID.ToString();
+                    File.WriteAllBytes(Path.Combine(dir, $"{idKey}.png"), png);
+                    manifest.AddRaw(SimpleJson.Object()
+                        .Put("spriteID", idKey)
+                        .Put("name", sr.name)
+                        .PutRaw("rect", RectJson(sr.rect).ToString())
+                        .ToString());
+                }
+
+                File.WriteAllText(Path.Combine(dir, "manifest.json"), SimpleJson.Object()
+                    .Put("assetPath", assetPath)
+                    .Put("textureWidth", texW)
+                    .Put("textureHeight", texH)
+                    .Put("cachedAt", DateTime.UtcNow.ToString("o"))
+                    .PutRaw("sprites", manifest.ToString())
+                    .ToString());
+            }
+            catch (Exception ex)
+            {
+                DreamerLog.Warn($"CacheSpriteRects failed for {assetPath}: {ex.Message}");
+            }
+        }
+
+        // ─── matching helpers ─────────────────────────────────────────────
+
+        static float CalcIoU(Rect a, Rect b)
+        {
+            float interX = Mathf.Max(0, Mathf.Min(a.xMax, b.xMax) - Mathf.Max(a.xMin, b.xMin));
+            float interY = Mathf.Max(0, Mathf.Min(a.yMax, b.yMax) - Mathf.Max(a.yMin, b.yMin));
+            float inter = interX * interY;
+            float uni = a.width * a.height + b.width * b.height - inter;
+            return uni > 0 ? inter / uni : 0;
+        }
+
+        static int ExtractMaxIndex(List<SpriteRect> rects, string prefix)
+        {
+            int max = -1;
+            string p = prefix + "_";
+            foreach (var r in rects)
+            {
+                if (r.name == null || !r.name.StartsWith(p)) continue;
+                if (int.TryParse(r.name.Substring(p.Length), out int n) && n > max) max = n;
+            }
+            return max;
+        }
+
+        // Matches a template against the current sheet, restricted to auto-detected candidate rects of similar size.
+        // Brute-force scanning the entire sheet is too slow; candidates are O(N) and typical N < 100.
+        static bool TryFindTemplate(Color[] sheet, int sheetW, int sheetH,
+            Color[] template, int tw, int th, Rect[] candidates, HashSet<int> consumed,
+            float threshold, out int bestIdx, out float bestScore)
+        {
+            bestIdx = -1;
+            bestScore = 0;
+            for (int i = 0; i < candidates.Length; i++)
+            {
+                if (consumed.Contains(i)) continue;
+                var c = candidates[i];
+                if (Mathf.Abs(c.width - tw) > Mathf.Max(2, tw * 0.1f)) continue;
+                if (Mathf.Abs(c.height - th) > Mathf.Max(2, th * 0.1f)) continue;
+
+                float score = MatchScore(sheet, sheetW, sheetH, (int)c.x, (int)c.y, template, tw, th);
+                if (score > bestScore) { bestScore = score; bestIdx = i; }
+            }
+            return bestScore >= threshold;
+        }
+
+        static float MatchScore(Color[] sheet, int sheetW, int sheetH,
+            int sx, int sy, Color[] template, int tw, int th)
+        {
+            int sampleH = Mathf.Min(th, sheetH - sy);
+            int sampleW = Mathf.Min(tw, sheetW - sx);
+            if (sampleW <= 0 || sampleH <= 0 || sx < 0 || sy < 0) return 0;
+            int matches = 0;
+            int total = sampleW * sampleH;
+            const float eps = 0.05f;
+            for (int y = 0; y < sampleH; y++)
+            {
+                int sheetRow = (sy + y) * sheetW + sx;
+                int tplRow = y * tw;
+                for (int x = 0; x < sampleW; x++)
+                {
+                    Color a = sheet[sheetRow + x];
+                    Color b = template[tplRow + x];
+                    if (Mathf.Abs(a.r - b.r) < eps && Mathf.Abs(a.g - b.g) < eps
+                        && Mathf.Abs(a.b - b.b) < eps && Mathf.Abs(a.a - b.a) < eps)
+                        matches++;
+                }
+            }
+            return (float)matches / total;
+        }
+
+        static string RectToString(Rect r) => $"({r.x},{r.y},{r.width},{r.height})";
+
+        static JsonBuilder BuildRectListJson(List<SpriteRect> rects)
+        {
+            var arr = SimpleJson.Array();
+            foreach (var r in rects)
+            {
+                arr.AddRaw(SimpleJson.Object()
+                    .Put("name", r.name)
+                    .PutRaw("rect", RectJson(r.rect).ToString())
+                    .ToString());
+            }
+            return arr;
+        }
+
+        static JsonBuilder BuildMoveListJson(List<(SpriteRect rect, string oldPos, string newPos, string method)> moves)
+        {
+            var arr = SimpleJson.Array();
+            foreach (var m in moves)
+            {
+                arr.AddRaw(SimpleJson.Object()
+                    .Put("name", m.rect.name)
+                    .Put("oldRect", m.oldPos)
+                    .Put("newRect", m.newPos)
+                    .Put("method", m.method)
+                    .ToString());
+            }
+            return arr;
         }
 
         static ISpriteEditorDataProvider GetSpriteDataProvider(string assetPath, out string error)

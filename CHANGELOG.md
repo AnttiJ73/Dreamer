@@ -9,6 +9,21 @@ tags, breaking changes bump the minor version (0.x.0), fixes bump patch.
 
 ## [Unreleased]
 
+### Added — `extend-sprite` (sprite-sheet edit-without-breaking-references)
+
+Extends a sliced sheet without losing existing rect names or `spriteID`s — protects every prefab, animation, and Animator reference that depends on those names. Two-stage matching, applied automatically:
+
+- **Stage 1 (IoU):** auto-detects islands in the current sheet, IoU-matches them against existing rects. Handles "artist added new sprites in unused whitespace" — original rects keep their names, ID, alignment; positions snap to the candidate island's exact bounds.
+- **Stage 2 (template match):** for existing rects that didn't IoU-match, template-matches the cached pre-edit pixel content against current islands of similar size. Handles "artist resized the canvas / reorganized layout — original sprites moved to new pixel coordinates." Existing rect updated to new position; spriteID preserved.
+- **Unmatched islands** appended as new rects with next-available index (`<prefix>_<N>`).
+- **Unmatched existing rects** reported as orphans (kept in place — agent decides).
+
+Auto-cache: every successful slice / extend operation now writes per-rect PNGs to `Library/Dreamer/SpriteSlices/<assetGuid>/` keyed by `spriteID`. Invisible to the user, gitignored. This is what Stage 2 template-matches against. Cache rebuilds on the next slice/extend after a Library wipe.
+
+Verified end-to-end on the test fixture by simulating a 200-pixel canvas resize: all 17 sprites realigned with perfect 1.00 pixel-match score, names + spriteIDs preserved.
+
+Limitations documented in the schema: redrawn sprites (changed pixels), sprites resized as well as relocated (>10% size change), and merged-bbox composite rects fall through as orphans. The agent visually inspects via `preview-sprite` and decides.
+
 ### Added — Sprite-sheet workflow (preview / slice / import settings)
 
 - **NEW ADDON `com.dreamer.agent-bridge.sprite-2d`** — sprite-sheet authoring lives in its own package (mirroring the `ugui` and `animation` addons), so 3D-only projects don't compile sprite code or pull in `com.unity.2d.sprite`. Install via `./bin/dreamer addon install sprite-2d`.

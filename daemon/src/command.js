@@ -85,6 +85,7 @@ const KIND_DEFS = {
   // Same install-conditional model as ugui/animation.
   preview_sprite:        { label: 'Preview Sprite',        requirements: null },
   slice_sprite:          { label: 'Slice Sprite',          requirements: null },
+  extend_sprite:         { label: 'Extend Sprite',         requirements: null },
 
   // UI Canvas (uGUI) add-on — kinds are known here so the CLI + scheduler
   // treat them uniformly, but the bridge-side handlers only exist when

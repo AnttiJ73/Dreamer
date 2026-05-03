@@ -12,6 +12,7 @@ namespace Dreamer.AgentBridge.Sprite2D
             if (handlers == null) return;
             handlers["preview_sprite"] = SpriteOps.PreviewSprite;
             handlers["slice_sprite"]   = SpriteOps.SliceSprite;
+            handlers["extend_sprite"]  = SpriteOps.ExtendSprite;
         }
     }
 }
