@@ -86,6 +86,7 @@ const KIND_DEFS = {
   preview_sprite:        { label: 'Preview Sprite',        requirements: null },
   slice_sprite:          { label: 'Slice Sprite',          requirements: null },
   extend_sprite:         { label: 'Extend Sprite',         requirements: null },
+  validate_sprite:       { label: 'Validate Sprite',       requirements: null },
 
   // UI Canvas (uGUI) add-on — kinds are known here so the CLI + scheduler
   // treat them uniformly, but the bridge-side handlers only exist when

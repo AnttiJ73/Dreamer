@@ -9,6 +9,18 @@ tags, breaking changes bump the minor version (0.x.0), fixes bump patch.
 
 ## [Unreleased]
 
+### Added — Auto-validation on every sprite-sheet operation
+
+Each sprite-sheet command now runs eight sanity checks against the post-operation state and attaches a `validation: { ok, summary, count, warnings[] }` field to the result. Surfaces issues an LLM would otherwise discover by trial-and-error round-tripping through preview-sprite.
+
+- **error**: `out_of_bounds` (rect extends past texture), `duplicate_name` (ambiguous lookups).
+- **warn**: `empty_rect` (zero opaque pixels — stale after art deletion), `partially_clipped` (boundary cuts through opaque content — sprite extends past rect), `orphan_pixels` (opaque-pixel islands ≥64 pixels not inside any rect — content forgot to slice).
+- **info**: `overlap` (intentional for merge-bbox composites), `low_density` (<5% opaque), `tiny_rect` (<4px on a side).
+
+`validate-sprite --asset PATH` runs the same checks on demand for assets the agent didn't author. Auto-attached on `slice-sprite` / `extend-sprite` / `slice-sprite --mode merge` results.
+
+Bug fix incidental: `ApplySpriteRects` no longer throws on duplicate-named existing rects (now keeps the first spriteID seen and lets validation report the duplicate).
+
 ### Added — `extend-sprite` (sprite-sheet edit-without-breaking-references)
 
 Extends a sliced sheet without losing existing rect names or `spriteID`s — protects every prefab, animation, and Animator reference that depends on those names. Four-pass orphan recovery, applied in order of cost:

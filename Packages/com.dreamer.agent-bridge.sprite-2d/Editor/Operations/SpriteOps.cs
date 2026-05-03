@@ -362,12 +362,14 @@ namespace Dreamer.AgentBridge.Sprite2D
             dataProvider.Apply();
             (dataProvider.targetObject as AssetImporter)?.SaveAndReimport();
             CacheSpriteRects(assetPath);
+            var mergeValidation = SpriteValidation.Validate(assetPath);
 
             return CommandResult.Ok(SimpleJson.Object()
                 .Put("merged", true)
                 .Put("groupsApplied", mergesApplied)
                 .Put("totalRectsAfter", existing.Count)
                 .PutRaw("summary", summary.ToString())
+                .PutRaw("validation", SpriteValidation.BuildJson(mergeValidation).ToString())
                 .ToString());
         }
 
@@ -382,8 +384,11 @@ namespace Dreamer.AgentBridge.Sprite2D
             if (dataProvider == null) return CommandResult.Fail(dpErr);
 
             // Preserve spriteID for rects whose name matches an existing one — keeps prefab/anim references.
+            // Duplicate-named existing rects (validation will warn separately) keep the first ID seen.
             var existing = dataProvider.GetSpriteRects();
-            var existingByName = existing.ToDictionary(r => r.name, r => r.spriteID);
+            var existingByName = new Dictionary<string, GUID>();
+            foreach (var er in existing)
+                if (!existingByName.ContainsKey(er.name)) existingByName[er.name] = er.spriteID;
             foreach (var r in rects)
             {
                 if (existingByName.TryGetValue(r.name, out var id)) r.spriteID = id;
@@ -393,13 +398,29 @@ namespace Dreamer.AgentBridge.Sprite2D
             dataProvider.Apply();
             importer.SaveAndReimport();
             CacheSpriteRects(assetPath);
+            var validation = SpriteValidation.Validate(assetPath);
 
             return CommandResult.Ok(SimpleJson.Object()
                 .Put("sliced", true)
                 .Put("mode", mode)
                 .Put("rectsCreated", rects.Count)
                 .Put("flippedToMultipleMode", wasSingle)
+                .PutRaw("validation", SpriteValidation.BuildJson(validation).ToString())
                 .Put("hint", "Run `preview-sprite --asset <path>` to view the result with rect highlights.")
+                .ToString());
+        }
+
+        // ─── validate-sprite ──────────────────────────────────────────────
+
+        /// <summary>Run all sprite-sheet sanity checks (orphan pixels, partial clips, empty rects, overlaps, …) and return a structured warnings list. Read-only.</summary>
+        public static CommandResult ValidateSprite(Dictionary<string, object> args)
+        {
+            string assetPath = AssetOps.ResolveAssetPath(args);
+            if (assetPath == null)
+                return CommandResult.Fail("Provide 'assetPath' or 'guid'.");
+            var report = SpriteValidation.Validate(assetPath);
+            return CommandResult.Ok(SpriteValidation.BuildJson(report)
+                .Put("assetPath", assetPath)
                 .ToString());
         }
 
@@ -586,6 +607,7 @@ namespace Dreamer.AgentBridge.Sprite2D
             dataProvider.Apply();
             importer.SaveAndReimport();
             CacheSpriteRects(assetPath);
+            var extendValidation = SpriteValidation.Validate(assetPath);
 
             return CommandResult.Ok(SimpleJson.Object()
                 .Put("extended", true)
@@ -597,6 +619,7 @@ namespace Dreamer.AgentBridge.Sprite2D
                 .PutRaw("realignedDetails", BuildMoveListJson(realignedResult).ToString())
                 .PutRaw("addedRects", BuildRectListJson(added).ToString())
                 .PutRaw("orphanedRects", BuildRectListJson(orphaned).ToString())
+                .PutRaw("validation", SpriteValidation.BuildJson(extendValidation).ToString())
                 .Put("hint", orphaned.Count > 0
                     ? "Some existing rects had no IoU or template match — listed as orphaned but kept in place. Inspect via preview-sprite, then either delete (slice-sprite --mode rects with the survivors) or accept."
                     : "All existing rects accounted for. New rects (if any) appended; preview-sprite to verify.")
@@ -867,7 +890,7 @@ namespace Dreamer.AgentBridge.Sprite2D
             return arr;
         }
 
-        static ISpriteEditorDataProvider GetSpriteDataProvider(string assetPath, out string error)
+        internal static ISpriteEditorDataProvider GetSpriteDataProvider(string assetPath, out string error)
         {
             error = null;
             var factory = new SpriteDataProviderFactories();
@@ -884,7 +907,7 @@ namespace Dreamer.AgentBridge.Sprite2D
 
         // Round-trips through a RenderTexture so non-readable textures still work — the
         // alternative (toggling isReadable + reimport) mutates the asset's import settings.
-        static bool TryReadPixels(Texture2D source, out Color[] pixels, out int width, out int height, out string error)
+        internal static bool TryReadPixels(Texture2D source, out Color[] pixels, out int width, out int height, out string error)
         {
             pixels = null; width = 0; height = 0; error = null;
             width = source.width;
