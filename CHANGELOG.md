@@ -11,15 +11,17 @@ tags, breaking changes bump the minor version (0.x.0), fixes bump patch.
 
 ### Added — Sprite-sheet workflow (preview / slice / import settings)
 
-- **`preview-sprite --asset PATH [--sub-sprite NAME] [--save-to PATH]`** — render a sprite (or one named sub-sprite from a sliced sheet) to PNG. Default for Multiple-mode sheets: full texture with colored rect outlines per sub-sprite, plus a `sprites[]` array mapping color→name. Open the resulting PNG with the Read tool to inspect slicing visually.
-- **`slice-sprite --asset PATH --mode grid|auto|rects|merge [...]`** — author the spritesheet rects.
+- **NEW ADDON `com.dreamer.agent-bridge.sprite-2d`** — sprite-sheet authoring lives in its own package (mirroring the `ugui` and `animation` addons), so 3D-only projects don't compile sprite code or pull in `com.unity.2d.sprite`. Install via `./bin/dreamer addon install sprite-2d`.
+- **`preview-sprite --asset PATH [--sub-sprite NAME] [--save-to PATH]`** *(addon)* — render a sprite (or one named sub-sprite from a sliced sheet) to PNG. Default for Multiple-mode sheets: full texture with colored rect outlines per sub-sprite, plus a `sprites[]` array mapping color→name. Open the resulting PNG with the Read tool to inspect slicing visually.
+- **`slice-sprite --asset PATH --mode grid|auto|rects|merge [...]`** *(addon)* — author the spritesheet rects.
   - `grid --cell WxH [--padding x,y] [--offset x,y]`: regular tile slicing, skips fully-transparent cells.
   - `auto --min-size N`: connected-component scan via Unity's `InternalSpriteUtility.GenerateAutomaticSpriteRectangles`.
   - `rects --rects '[{name,x,y,w,h,...}]'`: explicit JSON.
   - `merge --groups '[{keep, absorb:[name1,name2,...]}]'`: combine existing rects into a union-bbox (for composite islands — e.g. character + shadow that auto-slice split apart).
   Auto-flips `spriteImportMode` to Multiple, preserves `spriteID` for name matches across re-slices (keeps prefab/animation references intact).
-- **`set-import-property --asset PATH --property NAME --value JSON`** — generic AssetImporter property setter (TextureImporter / ModelImporter / AudioImporter / etc.). Reflects on the importer subclass and auto-reimports. Closes the gap that `set-property` only reaches the runtime asset, not its importer. Common uses: `spritePixelsPerUnit`, `filterMode "Point"`, `textureType "Sprite"`, `isReadable true` (required before `slice-sprite --mode auto`).
-- Asmdef `versionDefines` gates the sprite ops on `com.unity.2d.sprite`; projects without that package get a clear "install com.unity.2d.sprite" error instead of TypeLoadExceptions.
+- **`set-import-property --asset PATH --property NAME --value JSON`** *(core)* — generic AssetImporter property setter (TextureImporter / ModelImporter / AudioImporter / etc.). Reflects on the importer subclass and auto-reimports. Closes the gap that `set-property` only reaches the runtime asset, not its importer. Common uses: `spritePixelsPerUnit`, `filterMode "Point"`, `textureType "Sprite"`, `isReadable true` (required before `slice-sprite --mode auto`). Stays in core because audio/model importers benefit too.
+- `dreamer addon list` / `addon install` now also lists `animation` and `sprite-2d` (animation was previously installable only via manual git-clone — fixed in passing).
+- Missing-addon hint expanded: trying `preview-sprite` / `slice-sprite` without the addon now returns "Run: ./bin/dreamer addon install sprite-2d", same pattern the ugui kinds already had.
 
 ### Added — Queue control + GameObject layer assignment
 

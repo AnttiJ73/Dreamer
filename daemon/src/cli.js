@@ -265,17 +265,23 @@ async function submitCommand(kind, args, flags = {}) {
           }, null, 2) + '\n');
           process.exit(1);
         }
-        // UGUI add-on missing — point at the install prompt vs the generic error.
-        if (current.state === 'failed'
-            && current.error
-            && /^Unknown command kind:\s*(create_ui_tree|inspect_ui_tree|set_rect_transform)/.test(current.error)) {
-          process.stderr.write(JSON.stringify({
-            error: current.error,
-            commandId: current.id,
-            kind: current.kind,
-            hint: 'The uGUI add-on (com.dreamer.agent-bridge.ugui) is not installed in this project. Ask the user to run: *"Install the Dreamer UGUI add-on"* to enable UI Canvas building commands.',
-          }, null, 2) + '\n');
-          process.exit(1);
+        // Add-on kind missing — point at the install prompt vs the generic error.
+        if (current.state === 'failed' && current.error
+            && /^Unknown command kind/.test(current.error)) {
+          const ADDON_HINT = {
+            ugui: { kinds: /^(create_ui_tree|inspect_ui_tree|set_rect_transform)$/, addonId: 'ugui', pkg: 'com.dreamer.agent-bridge.ugui' },
+            sprite2d: { kinds: /^(preview_sprite|slice_sprite)$/, addonId: 'sprite-2d', pkg: 'com.dreamer.agent-bridge.sprite-2d' },
+          };
+          const matchAddon = Object.values(ADDON_HINT).find(a => a.kinds.test(current.kind));
+          if (matchAddon) {
+            process.stderr.write(JSON.stringify({
+              error: current.error,
+              commandId: current.id,
+              kind: current.kind,
+              hint: `Add-on '${matchAddon.pkg}' is not installed. Run: ./bin/dreamer addon install ${matchAddon.addonId}`,
+            }, null, 2) + '\n');
+            process.exit(1);
+          }
         }
         out(current);
         return;
@@ -360,6 +366,9 @@ async function run(argv) {
         'set-particle-property (--scene-object PATH | --asset PATH [--child-path SUBPATH]) --property MODULE.FIELD --value JSON   (ParticleSystem module fields: main.startLifetime, emission.rateOverTime, shape.angle, …)',
         'shader-status [--asset PATH_OR_GUID]    (no arg = project-wide scan)',
         'inspect-shader (--asset PATH_OR_GUID | --shader "Shader/Name")',
+        '── Sprite 2D add-on (install com.dreamer.agent-bridge.sprite-2d separately; requires com.unity.2d.sprite) ──',
+        'preview-sprite --asset Assets/Sheet.png [--sub-sprite NAME] [--outline-thickness 2] [--save-to PATH]   (PNG: full sheet w/ rect outlines for sliced sheets, or one named sub-sprite)',
+        'slice-sprite --asset Assets/Sheet.png --mode grid|auto|rects|merge [--cell WxH] [--min-size N] [--rects JSON] [--groups JSON] [--name-prefix P] [--alignment NAME] [--pivot JSON]   (grid/auto/rects = author from scratch; merge = combine existing rects into a union-bbox)',
         '── uGUI add-on (install com.dreamer.agent-bridge.ugui separately) ──',
         'create-ui-tree --json JSON_OR_@file.json    (declarative tree: mode=create|append|replace-children|replace-self)',
         'inspect-ui-tree --target PATH [--depth N] [--include-raw true|false] [--include-rect true|false]',
@@ -426,8 +435,6 @@ async function run(argv) {
         'add-build-scene --scene PATH [--enabled false]   (append; updates enabled flag if already present)',
         'remove-build-scene --scene PATH',
         'screenshot-prefab --asset Assets/X.prefab [--width 512] [--height 512] [--angle iso|front|side|top|...] [--save-to PATH]   (renders to PNG; open with Read tool to view)',
-        'preview-sprite --asset Assets/Sheet.png [--sub-sprite NAME] [--outline-thickness 2] [--save-to PATH]   (PNG: full sheet w/ rect outlines for sliced sheets, or one named sub-sprite)',
-        'slice-sprite --asset Assets/Sheet.png --mode grid|auto|rects|merge [--cell WxH] [--min-size N] [--rects JSON] [--groups JSON] [--name-prefix P] [--alignment NAME] [--pivot JSON]   (grid/auto/rects = author from scratch; merge = combine existing rects into a union-bbox)',
         'set-import-property --asset Assets/X.png --property NAME --value JSON   (TextureImporter / ModelImporter / AudioImporter fields: spritePixelsPerUnit, filterMode, textureType, isReadable, …)',
         'screenshot-scene [--camera "Main Camera"|"/Path"] [--preset layout|normal|text] [--width N] [--height N] [--filter-mode point|bilinear|trilinear] [--background-color HEX] [--transparent] [--save-to PATH]   (renders any scene Camera to PNG; auto-flips overlay canvases)',
         'create-scene --name NAME [--path FOLDER] [--set-active]',
@@ -2214,6 +2221,18 @@ For any Canvas (uGUI) UI task — menus, HUDs, panels, buttons, scroll views —
 - Quirks reference: \`Packages/com.dreamer.agent-bridge.ugui/UNITY-LAYOUT-QUIRKS.md\`
 - Always pass \`--wait\` and check the result's \`warnings[]\`
 <!-- dreamer-addon:ugui:end -->`,
+          },
+          animation: {
+            description: 'Animation add-on — AnimationClip + AnimatorController authoring (curves, states, transitions, blend trees, masks, override controllers)',
+            paths: [
+              { src: 'Packages/com.dreamer.agent-bridge.animation', dst: 'Packages/com.dreamer.agent-bridge.animation', type: 'dir' },
+            ],
+          },
+          'sprite-2d': {
+            description: 'Sprite 2D add-on — preview-sprite (sheet visualization w/ rect outlines) + slice-sprite (grid/auto/rects/merge). Requires com.unity.2d.sprite.',
+            paths: [
+              { src: 'Packages/com.dreamer.agent-bridge.sprite-2d', dst: 'Packages/com.dreamer.agent-bridge.sprite-2d', type: 'dir' },
+            ],
           },
         };
 

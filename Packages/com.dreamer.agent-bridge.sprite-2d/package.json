@@ -1,0 +1,16 @@
+{
+  "name": "com.dreamer.agent-bridge.sprite-2d",
+  "version": "0.1.0",
+  "displayName": "Dreamer - Sprite 2D Add-on",
+  "description": "Optional sprite-sheet authoring add-on for the Dreamer agent bridge. Adds preview-sprite (full-sheet rect-outlined PNG + single sub-sprite extraction) and slice-sprite (grid / auto / explicit-rects / merge composite-island modes). Requires the Unity 2D Sprite package.",
+  "unity": "6000.0",
+  "dependencies": {
+    "com.dreamer.agent-bridge": "0.2.0",
+    "com.unity.2d.sprite": "1.0.0"
+  },
+  "keywords": ["agent", "automation", "ai", "bridge", "sprite", "2d"],
+  "author": {
+    "name": "Dreamer"
+  },
+  "type": "library"
+}

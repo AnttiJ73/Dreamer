@@ -4,15 +4,13 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using UnityEditor;
-using UnityEngine;
-#if DREAMER_SPRITE_PKG
 using UnityEditor.U2D.Sprites;
-#endif
+using UnityEngine;
+using Dreamer.AgentBridge;
 
-namespace Dreamer.AgentBridge
+namespace Dreamer.AgentBridge.Sprite2D
 {
-#if DREAMER_SPRITE_PKG
-    /// <summary>Preview + slice sprite-sheet textures. Pairs with ImporterOps for PPU/filterMode/textureType.</summary>
+    /// <summary>Preview + slice sprite-sheet textures. Pairs with core ImporterOps for PPU/filterMode/textureType.</summary>
     public static class SpriteOps
     {
         const string DefaultDir = "DreamerScreenshots";
@@ -643,13 +641,4 @@ namespace Dreamer.AgentBridge
             return Path.Combine(DefaultDir, $"{baseName}-{DateTime.UtcNow.Ticks}.png").Replace('\\', '/');
         }
     }
-#else
-    /// <summary>Stub: 2D Sprite package not installed. Handlers fail with an install hint.</summary>
-    public static class SpriteOps
-    {
-        const string Hint = "Install 'com.unity.2d.sprite' to enable preview-sprite + slice-sprite (Window > Package Manager > Unity Registry > 2D Sprite).";
-        public static CommandResult PreviewSprite(Dictionary<string, object> args) => CommandResult.Fail(Hint);
-        public static CommandResult SliceSprite(Dictionary<string, object> args)   => CommandResult.Fail(Hint);
-    }
-#endif
 }
