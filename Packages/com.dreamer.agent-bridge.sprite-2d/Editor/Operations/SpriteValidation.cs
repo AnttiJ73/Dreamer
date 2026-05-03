@@ -22,6 +22,9 @@ namespace Dreamer.AgentBridge.Sprite2D
             public string RectName;
             public Rect? Rect;
             public string Message;
+            public string SuggestedFix;     // plain-text "what to do" — null when no automatic fix is meaningful.
+            public Rect? SuggestedRect;     // pre-computed corrected bounds (when applicable).
+            public string SuggestedName;    // pre-computed name for new rects (orphan_pixels).
             public Dictionary<string, object> Detail;
         }
 
@@ -175,10 +178,19 @@ namespace Dreamer.AgentBridge.Sprite2D
                 }
                 else if ((float)opaque / total < LowDensityThreshold)
                 {
+                    Rect? tightBbox = ComputeOpaqueBbox(pixels, W, H, r.rect);
+                    string tightText = null;
+                    if (tightBbox.HasValue)
+                    {
+                        var t = tightBbox.Value;
+                        tightText = $"Tighten to ({(int)t.x},{(int)t.y},{(int)t.width}x{(int)t.height}) — opaque content fits inside that smaller box.";
+                    }
                     report.Warnings.Add(new Warning {
                         Kind = "low_density", Severity = "info",
                         RectName = r.name, Rect = r.rect,
-                        Message = $"'{r.name}' is {(100f * opaque / total):F1}% opaque — mostly empty bbox. The rect may be larger than the actual sprite content.",
+                        Message = $"'{r.name}' is {(100f * opaque / total):F1}% opaque — mostly empty bbox.",
+                        SuggestedFix = tightText,
+                        SuggestedRect = tightBbox,
                         Detail = new Dictionary<string, object> { ["opaqueRatio"] = (float)opaque / total },
                     });
                 }
@@ -196,16 +208,97 @@ namespace Dreamer.AgentBridge.Sprite2D
                 if (HasClipOnEdge(pixels, W, H, r.rect, "right"))  clipped.Add("right");
                 if (HasClipOnEdge(pixels, W, H, r.rect, "top"))    clipped.Add("top");
                 if (HasClipOnEdge(pixels, W, H, r.rect, "bottom")) clipped.Add("bottom");
-                if (clipped.Count > 0)
+                if (clipped.Count == 0) continue;
+
+                // Flood-fill from any inside-opaque pixel to find the true bounding box —
+                // ignoring rect boundaries so the flood crosses outside and reveals the
+                // sprite's actual extent. The bleed-only overlap can be ambiguous when two
+                // adjacent sprites touch, so we cap the flood at 4× the original rect area
+                // to avoid runaway when the artist's sprites are connected.
+                Rect? trueBounds = ComputeTrueBoundsFromClip(pixels, W, H, r.rect, maxAreaMultiplier: 4f);
+                string suggestedFixText;
+                if (trueBounds.HasValue)
                 {
-                    report.Warnings.Add(new Warning {
-                        Kind = "partially_clipped", Severity = "warn",
-                        RectName = r.name, Rect = r.rect,
-                        Message = $"'{r.name}' rect cuts through opaque content on edges: {string.Join(", ", clipped)}. The sprite may extend past the rect — widen via slice-sprite --mode rects.",
-                        Detail = new Dictionary<string, object> { ["edges"] = clipped },
-                    });
+                    var tb = trueBounds.Value;
+                    suggestedFixText = $"Widen to ({(int)tb.x},{(int)tb.y},{(int)tb.width}x{(int)tb.height}) — flood-fill found the sprite's full extent.";
+                }
+                else
+                {
+                    suggestedFixText = $"Widen on the {string.Join("+", clipped)} side(s) — true bbox ambiguous (flood reached adjacent sprites). Eyeball via preview-sprite.";
+                }
+
+                report.Warnings.Add(new Warning {
+                    Kind = "partially_clipped", Severity = "warn",
+                    RectName = r.name, Rect = r.rect,
+                    Message = $"'{r.name}' rect cuts through opaque content on edges: {string.Join(", ", clipped)}.",
+                    SuggestedFix = suggestedFixText,
+                    SuggestedRect = trueBounds,
+                    Detail = new Dictionary<string, object> { ["edges"] = clipped },
+                });
+            }
+        }
+
+        static Rect? ComputeOpaqueBbox(Color[] pixels, int W, int H, Rect rect)
+        {
+            int x0 = Mathf.Clamp((int)rect.x, 0, W);
+            int y0 = Mathf.Clamp((int)rect.y, 0, H);
+            int x1 = Mathf.Clamp((int)rect.xMax, 0, W);
+            int y1 = Mathf.Clamp((int)rect.yMax, 0, H);
+            int xMin = int.MaxValue, yMin = int.MaxValue, xMax = -1, yMax = -1;
+            for (int y = y0; y < y1; y++)
+            {
+                for (int x = x0; x < x1; x++)
+                {
+                    if (pixels[y * W + x].a > 0.5f)
+                    {
+                        if (x < xMin) xMin = x;
+                        if (x > xMax) xMax = x;
+                        if (y < yMin) yMin = y;
+                        if (y > yMax) yMax = y;
+                    }
                 }
             }
+            if (xMax < 0) return null;
+            return new Rect(xMin, yMin, xMax - xMin + 1, yMax - yMin + 1);
+        }
+
+        static Rect? ComputeTrueBoundsFromClip(Color[] pixels, int W, int H, Rect rect, float maxAreaMultiplier)
+        {
+            int seedX = -1, seedY = -1;
+            int x0 = Mathf.Clamp((int)rect.x, 0, W - 1);
+            int y0 = Mathf.Clamp((int)rect.y, 0, H - 1);
+            int x1 = Mathf.Clamp((int)rect.xMax - 1, 0, W - 1);
+            int y1 = Mathf.Clamp((int)rect.yMax - 1, 0, H - 1);
+            for (int y = y0; y <= y1 && seedX < 0; y++)
+                for (int x = x0; x <= x1; x++)
+                    if (pixels[y * W + x].a > 0.5f) { seedX = x; seedY = y; break; }
+            if (seedX < 0) return null;
+
+            int maxArea = (int)(rect.width * rect.height * maxAreaMultiplier);
+            int xMin = seedX, yMin = seedY, xMax = seedX, yMax = seedY, count = 0;
+            var visited = new bool[W * H];
+            var stack = new Stack<int>();
+            stack.Push(seedY * W + seedX);
+            while (stack.Count > 0)
+            {
+                int idx = stack.Pop();
+                if (visited[idx]) continue;
+                visited[idx] = true;
+                if (pixels[idx].a < 0.5f) continue;
+                count++;
+                if (count > maxArea) return null; // ambiguous — adjacent sprites connected
+                int x = idx % W;
+                int y = idx / W;
+                if (x < xMin) xMin = x;
+                if (x > xMax) xMax = x;
+                if (y < yMin) yMin = y;
+                if (y > yMax) yMax = y;
+                if (x > 0)     stack.Push(idx - 1);
+                if (x < W - 1) stack.Push(idx + 1);
+                if (y > 0)     stack.Push(idx - W);
+                if (y < H - 1) stack.Push(idx + W);
+            }
+            return new Rect(xMin, yMin, xMax - xMin + 1, yMax - yMin + 1);
         }
 
         static bool HasClipOnEdge(Color[] pixels, int W, int H, Rect r, string edge)
@@ -243,6 +336,8 @@ namespace Dreamer.AgentBridge.Sprite2D
             bool[] inAnyRect = new bool[W * H];
             foreach (var r in rects) IterateRect(r.rect, W, H, (x, y) => inAnyRect[y * W + x] = true);
 
+            string namePattern = DetectNamePattern(rects, out int nextIdx);
+            int orphanLocalIdx = 0;
             bool[] visited = new bool[W * H];
             for (int y = 0; y < H; y++)
             {
@@ -256,15 +351,45 @@ namespace Dreamer.AgentBridge.Sprite2D
                     var island = FloodFill(pixels, inAnyRect, visited, W, H, x, y);
                     if (island.PixelCount >= OrphanMinPixels)
                     {
+                        string suggestedName = namePattern != null
+                            ? $"{namePattern}_{nextIdx + orphanLocalIdx}"
+                            : $"Sprite_{orphanLocalIdx}";
+                        orphanLocalIdx++;
+
+                        var b = island.Bounds;
                         report.Warnings.Add(new Warning {
                             Kind = "orphan_pixels", Severity = "warn",
                             Rect = island.Bounds,
-                            Message = $"Uncovered art at {RectStr(island.Bounds)} ({island.PixelCount} opaque pixels) — content is outside every sprite rect. Consider slice-sprite --mode auto or extend-sprite to capture it.",
+                            Message = $"Uncovered art at {RectStr(island.Bounds)} ({island.PixelCount} opaque pixels) — content is outside every sprite rect.",
+                            SuggestedFix = $"Add rect ({(int)b.x},{(int)b.y},{(int)b.width}x{(int)b.height}) named '{suggestedName}'.",
+                            SuggestedRect = island.Bounds,
+                            SuggestedName = suggestedName,
                             Detail = new Dictionary<string, object> { ["pixelCount"] = island.PixelCount },
                         });
                     }
                 }
             }
+        }
+
+        // Detect "<prefix>_<N>" naming convention from existing rects to extend with the next index.
+        static string DetectNamePattern(SpriteRect[] rects, out int nextIdx)
+        {
+            nextIdx = 0;
+            var prefixCounts = new Dictionary<string, (int count, int maxIdx)>();
+            foreach (var r in rects)
+            {
+                if (r.name == null) continue;
+                int us = r.name.LastIndexOf('_');
+                if (us <= 0 || us == r.name.Length - 1) continue;
+                if (!int.TryParse(r.name.Substring(us + 1), out int n)) continue;
+                string prefix = r.name.Substring(0, us);
+                if (!prefixCounts.TryGetValue(prefix, out var c)) c = (0, -1);
+                prefixCounts[prefix] = (c.count + 1, Mathf.Max(c.maxIdx, n));
+            }
+            if (prefixCounts.Count == 0) return null;
+            var dominant = prefixCounts.OrderByDescending(kv => kv.Value.count).First();
+            nextIdx = dominant.Value.maxIdx + 1;
+            return dominant.Key;
         }
 
         struct Island { public Rect Bounds; public int PixelCount; }
@@ -348,6 +473,9 @@ namespace Dreamer.AgentBridge.Sprite2D
                     .Put("message", w.Message);
                 if (!string.IsNullOrEmpty(w.RectName)) obj.Put("rect", w.RectName);
                 if (w.Rect.HasValue) obj.Put("bounds", RectStr(w.Rect.Value));
+                if (!string.IsNullOrEmpty(w.SuggestedFix)) obj.Put("suggestedFix", w.SuggestedFix);
+                if (w.SuggestedRect.HasValue) obj.Put("suggestedRect", RectStr(w.SuggestedRect.Value));
+                if (!string.IsNullOrEmpty(w.SuggestedName)) obj.Put("suggestedName", w.SuggestedName);
                 if (w.Detail != null && w.Detail.Count > 0)
                 {
                     var d = SimpleJson.Object();

@@ -17,6 +17,11 @@ Each sprite-sheet command now runs eight sanity checks against the post-operatio
 - **warn**: `empty_rect` (zero opaque pixels — stale after art deletion), `partially_clipped` (boundary cuts through opaque content — sprite extends past rect), `orphan_pixels` (opaque-pixel islands ≥64 pixels not inside any rect — content forgot to slice).
 - **info**: `overlap` (intentional for merge-bbox composites), `low_density` (<5% opaque), `tiny_rect` (<4px on a side).
 
+For three kinds the validator pre-computes the fix so the LLM doesn't have to re-scan the pixels:
+- `partially_clipped`: flood-fills from inside-edge content to find the sprite's true bbox → emits `suggestedRect` + plain-text "Widen to …".
+- `low_density`: scans the rect for the opaque-pixel bbox → emits `suggestedRect` + "Tighten to …".
+- `orphan_pixels`: detects the dominant `<prefix>_<N>` naming pattern from existing rects, picks the next index → emits `suggestedRect` + `suggestedName` + "Add rect … named …".
+
 `validate-sprite --asset PATH` runs the same checks on demand for assets the agent didn't author. Auto-attached on `slice-sprite` / `extend-sprite` / `slice-sprite --mode merge` results.
 
 Bug fix incidental: `ApplySpriteRects` no longer throws on duplicate-named existing rects (now keeps the first spriteID seen and lets validation report the duplicate).

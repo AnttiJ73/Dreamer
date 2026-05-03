@@ -18,7 +18,7 @@ module.exports = {
       count: { type: 'integer' },
       warnings: {
         type: 'array',
-        description: 'Each: { kind, severity, message, rect?, bounds?, detail? }. Severities: error (out_of_bounds, duplicate_name) | warn (empty_rect, partially_clipped, orphan_pixels) | info (overlap, low_density, tiny_rect).',
+        description: 'Each: { kind, severity, message, rect?, bounds?, suggestedFix?, suggestedRect?, suggestedName?, detail? }. Severities: error (out_of_bounds, duplicate_name) | warn (empty_rect, partially_clipped, orphan_pixels) | info (overlap, low_density, tiny_rect). For partially_clipped / low_density / orphan_pixels the validator pre-computes a corrected rect (`suggestedRect`) and a plain-English `suggestedFix` so an LLM can apply the fix without scanning pixels itself.',
       },
     },
   },
