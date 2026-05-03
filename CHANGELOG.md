@@ -11,18 +11,20 @@ tags, breaking changes bump the minor version (0.x.0), fixes bump patch.
 
 ### Added — `extend-sprite` (sprite-sheet edit-without-breaking-references)
 
-Extends a sliced sheet without losing existing rect names or `spriteID`s — protects every prefab, animation, and Animator reference that depends on those names. Two-stage matching, applied automatically:
+Extends a sliced sheet without losing existing rect names or `spriteID`s — protects every prefab, animation, and Animator reference that depends on those names. Four-pass orphan recovery, applied in order of cost:
 
-- **Stage 1 (IoU):** auto-detects islands in the current sheet, IoU-matches them against existing rects. Handles "artist added new sprites in unused whitespace" — original rects keep their names, ID, alignment; positions snap to the candidate island's exact bounds.
-- **Stage 2 (template match):** for existing rects that didn't IoU-match, template-matches the cached pre-edit pixel content against current islands of similar size. Handles "artist resized the canvas / reorganized layout — original sprites moved to new pixel coordinates." Existing rect updated to new position; spriteID preserved.
+- **Pass A (IoU):** auto-detects islands in the current sheet, IoU-matches them against existing rects. Handles "artist added new sprites in unused whitespace" — original rects keep their names, ID, alignment; positions snap to the candidate island's exact bounds.
+- **Pass B (candidate-restricted template match):** for unmatched existing rects, pixel-matches the cached pre-edit content against current islands of similar size (±10%). Handles single-sprite relocations.
+- **Pass C (coherent-motion guess):** computes median (dx, dy) across all successful matches; for remaining orphans, tests `oldPos + medianDelta`. Catches sprites that don't fit the size band but moved with the rest of the sheet (e.g., merged-bbox composite rects that span multiple islands — the case where the previous candidate-restricted approach fell through).
+- **Pass D (brute-force scan):** for any still-unmatched orphan, slides the template across all positions with sample-pixel early-exit (~150k positions on a 1024×600 sheet, sub-second). Tie-breaks by proximity to the median-delta hint to avoid arbitrary picks on repetitive content (tilesets).
 - **Unmatched islands** appended as new rects with next-available index (`<prefix>_<N>`).
-- **Unmatched existing rects** reported as orphans (kept in place — agent decides).
+- **Still-unmatched existing rects** reported as orphans (kept in place — agent decides).
 
 Auto-cache: every successful slice / extend operation now writes per-rect PNGs to `Library/Dreamer/SpriteSlices/<assetGuid>/` keyed by `spriteID`. Invisible to the user, gitignored. This is what Stage 2 template-matches against. Cache rebuilds on the next slice/extend after a Library wipe.
 
-Verified end-to-end on the test fixture by simulating a 200-pixel canvas resize: all 17 sprites realigned with perfect 1.00 pixel-match score, names + spriteIDs preserved.
+Verified end-to-end on the test fixture by simulating a 200-pixel canvas resize WITH a merged-bbox rect (PostSplitTest spanning two islands): 15 sprites realigned via candidate template, 1 (the merged composite) realigned via coherent-motion at score 1.00, 0 orphans. Names + spriteIDs preserved across the resize.
 
-Limitations documented in the schema: redrawn sprites (changed pixels), sprites resized as well as relocated (>10% size change), and merged-bbox composite rects fall through as orphans. The agent visually inspects via `preview-sprite` and decides.
+Remaining limitations documented in the schema: sprites whose pixel content was actually redrawn fall through to orphan even with brute-force, since no position in the new sheet matches the cached pixels.
 
 ### Added — Sprite-sheet workflow (preview / slice / import settings)
 

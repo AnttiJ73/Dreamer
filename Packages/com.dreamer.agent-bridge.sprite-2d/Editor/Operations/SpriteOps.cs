@@ -472,27 +472,23 @@ namespace Dreamer.AgentBridge.Sprite2D
                 }
             }
 
-            // Template-match unmatched existing rects against cached snapshots → find where they moved.
             var realignedResult = new List<(SpriteRect rect, string oldPos, string newPos, string method)>();
             var orphaned = new List<SpriteRect>();
             string assetGuid = AssetDatabase.AssetPathToGUID(assetPath);
             string cacheDir = Path.Combine(CacheRoot, assetGuid);
             bool cacheAvailable = Directory.Exists(cacheDir);
 
-            if (TryReadPixels(texture, out Color[] curPixels, out int curW, out int curH, out _) && unmatched.Count > 0 && cacheAvailable)
+            // Recovery passes ordered cheapest → costliest: candidate-restricted template,
+            // then coherent-motion guess, then brute-force scan. Earlier passes consume rects
+            // before later ones run, so brute-force is invoked only for the hardest cases.
+            bool pixelsRead = TryReadPixels(texture, out Color[] curPixels, out int curW, out int curH, out _);
+            if (pixelsRead && unmatched.Count > 0 && cacheAvailable)
             {
+                var stillUnmatched = new List<SpriteRect>();
                 foreach (var ex in unmatched)
                 {
-                    string snapPath = Path.Combine(cacheDir, $"{ex.spriteID}.png");
-                    if (!File.Exists(snapPath)) { orphaned.Add(ex); continue; }
-
-                    byte[] snapBytes = File.ReadAllBytes(snapPath);
-                    var snapTex = new Texture2D(2, 2, TextureFormat.RGBA32, false);
-                    snapTex.LoadImage(snapBytes);
-                    Color[] tplPixels = snapTex.GetPixels();
-                    int tw = snapTex.width;
-                    int th = snapTex.height;
-                    UnityEngine.Object.DestroyImmediate(snapTex);
+                    if (!LoadCachedTemplate(cacheDir, ex.spriteID.ToString(), out Color[] tplPixels, out int tw, out int th))
+                    { stillUnmatched.Add(ex); continue; }
 
                     if (TryFindTemplate(curPixels, curW, curH, tplPixels, tw, th, candidates, consumed,
                                         matchThreshold, out int candIdx, out float score))
@@ -505,9 +501,63 @@ namespace Dreamer.AgentBridge.Sprite2D
                     }
                     else
                     {
-                        orphaned.Add(ex);
+                        stillUnmatched.Add(ex);
                     }
                 }
+
+                Vector2? medianDelta = ComputeMedianDelta(keptResult, realignedResult);
+                if (stillUnmatched.Count > 0 && medianDelta.HasValue)
+                {
+                    var afterMotion = new List<SpriteRect>();
+                    foreach (var ex in stillUnmatched)
+                    {
+                        if (!LoadCachedTemplate(cacheDir, ex.spriteID.ToString(), out Color[] tplPixels, out int tw, out int th))
+                        { afterMotion.Add(ex); continue; }
+                        int sx = (int)(ex.rect.x + medianDelta.Value.x);
+                        int sy = (int)(ex.rect.y + medianDelta.Value.y);
+                        float score = MatchScore(curPixels, curW, curH, sx, sy, tplPixels, tw, th);
+                        if (score >= matchThreshold)
+                        {
+                            var moved = ex;
+                            string oldPos = RectToString(ex.rect);
+                            moved.rect = new Rect(sx, sy, tw, th);
+                            realignedResult.Add((moved, oldPos, RectToString(moved.rect), $"motion:{score:F2}"));
+                        }
+                        else
+                        {
+                            afterMotion.Add(ex);
+                        }
+                    }
+                    stillUnmatched = afterMotion;
+                }
+
+                if (stillUnmatched.Count > 0)
+                {
+                    var afterBrute = new List<SpriteRect>();
+                    foreach (var ex in stillUnmatched)
+                    {
+                        if (!LoadCachedTemplate(cacheDir, ex.spriteID.ToString(), out Color[] tplPixels, out int tw, out int th))
+                        { afterBrute.Add(ex); continue; }
+                        var hint = medianDelta.HasValue
+                            ? new Vector2Int((int)(ex.rect.x + medianDelta.Value.x), (int)(ex.rect.y + medianDelta.Value.y))
+                            : new Vector2Int((int)ex.rect.x, (int)ex.rect.y);
+                        var found = BruteForceFind(curPixels, curW, curH, tplPixels, tw, th, matchThreshold, hint);
+                        if (found.HasValue)
+                        {
+                            var moved = ex;
+                            string oldPos = RectToString(ex.rect);
+                            moved.rect = found.Value.rect;
+                            realignedResult.Add((moved, oldPos, RectToString(moved.rect), $"brute:{found.Value.score:F2}"));
+                        }
+                        else
+                        {
+                            afterBrute.Add(ex);
+                        }
+                    }
+                    stillUnmatched = afterBrute;
+                }
+
+                orphaned.AddRange(stillUnmatched);
             }
             else
             {
@@ -684,6 +734,107 @@ namespace Dreamer.AgentBridge.Sprite2D
                 }
             }
             return (float)matches / total;
+        }
+
+        static bool LoadCachedTemplate(string cacheDir, string idKey, out Color[] pixels, out int width, out int height)
+        {
+            pixels = null; width = 0; height = 0;
+            string path = Path.Combine(cacheDir, $"{idKey}.png");
+            if (!File.Exists(path)) return false;
+            try
+            {
+                var tex = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+                tex.LoadImage(File.ReadAllBytes(path));
+                pixels = tex.GetPixels();
+                width = tex.width;
+                height = tex.height;
+                UnityEngine.Object.DestroyImmediate(tex);
+                return true;
+            }
+            catch { return false; }
+        }
+
+        // Median (dx, dy) across all successful matches. Median over mean is robust to a few
+        // outlier matches (e.g., a sprite that legitimately moved alone) — the rest of the
+        // sheet's coherent translate dominates.
+        static Vector2? ComputeMedianDelta(
+            List<(SpriteRect rect, string oldPos, string newPos, string method)> kept,
+            List<(SpriteRect rect, string oldPos, string newPos, string method)> realigned)
+        {
+            var dx = new List<float>();
+            var dy = new List<float>();
+            foreach (var k in kept)  AppendDelta(k.oldPos, k.rect.rect, dx, dy);
+            foreach (var r in realigned) AppendDelta(r.oldPos, r.rect.rect, dx, dy);
+            if (dx.Count < 2) return null;
+            dx.Sort(); dy.Sort();
+            return new Vector2(dx[dx.Count / 2], dy[dy.Count / 2]);
+        }
+
+        static void AppendDelta(string oldPosStr, Rect newRect, List<float> dx, List<float> dy)
+        {
+            // oldPosStr format: "(x,y,w,h)"
+            var s = oldPosStr.TrimStart('(').TrimEnd(')').Split(',');
+            if (s.Length < 2) return;
+            if (float.TryParse(s[0], out float ox) && float.TryParse(s[1], out float oy))
+            {
+                dx.Add(newRect.x - ox);
+                dy.Add(newRect.y - oy);
+            }
+        }
+
+        // step=2 sample-pixel early-exit keeps a 1024x600 sweep at ~150k positions sub-second;
+        // sample test rejects ~99% in <40 ops each before triggering the full MatchScore.
+        static (Rect rect, float score)? BruteForceFind(
+            Color[] sheet, int sheetW, int sheetH,
+            Color[] template, int tw, int th, float threshold, Vector2Int hint)
+        {
+            if (tw > sheetW || th > sheetH) return null;
+            const int sampleCount = 8;
+            const int step = 2;
+            const float eps = 0.05f;
+
+            var rng = new System.Random(42);
+            var sampleIdx = new int[sampleCount];
+            for (int i = 0; i < sampleCount; i++) sampleIdx[i] = rng.Next(0, tw * th);
+
+            var candidates = new List<(Rect rect, float score)>();
+            int maxY = sheetH - th;
+            int maxX = sheetW - tw;
+            for (int sy = 0; sy <= maxY; sy += step)
+            {
+                int rowBase = sy * sheetW;
+                for (int sx = 0; sx <= maxX; sx += step)
+                {
+                    int hits = 0;
+                    for (int i = 0; i < sampleCount; i++)
+                    {
+                        int idx = sampleIdx[i];
+                        int px = idx % tw;
+                        int py = idx / tw;
+                        Color a = sheet[(sy + py) * sheetW + (sx + px)];
+                        Color b = template[idx];
+                        if (Mathf.Abs(a.r - b.r) < eps && Mathf.Abs(a.g - b.g) < eps
+                            && Mathf.Abs(a.b - b.b) < eps && Mathf.Abs(a.a - b.a) < eps)
+                            hits++;
+                    }
+                    if (hits < (int)(sampleCount * 0.7f)) continue;
+                    float score = MatchScore(sheet, sheetW, sheetH, sx, sy, template, tw, th);
+                    if (score >= threshold) candidates.Add((new Rect(sx, sy, tw, th), score));
+                }
+            }
+            if (candidates.Count == 0) return null;
+
+            // Tie-break by proximity to hint when multiple candidates score above threshold —
+            // repeated content in tilesets would otherwise pick an arbitrary first hit.
+            candidates.Sort((a, b) =>
+            {
+                int s = b.score.CompareTo(a.score);
+                if (s != 0) return s;
+                float da = (a.rect.position - new Vector2(hint.x, hint.y)).sqrMagnitude;
+                float db = (b.rect.position - new Vector2(hint.x, hint.y)).sqrMagnitude;
+                return da.CompareTo(db);
+            });
+            return candidates[0];
         }
 
         static string RectToString(Rect r) => $"({r.x},{r.y},{r.width},{r.height})";

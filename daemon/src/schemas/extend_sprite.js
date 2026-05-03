@@ -68,10 +68,10 @@ module.exports = {
     },
   ],
   pitfalls: [
-    'Template-match cache is auto-populated by EVERY successful slice/extend operation. If the asset was sliced before this command shipped, run `slice-sprite --mode rects --rects \'<current rects>\' --wait` once to populate the cache, OR accept that the FIRST extend-sprite call after edits will only have IoU-matching available.',
+    'Template-match cache is auto-populated by EVERY successful slice/extend operation. If the asset was sliced before this command shipped, run extend-sprite once on the unchanged sheet to bootstrap the cache, THEN edit, THEN run extend-sprite again — otherwise the FIRST extend after edits has only IoU-matching available.',
     'Cache lives in `Library/Dreamer/SpriteSlices/<guid>/` — gitignored, lost when the user clears Library/. After a Library wipe, the next slice/extend op rebuilds it.',
-    'Template matching scans only auto-detected islands of similar size to the cached snapshot (±10% width/height). Sprites that were resized as well as relocated may fall out of the size band — increase tolerance is not currently exposed; consider running `slice-sprite --mode rects` manually if a redrawn-and-resized sprite needs preserved naming.',
-    'If the artist redrew sprite content (changed pixels), template matching will fail and that rect becomes orphaned. Orphans are kept in their old positions — agent should preview, identify, and either accept or re-slice manually.',
+    'Four-pass match: (A) IoU vs auto-islands, (B) template vs candidates of similar size ±10%, (C) coherent-motion guess at oldPos + median-delta, (D) brute-force scan with sample-pixel early-exit. Sprites that DON\'T match any of those become orphans — typical reason: artist redrew the pixels (template no longer matches anywhere).',
+    'Brute-force tie-breaks by proximity to the median-motion hint, so repetitive content (tilesets where dozens of cells look identical) tends to keep each rect closer to its old position rather than colliding on the first lexical match.',
     'Existing rect names follow `<prefix>_<index>` for new-rect generation. If existing names use a different scheme, new rects still get `<prefix>_<N>` numbering — set `--name-prefix` to control.',
     'Texture must be readable. Run `set-import-property --asset PATH --property isReadable --value true --wait` first.',
   ],
