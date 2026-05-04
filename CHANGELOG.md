@@ -9,6 +9,25 @@ tags, breaking changes bump the minor version (0.x.0), fixes bump patch.
 
 ## [Unreleased]
 
+### Changed — `dreamer search` now indexes per-kind topic keywords + a 4× larger synonym map
+
+The synonym map grew from 17 word-groups (~50 entries) to ~70 word-groups (~250 entries) — covers create / delete / inspect / find / move / save / play / compile / wire / animate / atlas / ui / physics families with symmetric cross-links. New per-kind `KIND_KEYWORDS` map attaches topic tags directly to the right kinds so a query lands name-tier:
+
+- `ppu` / `pixelsperunit` / `filtermode` / `isreadable` / `wrapmode` / `maxtexturesize` / `texturetype` → `set-import-property`
+- `atlas` / `spritesheet` / `tileset` / `tile` / `cell` / `islands` / `subsprite` → `slice-sprite`
+- `playmode` / `runtime` / `start_game` / `simulate` → `set-play-mode`
+- `hud` / `canvas` / `menu` / `panel` / `gui` / `button` → `create-ui-tree`
+- `controller` / `fsm` / `statemachine` → `create-animator-controller`
+- `blendtree` / `mix` → `add-animator-blend-tree`
+- `wire` / `connect` / `link` / `reference` / `assign` / `serialized` → `set-property`
+- `verify_shader` / `pink` / `gpu_error` → `shader-status`
+- `verify_compile` / `csharp` / `syntax` → `compile-status`
+- … plus animation / mask / icon / build-scene / sorting-layer / cursor topic tags.
+
+Verified end-to-end: `verify shader` → shader-status (was → validate-sprite); `find prefab` → find-assets (was → inspect-hierarchy); `playmode` / `run the game` / `exit playmode` → set-play-mode; `atlas slice` / `spritesheet` / `tile slicing` → slice-sprite; `tint material` → set-material-property; `extract prefab` → save-as-prefab; `kill object` / `destroy gameobject` → delete-gameobject; `fork asset` → duplicate. 8/8 prior-commit regression queries still pass — new keywords broaden coverage without disrupting precise hits.
+
+Conservative on truly ambiguous tokens — `set`, `key`, `type`, `value`, `name`, `tree`, `asset`, `go` deliberately have no synonym entry to avoid flooding multi-token queries.
+
 ### Added — `dreamer-sprite` skill + skill discovery routes through `search`
 
 - New auto-loading skill at `.claude/skills/dreamer-sprite/SKILL.md` covering the sprite-2d add-on (preview-sprite / slice-sprite / extend-sprite / validate-sprite / set-import-property). Documents the four authoring modes (`grid`, `auto`, `rects`, `merge`), the four-pass extend recovery (IoU → candidate template → coherent-motion → brute-force), the eight auto-validation checks with their `suggestedRect` / `suggestedName` / `suggestedFix` fields, and the `isReadable=true` prerequisite. Activates on mentions of sprite sheet, atlas, slicing, PPU, pixels per unit, filter mode, pivot, or composite sprite.

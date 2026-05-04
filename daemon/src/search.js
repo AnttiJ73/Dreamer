@@ -17,6 +17,132 @@ const VERB_ALIASES = {
   'reparent': 'reparent_gameobject',
 };
 
+// Per-kind topic keywords — folded into the `names` corpus alongside the kind name,
+// CLI verb, and verb aliases. These are tags an LLM is likely to type when looking
+// for a feature without remembering the canonical verb (e.g. "ppu" → set_import_property,
+// "atlas" → slice_sprite, "hud" → create_ui_tree, "playmode" → set_play_mode).
+//
+// Treated at name-tier in scoring (an exact keyword hit ranks like an exact name hit).
+// Synonym expansion still applies on top, so "atlases" → stem "atlas" → keyword hit.
+//
+// Add entries here when you notice an LLM consistently misses the right kind despite
+// schema text being unambiguous. Don't list synonyms for words already in the SYNONYMS
+// map — that's redundant.
+const KIND_KEYWORDS = {
+  // Discovery / status
+  console:                ['log', 'logs', 'debug', 'output', 'errors', 'warnings'],
+  compile_status:         ['compile', 'compiling', 'csharp', 'syntax', 'verify_compile', 'check_compile'],
+  shader_status:          ['pink', 'broken_shader', 'gpu_error', 'hlsl', 'verify_shader', 'check_shader'],
+  find_assets:            ['glob', 'query'],
+  inspect_asset:          ['examine', 'detail', 'look', 'describe'],
+  inspect_hierarchy:      ['scene_tree', 'gameobjects', 'scene_dump'],
+  read_property:          ['get', 'value', 'fetch'],
+
+  // Lifecycle
+  duplicate:              ['copy', 'clone', 'fork'],
+  rename_gameobject:      ['rename', 'relabel', 'name'],
+  reparent_gameobject:    ['move', 'reparent'],
+  delete_gameobject:      ['destroy', 'kill', 'drop'],
+  remove_missing_scripts: ['cleanup', 'orphan_scripts', 'missing_scripts'],
+  reimport_scripts:       ['force_import', 'fix_import', 'rescan'],
+
+  // Persistence
+  save_assets:            ['persist', 'write', 'commit', 'flush'],
+  refresh_assets:         ['reload', 'reimport', 'rescan', 'import'],
+  open_scene:             ['load_scene'],
+
+  // Wiring + property
+  set_property:           ['wire', 'connect', 'link', 'reference', 'assign', 'field', 'variable', 'serialized'],
+
+  // Components / scripts
+  create_script:          ['monobehaviour', 'cs', 'class', 'code', 'csharp'],
+  create_prefab:          ['blueprint'],
+  create_hierarchy:       ['nested', 'group', 'compound'],
+
+  // Sprite-2D
+  preview_sprite:         ['render', 'visualize', 'highlight', 'see'],
+  slice_sprite:           ['atlas', 'spritesheet', 'sheet', 'tileset', 'tile', 'cell', 'islands', 'subsprite'],
+  extend_sprite:          ['reslice', 're-slice', 'realign', 'preserve_id', 'spriteid', 'reference_safe'],
+  validate_sprite:        ['check', 'verify', 'sanity', 'orphan', 'invalid', 'broken'],
+  set_import_property:    ['ppu', 'pixelsperunit', 'filter', 'filtermode', 'mipmap', 'readable', 'isreadable', 'wrap', 'wrapmode', 'maxsize', 'maxtexturesize', 'texturetype'],
+
+  // Animation
+  create_animator_controller:           ['controller', 'fsm', 'statemachine', 'animator'],
+  add_animator_state:                   ['state'],
+  add_animator_transition:              ['transition', 'edge'],
+  add_animator_blend_tree:              ['blend', 'blendtree', 'mix'],
+  add_animator_layer:                   ['layer'],
+  add_animator_parameter:               ['param', 'parameter', 'animator_var'],
+  set_animator_default_state:           ['entry_state', 'initial_state'],
+  remove_animator_parameter:            ['delete_param'],
+  remove_animator_state:                ['delete_state'],
+  remove_animator_transition:           ['delete_transition'],
+  remove_animator_layer:                ['delete_layer'],
+  update_animator_state:                ['edit_state', 'modify_state'],
+  update_animator_transition:           ['edit_transition', 'modify_transition'],
+  set_animator_layer:                   ['layer_settings', 'iklayer'],
+  create_animation_clip:                ['clip', 'anim'],
+  set_animation_curve:                  ['curve', 'keyframe', 'tangent', 'tween', 'lerp', 'animate'],
+  sample_animation_curve:               ['sample', 'evaluate', 'numeric_curve', 'verify_curve'],
+  inspect_animation_clip:               ['curve_dump', 'clip_dump'],
+  delete_animation_curve:               ['drop_curve'],
+  set_sprite_curve:                     ['sprite_swap', 'frame_animation'],
+  delete_sprite_curve:                  ['drop_sprite_curve'],
+  set_animation_events:                 ['events', 'callbacks'],
+  create_avatar_mask:                   ['mask', 'humanoid'],
+  set_avatar_mask:                      ['mask_assign'],
+  inspect_avatar_mask:                  ['mask_dump'],
+  create_animator_override_controller:  ['override_controller', 'controller_variant'],
+  set_animator_override_clip:           ['override_clip', 'swap_clip'],
+  inspect_animator_override_controller: ['override_dump'],
+
+  // Screenshot
+  screenshot_scene:       ['render_scene', 'capture_scene', 'photo'],
+  screenshot_prefab:      ['render_prefab', 'thumbnail', 'preview_prefab'],
+
+  // Layers / tags
+  set_layer:              ['physics_layer', 'rendering_layer', 'layer_assign'],
+  set_layer_name:         ['name_layer', 'layer_label'],
+  set_layer_collision:    ['collision_matrix'],
+  add_tag:                ['tag', 'label'],
+  remove_tag:             ['untag'],
+  add_sorting_layer:      ['render_order', 'sprite_order', 'z_order', 'sorting'],
+  remove_sorting_layer:   ['delete_sorting'],
+
+  // Project / player settings
+  set_physics_gravity:    ['gravity'],
+  set_app_id:             ['bundle_id', 'package_name'],
+  set_default_icon:       ['app_icon', 'launcher_icon'],
+  set_app_icons:          ['platform_icons'],
+  set_cursor_icon:        ['cursor', 'mouse_icon'],
+  inspect_player_settings:['player_dump'],
+  inspect_project_setting:['project_dump'],
+  set_project_setting:    ['project_config'],
+  inspect_build_scenes:   ['build_dump'],
+  set_build_scenes:       ['scenes_in_build'],
+  add_build_scene:        ['add_to_build'],
+  remove_build_scene:     ['remove_from_build'],
+
+  // uGUI
+  create_ui_tree:         ['canvas', 'ui', 'menu', 'hud', 'panel', 'gui', 'button', 'screen'],
+  inspect_ui_tree:        ['canvas_dump', 'ui_dump'],
+  set_rect_transform:     ['anchor', 'pivot', 'recttransform', 'rect'],
+
+  // Materials / shaders / particles
+  set_material_property:  ['shader_property', 'mat_prop', 'tint'],
+  set_material_shader:    ['shader_swap', 'reassign_shader'],
+  inspect_material:       ['mat_dump'],
+  inspect_shader:         ['shader_dump'],
+  set_particle_property:  ['particles', 'fx', 'effect', 'emitter'],
+
+  // Play / runtime
+  set_play_mode:          ['play', 'run', 'simulate', 'runtime', 'editor_mode', 'playmode', 'start_game', 'stop'],
+
+  // Prefab variants
+  add_child_to_prefab:    ['nest', 'embed', 'add_subobject'],
+  save_as_prefab:         ['extract_prefab', 'convert_to_prefab'],
+};
+
 /** Build per-kind searchable corpus once per CLI invocation. */
 function buildCorpus() {
   const all = schemas.all();
@@ -29,7 +155,8 @@ function buildCorpus() {
   const corpus = [];
   for (const [kind, schema] of Object.entries(all)) {
     const cliVerb = kind.replace(/_/g, '-');
-    const names = [kind, cliVerb, ...(aliasByKind[kind] || [])];
+    const keywords = KIND_KEYWORDS[kind] || [];
+    const names = [kind, cliVerb, ...(aliasByKind[kind] || []), ...keywords];
     const examples = (schema.examples || [])
       .map(e => e.cli || '')
       .filter(Boolean);
@@ -75,55 +202,330 @@ function tokenize(text) {
   return String(text).toLowerCase().split(/[\s\-_,;:.()/\\]+/).filter(Boolean);
 }
 
-// Hand-curated synonym map for broad-pass matching. Keys + values are normalized
-// lowercase tokens; expansion is symmetric (copy↔duplicate↔clone). Kept conservative
-// to avoid false-positive noise — a token like "set" deliberately doesn't expand to
-// every modify-style verb because it'd flood results.
+// Hand-curated synonym map. Symmetric: a→[b] implies b→[a] elsewhere. Tokens are
+// normalized lowercase. Folded into both passes (precise + broad) — agents really
+// do say "copy" when they mean "duplicate" and "playmode" when they mean
+// `set_play_mode`. Conservative on truly ambiguous words: "set", "key", "type",
+// "value", "name", "tree", "asset", "go" deliberately have NO synonym entry — they
+// appear in too many contexts to expand without flooding results. Add entries here
+// when you see a recurring miss.
 const SYNONYMS = {
-  copy: ['duplicate', 'clone'],
-  duplicate: ['copy', 'clone'],
-  clone: ['copy', 'duplicate'],
-  remove: ['delete'],
-  delete: ['remove'],
-  edit: ['modify', 'update'],
-  modify: ['edit', 'update'],
-  update: ['edit', 'modify'],
-  show: ['inspect', 'preview', 'view'],
-  view: ['inspect', 'preview', 'show'],
-  preview: ['inspect', 'view', 'show', 'screenshot'],
-  inspect: ['show', 'preview', 'view', 'examine', 'read'],
-  examine: ['inspect'],
-  read: ['inspect', 'get'],
-  find: ['search', 'list'],
-  search: ['find'],
-  list: ['find', 'show'],
-  add: ['create', 'new'],
-  create: ['add', 'new', 'make'],
-  new: ['create', 'add'],
-  make: ['create'],
-  rename: ['name'],
-  move: ['reparent'],
-  parent: ['reparent'],
-  reparent: ['parent', 'move'],
-  picture: ['screenshot', 'image', 'preview'],
-  image: ['screenshot', 'preview', 'picture'],
-  screenshot: ['preview', 'image', 'picture', 'shot', 'capture'],
-  shot: ['screenshot'],
-  capture: ['screenshot'],
-  configure: ['config', 'set'],
-  config: ['configure'],
-  ppu: ['pixelsperunit'],
-  layer: ['sortinglayer'],
-  tag: ['tags'],
-  collide: ['collision'],
-  collision: ['collide'],
-  size: ['scale', 'resize', 'dimension'],
-  resize: ['size', 'scale'],
-  pivot: ['anchor'],
-  anchor: ['pivot'],
-  cut: ['slice', 'split'],
-  split: ['slice', 'cut'],
-  slice: ['cut', 'split'],
+  // create / add / build (avoid mapping "set" — too generic)
+  add:          ['create', 'new', 'make', 'insert', 'attach', 'append'],
+  create:       ['add', 'new', 'make', 'build', 'generate', 'instantiate'],
+  new:          ['create', 'add', 'make', 'fresh'],
+  fresh:        ['new'],
+  make:         ['create', 'add', 'build', 'generate'],
+  build:        ['create', 'make', 'generate'],
+  generate:     ['create', 'make', 'build'],
+  insert:       ['add', 'attach'],
+  attach:       ['add', 'insert', 'connect'],
+  append:       ['add'],
+  init:         ['initialize', 'setup', 'create'],
+  initialize:   ['init', 'setup', 'create'],
+  setup:        ['init', 'initialize', 'configure'],
+
+  // copy / duplicate / clone
+  copy:         ['duplicate', 'clone'],
+  duplicate:    ['copy', 'clone'],
+  clone:        ['copy', 'duplicate'],
+  fork:         ['duplicate', 'copy'],
+
+  // delete / destroy
+  delete:       ['remove', 'destroy', 'kill', 'drop', 'erase'],
+  remove:       ['delete', 'destroy', 'drop'],
+  destroy:      ['delete', 'remove', 'kill'],
+  kill:         ['delete', 'destroy', 'remove'],
+  erase:        ['delete', 'remove', 'clear'],
+  drop:         ['delete', 'remove'],
+  clear:        ['erase', 'reset', 'empty', 'delete'],
+  reset:        ['clear', 'restore'],
+  cleanup:      ['clear', 'remove'],
+
+  // edit / modify
+  edit:         ['modify', 'update', 'change'],
+  modify:       ['edit', 'update', 'change'],
+  update:       ['edit', 'modify', 'change', 'refresh'],
+  change:       ['edit', 'modify', 'update', 'swap', 'replace'],
+  swap:         ['replace', 'exchange', 'change'],
+  replace:      ['swap', 'override', 'exchange', 'change'],
+  override:     ['replace', 'overrides', 'swap'],
+  overrides:    ['override'],
+  exchange:     ['swap', 'replace'],
+  refresh:      ['update', 'reload', 'reimport', 'rescan'],
+  reload:       ['refresh', 'reimport'],
+  reimport:     ['refresh', 'reload', 'rescan'],
+  rescan:       ['refresh', 'reimport'],
+  configure:    ['config', 'setup'],
+  config:       ['configure', 'setup'],
+
+  // inspection
+  show:         ['inspect', 'preview', 'view', 'display'],
+  view:         ['inspect', 'preview', 'show', 'display'],
+  display:      ['show', 'view', 'render'],
+  preview:      ['inspect', 'view', 'show', 'screenshot', 'capture', 'render', 'snapshot', 'visualize'],
+  visualize:    ['preview', 'render', 'show', 'view'],
+  inspect:      ['show', 'preview', 'view', 'examine', 'read', 'look', 'check', 'detail'],
+  examine:      ['inspect', 'check'],
+  read:         ['inspect', 'get', 'fetch', 'load'],
+  get:          ['read', 'fetch', 'retrieve'],
+  fetch:        ['get', 'retrieve', 'read'],
+  retrieve:     ['get', 'fetch'],
+  look:         ['inspect', 'view'],
+  check:        ['inspect', 'validate', 'verify', 'examine'],
+  validate:     ['check', 'verify'],
+  verify:       ['check', 'validate', 'confirm'],
+  confirm:      ['verify', 'check'],
+  detail:       ['inspect', 'show'],
+  describe:     ['inspect', 'show'],
+
+  // search / list
+  find:         ['search', 'list', 'query', 'locate', 'lookup'],
+  search:       ['find', 'query', 'lookup'],
+  query:        ['find', 'search', 'lookup'],
+  locate:       ['find'],
+  lookup:       ['find', 'search', 'query'],
+  list:         ['find', 'show', 'enumerate'],
+  enumerate:    ['list'],
+
+  // spatial
+  move:         ['reparent', 'relocate', 'shift', 'translate'],
+  reparent:     ['parent', 'move', 'attach'],
+  parent:       ['reparent'],
+  relocate:     ['move', 'shift'],
+  shift:        ['move', 'translate', 'offset'],
+  offset:       ['shift', 'translate'],
+  translate:    ['move', 'shift'],
+  position:     ['place', 'locate'],
+  place:        ['position', 'instantiate'],
+  spawn:        ['instantiate', 'create', 'place'],
+  instantiate:  ['spawn', 'create', 'place', 'instance'],
+  instance:     ['instantiate'],
+  rename:       ['name', 'relabel'],
+  relabel:      ['rename', 'label'],
+
+  // visual / preview
+  picture:      ['screenshot', 'image', 'preview', 'photo'],
+  photo:        ['screenshot', 'picture', 'image'],
+  image:        ['screenshot', 'preview', 'picture', 'texture'],
+  screenshot:   ['preview', 'image', 'picture', 'shot', 'capture', 'render', 'snapshot'],
+  shot:         ['screenshot'],
+  capture:      ['screenshot', 'render', 'snapshot'],
+  render:       ['screenshot', 'draw', 'paint', 'capture', 'display'],
+  draw:         ['render', 'paint'],
+  paint:        ['render', 'draw'],
+  snapshot:     ['capture', 'screenshot', 'preview'],
+  thumbnail:    ['preview', 'screenshot', 'icon'],
+
+  // size
+  size:         ['scale', 'resize', 'dimension', 'dimensions'],
+  resize:       ['size', 'scale'],
+  scale:        ['size', 'resize'],
+  dimension:    ['size', 'dimensions'],
+  dimensions:   ['dimension', 'size'],
+
+  // sprite-sheet authoring
+  cut:          ['slice', 'split', 'divide'],
+  split:        ['slice', 'cut', 'divide'],
+  slice:        ['cut', 'split', 'divide', 'segment'],
+  divide:       ['slice', 'split', 'cut'],
+  segment:      ['slice', 'divide'],
+  atlas:        ['sheet', 'spritesheet'],
+  sheet:        ['atlas', 'spritesheet'],
+  spritesheet:  ['atlas', 'sheet'],
+  ppu:          ['pixelsperunit'],
+  pixelsperunit:['ppu'],
+  pivot:        ['anchor', 'origin'],
+  anchor:       ['pivot', 'origin'],
+  origin:       ['pivot', 'anchor'],
+  alpha:        ['opacity', 'transparency', 'transparent'],
+  opacity:      ['alpha', 'transparency'],
+  transparency: ['alpha', 'opacity', 'transparent'],
+  transparent:  ['alpha', 'opacity', 'transparency'],
+  texture:      ['tex', 'image'],
+  tex:          ['texture'],
+  filter:       ['filtermode'],
+  filtermode:   ['filter'],
+  readable:     ['isreadable'],
+  isreadable:   ['readable'],
+
+  // tags / labels
+  label:        ['tag', 'relabel'],
+  tag:          ['tags', 'label'],
+  tags:         ['tag'],
+
+  // layers
+  layer:        ['sortinglayer'],
+  sortinglayer: ['layer', 'sorting'],
+  sorting:      ['sortinglayer', 'order'],
+  order:        ['sorting'],
+
+  // collision / physics
+  collide:      ['collision'],
+  collision:    ['collide', 'physics'],
+  physics:      ['collision', 'gravity', 'rigidbody'],
+  rigidbody:    ['physics'],
+  gravity:      ['physics'],
+
+  // animation
+  anim:         ['animation', 'clip', 'animator'],
+  animation:    ['anim', 'clip', 'animator'],
+  animator:     ['anim', 'animation', 'controller'],
+  clip:         ['animation', 'anim'],
+  curve:        ['keyframe', 'tween'],
+  keyframe:     ['curve', 'keyframes'],
+  keyframes:    ['keyframe'],
+  tween:        ['curve', 'lerp', 'interpolate', 'animate'],
+  lerp:         ['tween', 'interpolate'],
+  interpolate:  ['lerp', 'tween'],
+  animate:      ['tween', 'animation'],
+  transition:   ['transitions'],
+  transitions:  ['transition'],
+  param:        ['parameter', 'parameters', 'params'],
+  parameter:    ['param', 'parameters'],
+  parameters:   ['parameter', 'param'],
+  params:       ['param', 'parameters'],
+  blend:        ['blendtree', 'mix'],
+  blendtree:    ['blend'],
+  mix:          ['blend'],
+  mask:         ['avatarmask'],
+  avatarmask:   ['mask'],
+  avatar:       ['humanoid'],
+  humanoid:     ['avatar'],
+  controller:   ['fsm', 'statemachine', 'animator'],
+  fsm:          ['controller', 'statemachine'],
+  statemachine: ['controller', 'fsm'],
+
+  // wire / reference
+  wire:         ['connect', 'link', 'reference', 'assign'],
+  connect:      ['wire', 'link', 'attach'],
+  link:         ['wire', 'connect', 'reference'],
+  reference:    ['link'],
+  assign:       ['wire'],
+  serialized:   ['property', 'field'],
+
+  // persistence
+  save:         ['persist', 'write', 'store', 'commit', 'flush'],
+  persist:      ['save', 'store'],
+  store:        ['save', 'persist'],
+  write:        ['save'],
+  flush:        ['save', 'persist'],
+  commit:       ['save'],
+  load:         ['open', 'import'],
+  open:         ['load'],
+  import:       ['load', 'refresh'],
+
+  // compile / errors
+  compile:      ['compiling', 'recompile'],
+  compiling:    ['compile'],
+  recompile:    ['compile', 'refresh'],
+  syntax:       ['compile'],
+  csharp:       ['cs'],
+  cs:           ['csharp', 'script', 'code'],
+  monobehaviour:['monobehavior', 'component', 'behavior', 'behaviour', 'script'],
+  monobehavior: ['monobehaviour', 'component'],
+  behavior:     ['behaviour', 'component', 'monobehaviour'],
+  behaviour:    ['behavior', 'component', 'monobehaviour'],
+  comp:         ['component'],
+  component:    ['comp', 'monobehaviour', 'behavior', 'behaviour'],
+  script:       ['scripts', 'code', 'cs'],
+  scripts:      ['script'],
+  code:         ['script', 'cs'],
+
+  // play / runtime
+  play:         ['run', 'simulate', 'playmode', 'runtime'],
+  run:          ['play', 'execute', 'simulate'],
+  simulate:     ['play', 'run'],
+  playmode:     ['play'],
+  runtime:      ['play'],
+  start:        ['play', 'begin'],
+  begin:        ['start'],
+  stop:         ['end', 'halt', 'exit'],
+  end:          ['stop', 'finish'],
+  halt:         ['stop'],
+  exit:         ['stop', 'quit'],
+  quit:         ['exit', 'stop'],
+  pause:        ['stop'],
+
+  // console / logs
+  console:      ['log', 'logs', 'output', 'debug'],
+  log:          ['console', 'logs', 'debug', 'output'],
+  logs:         ['log', 'console'],
+  debug:        ['log', 'console', 'output'],
+  output:       ['log', 'console'],
+  warn:         ['warning', 'warnings'],
+  warning:      ['warn', 'warnings'],
+  warnings:     ['warning', 'warn'],
+  error:        ['errors', 'exception'],
+  errors:       ['error'],
+  exception:    ['error', 'exceptions'],
+  exceptions:   ['exception'],
+
+  // material / shader
+  mat:          ['material'],
+  material:     ['mat'],
+  shader:       ['shaders'],
+  shaders:      ['shader'],
+
+  // hierarchy
+  hierarchy:    ['nested'],
+  nested:       ['hierarchy'],
+  child:        ['children', 'descendant'],
+  children:     ['child'],
+  descendant:   ['child'],
+
+  // properties / fields
+  field:        ['property', 'fields'],
+  property:     ['field', 'properties', 'prop', 'serialized'],
+  prop:         ['property'],
+  properties:   ['property', 'fields'],
+  fields:       ['field', 'properties'],
+  variable:     ['var', 'field'],
+  var:          ['variable'],
+  setting:      ['settings', 'config'],
+  settings:     ['setting', 'config'],
+
+  // particles / effects
+  particles:    ['particle', 'fx', 'effect'],
+  particle:     ['particles'],
+  fx:           ['effect', 'particles'],
+  effect:       ['fx', 'particles'],
+
+  // ui / canvas
+  ui:           ['gui', 'canvas'],
+  gui:          ['ui'],
+  hud:          ['ui', 'overlay'],
+  overlay:      ['hud', 'ui'],
+  menu:         ['ui'],
+  panel:        ['ui'],
+  canvas:       ['ui'],
+
+  // gameobject
+  gameobject:   ['gameobjects'],
+  gameobjects:  ['gameobject'],
+  prefab:       ['prefabs'],
+  prefabs:      ['prefab'],
+  scene:        ['level'],
+  level:        ['scene'],
+
+  // toggles
+  toggle:       ['enable', 'disable'],
+  enable:       ['toggle', 'on'],
+  disable:      ['toggle', 'off'],
+  on:           ['enable'],
+  off:          ['disable'],
+
+  // queue / cancel
+  queued:       ['pending', 'queue'],
+  pending:      ['queue', 'queued', 'waiting'],
+  waiting:      ['pending'],
+  cancel:       ['cancelled', 'abort'],
+  cancelled:    ['cancel'],
+  abort:        ['cancel', 'stop'],
+
+  // window / focus
+  focus:        ['foreground'],
+  foreground:   ['focus'],
 };
 
 function expandTokens(tokens) {
