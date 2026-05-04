@@ -19,13 +19,20 @@ function createCommandHandlers(queue, scheduler, unityState, assetWatcher) {
         // Most common cause: kind added to command.js but daemon still running
         // with stale in-memory definitions. Hint is verbose by design — debugging
         // without it took hours.
+        const { search } = require('../search');
+        const suggestions = search(body.kind, { limit: 5 }).results
+          .map(r => `${r.cliVerb} (${r.summary.slice(0, 80).trim()})`);
         return {
           status: 400,
           body: {
             error: `Unknown command kind: '${body.kind}'`,
             source: 'daemon',
+            suggestions: suggestions.length > 0 ? suggestions : undefined,
             hint:
               "Rejected by the daemon (kind not in KIND_DEFS). " +
+              (suggestions.length > 0
+                ? "Did you mean one of the kinds listed in `suggestions`? Run `./bin/dreamer help <kind>` for full schema. "
+                : "Run `./bin/dreamer search <keyword>` to find related commands. ") +
               "If you just added this kind to daemon/src/command.js, restart the daemon: " +
               "kill the PID in daemon/.dreamer-daemon.pid and re-run any `./bin/dreamer` command. " +
               "If the kind is from an add-on, that add-on must register the same kind in its " +

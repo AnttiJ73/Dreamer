@@ -9,6 +9,24 @@ tags, breaking changes bump the minor version (0.x.0), fixes bump patch.
 
 ## [Unreleased]
 
+### Added — `dreamer search` (default discovery interface)
+
+Schema-aware command discovery. Closes a real LLM failure mode: agents constructing names like `duplicate-asset`, `copy-prefab`, or `duplciate` (typo) would conclude the feature was missing when the actual verb is `duplicate`. Search across:
+
+- Verb names (kebab-case CLI form, snake-case kind, hand-curated aliases)
+- Schema summaries
+- Arg names + descriptions
+- Example CLI lines
+- Pitfall text
+
+Two-pass ranking: a precise pass with synonym + stem expansion (`copy↔duplicate`, `clone↔duplicate`, `remove↔delete`, `show↔inspect`, etc., plus `-s` / `-ed` / `-ing` stem stripping). If the precise pass returns fewer than 10 results, a broad pass kicks in with widened Levenshtein (≤3 vs ≤2), character-trigram similarity, and the zero-token-penalty disabled — "very loose" criteria so vague queries always surface ≥10 candidates when possible. Each result is tagged `pass: 'precise' | 'broad'` so the caller knows the confidence level.
+
+- **`dreamer search <query>`** — top-level discovery (`dreamer search "copy prefab"`, `dreamer search ppu`, `dreamer search "set ppu"`).
+- **`dreamer help <unknown>`** falls back to search instead of dumping the full kind list. `dreamer help duplicate-asset` now returns `duplicate` as top match with score + match reasons.
+- **Daemon-side `Unknown command kind` errors** now include a `suggestions[]` field with the top 5 fuzzy matches — the bridge surfaces these directly to the caller.
+
+Each result includes a `matchedOn[]` list so the LLM sees *why* something matched (`'copy'→'duplicate' name 'duplicate' exact`, `'prefab' summary word`, etc.) — match-reason transparency lets the LLM judge confidence without re-running.
+
 ### Added — Auto-validation on every sprite-sheet operation
 
 Each sprite-sheet command now runs eight sanity checks against the post-operation state and attaches a `validation: { ok, summary, count, warnings[] }` field to the result. Surfaces issues an LLM would otherwise discover by trial-and-error round-tripping through preview-sprite.

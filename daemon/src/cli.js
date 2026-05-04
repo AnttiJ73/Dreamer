@@ -452,6 +452,7 @@ async function run(argv) {
         'probe-port [--start PORT] [--count N]',
         'log tail [--n N] | log path',
         'help <kind>    (render arg schema for a command kind, if documented)',
+        'search <query>    (default discovery: fuzzy + substring across verb names, summaries, args, examples; e.g. `dreamer search "copy prefab"`, `dreamer search ppu`)',
       ],
       flags: [
         '--wait', '--wait-timeout MS', '--origin-task-id ID', '--label TEXT',
@@ -2440,10 +2441,29 @@ For any Canvas (uGUI) UI task — menus, HUDs, panels, buttons, scroll views —
           'rename': 'rename_gameobject',
           'reparent': 'reparent_gameobject',
         };
+        // 'help search <query>' subcommand short-circuits the kind lookup.
+        if (rawKind === 'search') {
+          const query = positional.slice(2).join(' ').trim();
+          if (!query) fail('Usage: dreamer help search <query>  (or: dreamer search <query>)');
+          const { search } = require('./search');
+          out(search(query, { limit: parseInt(flags.limit, 10) || 8 }));
+          break;
+        }
         const kind = VERB_ALIASES[rawKind] || rawKind.replace(/-/g, '_');
         const schema = schemas.get(kind);
         if (!schema) {
-          fail(`No schema for '${rawKind}'. Documented kinds: ${schemas.list().join(', ')}. Try \`dreamer help conventions\` for cross-cutting rules.`);
+          // Fall back to fuzzy search instead of dumping the full kind list — agents
+          // constructing names like `duplicate-asset` get suggestions instead of a flat error.
+          const { search } = require('./search');
+          const result = search(rawKind, { limit: 6 });
+          out({
+            error: `No exact schema for '${rawKind}'.`,
+            note: result.results.length > 0
+              ? `Did you mean one of these? Run \`./bin/dreamer help <kind>\` on a top match.`
+              : `No fuzzy matches either. Run \`./bin/dreamer help\` for the full list, or \`./bin/dreamer search <keyword>\`.`,
+            ...result,
+          }, /* exitCode */ result.results.length > 0 ? 0 : 1);
+          break;
         }
         // Inject conventions pointer so each schema needn't repeat the cross-ref.
         out({
@@ -2453,6 +2473,14 @@ For any Canvas (uGUI) UI task — menus, HUDs, panels, buttons, scroll views —
             './bin/dreamer help conventions  — universal flags, target forms, path syntax, value formats, play-mode gating, multi-agent rules, forbidden patterns',
           ],
         });
+        break;
+      }
+
+      case 'search': {
+        const query = positional.slice(1).join(' ').trim();
+        if (!query) fail('Usage: dreamer search <query>  (e.g. `dreamer search "duplicate prefab"`, `dreamer search ppu`).');
+        const { search } = require('./search');
+        out(search(query, { limit: parseInt(flags.limit, 10) || 8 }));
         break;
       }
 
