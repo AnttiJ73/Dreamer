@@ -2,10 +2,13 @@
 
 Flat lookup table. "I want to do X" → run command Y. For arg details and examples, run `./bin/dreamer help <kind>` (kind names listed in the right column).
 
+**Don't know the verb? Use `dreamer search <free-text>` first.** It indexes summaries, args, examples, and pitfalls across all kinds (core + add-ons), expands synonyms (copy↔duplicate, show↔inspect, cut↔slice, …), and falls back to a wider broad pass when precise matching returns <10 results. Faster + more reliable than scanning this table for a guessed name.
+
 ## Discovery
 
 | Task | Command | Kind |
 |---|---|---|
+| **Find a command by free-text description** (use FIRST when unsure) | `search "<query>"` | (CLI helper) |
 | Find assets matching a pattern | `find-assets --type prefab --name "Player*"` | `find_assets` |
 | Inspect a prefab (its components and children) | `inspect <path>` or `inspect --asset <path> --component <T>` | `inspect_asset` |
 | Inspect a child inside a prefab | `inspect --asset <path> --child-path <SUB>` | `inspect_asset` |
@@ -93,6 +96,25 @@ Flat lookup table. "I want to do X" → run command Y. For arg details and examp
 | Force-reimport every .cs in a folder | `reimport-scripts --path Assets/Scripts` | `reimport_scripts` |
 | Save a configured scene object as a NEW prefab | `save-as-prefab --scene-object <path> --path Assets/Prefabs --name X` | `save_as_prefab` |
 | Open an existing scene | `open-scene "Assets/Scenes/X.unity" [--mode single\|additive]` | `open_scene` |
+
+## Sprite-sheet authoring — `com.dreamer.agent-bridge.sprite-2d` add-on (see `dreamer-sprite` skill)
+
+| Task | Command | Kind |
+|---|---|---|
+| Visualize a sprite sheet (full sheet w/ outlined sub-sprites) | `preview-sprite --asset Assets/Sheet.png` | `preview_sprite` |
+| Visualize one named sub-sprite | `preview-sprite --asset Assets/Sheet.png --sub-sprite NAME` | `preview_sprite` |
+| Slice into a fixed grid | `slice-sprite --asset Assets/Sheet.png --mode grid --cell 32x32` | `slice_sprite` |
+| Auto-detect islands and slice | `slice-sprite --asset Assets/Sheet.png --mode auto --min-size 32` (needs `isReadable=true`) | `slice_sprite` |
+| Slice from explicit rect list | `slice-sprite --asset Assets/Sheet.png --mode rects --rects '[{"name":"Idle_0","x":0,"y":0,"w":32,"h":32},...]'` | `slice_sprite` |
+| Combine composite-island rects (non-destructive) | `slice-sprite --asset Assets/Sheet.png --mode merge --groups '[{"keep":"Player","absorb":["auto_3","auto_4"]}]'` | `slice_sprite` |
+| **Re-slice after artist edits, preserve spriteIDs + names** (use this instead of slice-sprite when sheet already has rects) | `extend-sprite --asset Assets/Sheet.png` | `extend_sprite` |
+| Run sanity checks on a sliced sheet | `validate-sprite --asset Assets/Sheet.png` | `validate_sprite` |
+| Set Pixels Per Unit | `set-import-property --asset Assets/Sheet.png --property spritePixelsPerUnit --value 16` | `set_import_property` |
+| Set filter mode (Point for pixel art) | `set-import-property --asset Assets/Sheet.png --property filterMode --value '"Point"'` | `set_import_property` |
+| Mark texture readable (required for auto-slice + extend) | `set-import-property --asset Assets/Sheet.png --property isReadable --value true` | `set_import_property` |
+| Switch a Default texture to Sprite type | `set-import-property --asset Assets/UI.png --property textureType --value '"Sprite"'` | `set_import_property` |
+
+Every successful slice/extend/merge attaches `validation.warnings[]` with pre-computed `suggestedRect` / `suggestedName` / `suggestedFix` for actionable issues — read the sprite-2d skill before authoring non-trivial sheets.
 
 ## Canvas (uGUI) work — see the `dreamer-ugui` skill
 

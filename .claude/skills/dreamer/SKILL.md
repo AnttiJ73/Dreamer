@@ -7,10 +7,29 @@ description: Automate Unity Editor operations — find, create, and modify prefa
 
 Project-local CLI: `./bin/dreamer <command>` from the Unity project root (POSIX/bash). On Windows cmd/PowerShell use `.\bin\dreamer <command>`. The daemon auto-starts on first invocation; Unity must have the Dreamer package loaded. Don't call a global `dreamer` — every Unity project has its own install.
 
+## Discovery — start here when you don't know the exact verb
+
+```bash
+./bin/dreamer search "<free-text query>"
+```
+
+`search` is the default discovery interface. Use it BEFORE guessing kebab-case names. It indexes every command's name, summary, args, examples, and pitfalls; expands synonyms (`copy↔duplicate↔clone`, `show↔inspect`, `cut↔slice`, `remove↔delete`, etc.); tolerates typos via Levenshtein + character trigrams; and falls back to a wider broad pass if precise matching returns fewer than 10 hits. Each result is tagged with `pass: precise|broad`, a `score`, and a `matchedOn[]` list explaining *why* it matched.
+
+```bash
+./bin/dreamer search "copy prefab"           # → duplicate (top match)
+./bin/dreamer search "modify component"      # → set-property, update-animator-state, ...
+./bin/dreamer search ppu                     # → set-import-property
+./bin/dreamer search "screenshot the scene"  # → screenshot-scene
+./bin/dreamer help duplicate-asset           # unknown kind → search fallback (returns ranked matches)
+```
+
+If `search` can't find a verb, the feature genuinely doesn't exist — surface the gap rather than reaching for the `execute_menu_item` / `execute_method` escape hatches. Don't conclude "no command for X" from `help` alone; always run `search` first.
+
 ## Cheat sheet
 
 ```bash
 # Discover
+./bin/dreamer search "<free-text>"          # fuzzy verb lookup — use FIRST when unsure
 ./bin/dreamer find-assets --type prefab --name "Player*"
 ./bin/dreamer inspect "Assets/Prefabs/Player.prefab" --wait
 ./bin/dreamer inspect-hierarchy --wait
@@ -46,15 +65,17 @@ Project-local CLI: `./bin/dreamer <command>` from the Unity project root (POSIX/
 ./bin/dreamer console --count 20
 ./bin/dreamer activity --since 2m       # multi-agent visibility — what other Claude sessions did recently
 
-# Discovery — every command has a structured arg schema and worked examples
-./bin/dreamer help                      # list ALL documented kinds (38 total)
+# Schema lookup — once you know the kind name
+./bin/dreamer help                      # list ALL documented kinds
 ./bin/dreamer help conventions          # cross-cutting rules: target forms, value formats, play-mode, multi-agent, forbidden patterns
 ./bin/dreamer help add_component        # full schema for one kind: args (with CLI flags), constraints, examples (CLI + JSON form)
 
-# Canvas UI — see dreamer-ugui skill (auto-loads when UI keywords appear)
+# Add-on UIs — auto-load when keywords appear
+#   Canvas UI    → dreamer-ugui skill
+#   Sprite sheets → dreamer-sprite skill
 ```
 
-**Authoritative discovery surface**: `./bin/dreamer help` covers all 38 commands with full schemas, CLI-flag annotations, copy-pastable examples, and per-kind pitfalls. Read `help conventions` once per session to internalize the cross-cutting rules (universal flags, target forms, value formats, **commonPitfalls**); then `help <kind>` per command. Don't memorize from this skill doc — when in doubt, query `help`.
+**Authoritative discovery surface**: `dreamer search <query>` for fuzzy lookup, `dreamer help <kind>` for full schema once you have a name. Both cover every command (core + installed add-ons) with CLI-flag annotations, copy-pastable examples, and per-kind pitfalls. Read `help conventions` once per session to internalize the cross-cutting rules (universal flags, target forms, value formats, **commonPitfalls**); then `search` / `help <kind>` per command. Don't memorize from this skill doc — when in doubt, query.
 
 **Reference companions** — load these only when you need their topic:
 - [tasks.md](tasks.md) — **flat task → command index** (one screen, no prose). Use this as the primary lookup when you know what you want to do but don't remember the command.
@@ -177,6 +198,15 @@ If `create-ui-tree` returns "Unknown command kind: create_ui_tree", the add-on i
 > To enable UI building commands, run: `./bin/dreamer addon install ugui`
 
 No UI commands ship in core Dreamer by design — the UGUI surface is large and only relevant for a subset of Unity work.
+
+## Sprite-sheet authoring (optional add-on)
+
+For 2D sprite-sheet work — slicing, composite-island merging, non-destructive re-slicing after artist edits, pixel-accurate validation, TextureImporter property tweaks (PPU, filterMode, isReadable, textureType) — DEFAULT to the `dreamer-sprite` skill (auto-loads when the task mentions sprites/atlas/PPU). Always prefer `extend-sprite` over `slice-sprite` when the sheet already has rects: it preserves `spriteID`s so prefab/animation references survive.
+
+If `slice-sprite` / `preview-sprite` / `extend-sprite` / `validate-sprite` returns "Unknown command kind: …", the add-on isn't installed. Tell the user:
+> To enable sprite-sheet tooling, run: `./bin/dreamer addon install sprite-2d`
+
+`set-import-property` (the generic AssetImporter setter — used here for `isReadable`, `spritePixelsPerUnit`, `filterMode`, `textureType`) ships in core and works regardless.
 
 ## Updating Dreamer
 

@@ -2144,6 +2144,17 @@ async function run(argv) {
             { src: '.claude/skills/dreamer-ugui', dst: '.claude/skills/dreamer-ugui', type: 'dir' },
           );
         }
+        if (installedAddons.includes('sprite-2d')) {
+          targets.push(
+            { src: 'Packages/com.dreamer.agent-bridge.sprite-2d', dst: 'Packages/com.dreamer.agent-bridge.sprite-2d', type: 'dir' },
+            { src: '.claude/skills/dreamer-sprite', dst: '.claude/skills/dreamer-sprite', type: 'dir' },
+          );
+        }
+        if (installedAddons.includes('animation')) {
+          targets.push(
+            { src: 'Packages/com.dreamer.agent-bridge.animation', dst: 'Packages/com.dreamer.agent-bridge.animation', type: 'dir' },
+          );
+        }
 
         const missing = targets.filter((t) => !t.optional && !fs.existsSync(path.join(cloneDir, t.src)));
         if (missing.length > 0) {
@@ -2259,10 +2270,20 @@ For any Canvas (uGUI) UI task — menus, HUDs, panels, buttons, scroll views —
             ],
           },
           'sprite-2d': {
-            description: 'Sprite 2D add-on — preview-sprite (sheet visualization w/ rect outlines) + slice-sprite (grid/auto/rects/merge). Requires com.unity.2d.sprite.',
+            description: 'Sprite-2D add-on — preview-sprite (sheet visualization w/ rect outlines), slice-sprite (grid/auto/rects/merge), extend-sprite (re-slice without losing spriteIDs), validate-sprite (8 sanity checks w/ pre-computed fixes). Requires com.unity.2d.sprite.',
             paths: [
               { src: 'Packages/com.dreamer.agent-bridge.sprite-2d', dst: 'Packages/com.dreamer.agent-bridge.sprite-2d', type: 'dir' },
+              { src: '.claude/skills/dreamer-sprite', dst: '.claude/skills/dreamer-sprite', type: 'dir' },
             ],
+            claudeMdSection: `<!-- dreamer-addon:sprite-2d:start -->
+## Dreamer Sprite-2D add-on
+
+For sprite-sheet authoring — slicing, composite-island merging, non-destructive re-slicing after artist edits, pixel-accurate validation, TextureImporter property tweaks (PPU, filterMode, isReadable) — **default to the sprite commands** (\`preview-sprite\`, \`slice-sprite\`, \`extend-sprite\`, \`validate-sprite\`, \`set-import-property\`). Don't hand-edit \`.meta\` YAML.
+
+- Skill: \`.claude/skills/dreamer-sprite/SKILL.md\` (auto-loads on sprite tasks)
+- Prefer \`extend-sprite\` over \`slice-sprite\` whenever the sheet already has rects — preserves \`spriteID\`s so prefab/animation references survive.
+- Always pass \`--wait\` and check the result's \`validation.warnings[]\` (pre-computed \`suggestedRect\` / \`suggestedName\` / \`suggestedFix\` for actionable issues).
+<!-- dreamer-addon:sprite-2d:end -->`,
           },
         };
 
@@ -2357,9 +2378,12 @@ For any Canvas (uGUI) UI task — menus, HUDs, panels, buttons, scroll views —
               claudeMdUpdated: !!KNOWN_ADDONS[name].claudeMdSection,
               nextSteps: [
                 'Unity will recompile the bridge package — wait until done.',
-                `Verify with: ./bin/dreamer ${name === 'ugui' ? 'create-ui-tree' : 'help'} (commands become available after recompile)`,
+                `Verify with: ./bin/dreamer ${name === 'ugui' ? 'create-ui-tree' : name === 'sprite-2d' ? 'preview-sprite --asset PATH' : 'help'} (commands become available after recompile)`,
                 name === 'ugui'
                   ? `Conventions doc: Packages/com.dreamer.agent-bridge.ugui/UI-DESIGN-CONVENTIONS.md (read before building non-trivial UI).`
+                  : null,
+                name === 'sprite-2d'
+                  ? `Skill: .claude/skills/dreamer-sprite/SKILL.md (auto-loads on sprite tasks). Prefer extend-sprite over slice-sprite when the sheet already has rects.`
                   : null,
               ].filter(Boolean),
             });

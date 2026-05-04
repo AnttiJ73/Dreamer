@@ -7,6 +7,8 @@ description: Build and edit Unity Canvas (uGUI) UIs via Dreamer's declarative tr
 
 Optional add-on. Adds three commands for declarative Canvas UI building. UI Toolkit (UXML) is a different system — not covered here; handle via direct file write + `refresh-assets`.
 
+If you forget the exact verb for any uGUI command, run `./bin/dreamer search "<query>"` (e.g. `search "build canvas"`, `search anchor`) — it covers add-on schemas alongside core commands.
+
 ## Commands
 
 | Command | Use for |

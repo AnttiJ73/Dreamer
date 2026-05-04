@@ -9,6 +9,13 @@ tags, breaking changes bump the minor version (0.x.0), fixes bump patch.
 
 ## [Unreleased]
 
+### Added — `dreamer-sprite` skill + skill discovery routes through `search`
+
+- New auto-loading skill at `.claude/skills/dreamer-sprite/SKILL.md` covering the sprite-2d add-on (preview-sprite / slice-sprite / extend-sprite / validate-sprite / set-import-property). Documents the four authoring modes (`grid`, `auto`, `rects`, `merge`), the four-pass extend recovery (IoU → candidate template → coherent-motion → brute-force), the eight auto-validation checks with their `suggestedRect` / `suggestedName` / `suggestedFix` fields, and the `isReadable=true` prerequisite. Activates on mentions of sprite sheet, atlas, slicing, PPU, pixels per unit, filter mode, pivot, or composite sprite.
+- `dreamer-sprite` and `dreamer-ugui` skills now ship as part of `./bin/dreamer addon install <name>` (mirrored to the project alongside the package), and are pulled by `./bin/dreamer update` whenever the corresponding add-on is installed. Add-on installs also stamp a CLAUDE.md section so future Claude sessions know the add-on exists without having to re-discover it.
+- The core `dreamer` skill now leads with **`./bin/dreamer search "<free-text>"`** as the default discovery interface — replaces the old "list all kinds via `help`" guidance. `tasks.md` gains a top-row `search` entry and a full Sprite-sheet authoring section. `dreamer-ugui` skill links to `search` for verb lookup.
+- Closes a documented LLM failure mode: search shipped a release ago but the skill files still told Claude to use `help`, so the new tool was effectively invisible to agents.
+
 ### Added — `dreamer search` (default discovery interface)
 
 Schema-aware command discovery. Closes a real LLM failure mode: agents constructing names like `duplicate-asset`, `copy-prefab`, or `duplciate` (typo) would conclude the feature was missing when the actual verb is `duplicate`. Search across:
