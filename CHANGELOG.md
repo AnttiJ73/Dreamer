@@ -9,6 +9,23 @@ tags, breaking changes bump the minor version (0.x.0), fixes bump patch.
 
 ## [Unreleased]
 
+### Added — `capture-particle` command + `dreamer-fx` add-on (visual VFX iteration)
+
+Closes the visual-feedback gap for particle iteration: an LLM editing `ParticleSystem` properties can now SEE how the effect looks at each timestamp instead of guessing. `capture-particle --asset FX.prefab` spawns the prefab into a sandboxed `PreviewRenderUtility` scene, runs `ParticleSystem.Simulate(t, fixedTimeStep=true, restart=true)` at N evenly-spaced timestamps (or explicit `--times "[0, 0.05, 0.5, 1.0]"`), and renders each tick to PNG. The user's active scene is untouched.
+
+```bash
+./bin/dreamer capture-particle --asset Assets/FX/Explosion.prefab --frames 5 --seed 42 --wait
+# Returns frames[].path → 5 PNGs, t=0..duration evenly. Read each to judge.
+```
+
+Iteration loop: `set-particle-property` → `capture-particle --seed 42` → Read PNGs → judge → repeat. The fixed seed makes diff-by-eye productive — re-capturing after a tweak shows ONLY what your edit changed, not random emission noise.
+
+- Two-pass camera framing: simulate at every sample time first to compute the union of `Renderer.bounds` across all frames, then position the camera so no frame's particles fall outside view (a frame where particles spread far doesn't push earlier frames offscreen).
+- Sub-emitter chains and trail Renderers are included in bounds and rendering.
+- `--frames N` (default 5, 1..60), `--duration SEC` (default = root system's `main.duration`, fallback 2.0s for loops), `--times "[…]"` for non-uniform sampling, `--angle front|iso|top|...`, `--size WxH` (up to 4096), `--bg "#RRGGBB"` or `--transparent`, `--seed N` for reproducible RNG.
+- Asset-only in Phase 1 (prefab path). Scene-object capture and VFX Graph (`UnityEngine.VFX.VisualEffect`) deferred to a future phase.
+- Ships as the new `com.dreamer.agent-bridge.fx` add-on. Install via `./bin/dreamer addon install fx`. New `dreamer-fx` skill auto-loads on particle / VFX tasks. Search keywords: particles, vfx, effect, explosion, spark, trail, burst, simulate.
+
 ### Fixed — Bridge timed out connecting to daemon on Windows (IPv4/IPv6 mismatch)
 
 Symptom: Unity Editor logged `[Dreamer] Background bridge error: The operation has timed out.` repeatedly. `./bin/dreamer status` reported the bridge as disconnected even though Unity was open and focused. Commands queued indefinitely with `waitingReason: "unity_disconnected"`. `netstat -an | findstr <port>` showed `0.0.0.0:<port> LISTENING` plus several `[::1]:NNNN -> [::1]:<port> SYN_SENT` lines that never advanced.

@@ -97,6 +97,18 @@ Flat lookup table. "I want to do X" → run command Y. For arg details and examp
 | Save a configured scene object as a NEW prefab | `save-as-prefab --scene-object <path> --path Assets/Prefabs --name X` | `save_as_prefab` |
 | Open an existing scene | `open-scene "Assets/Scenes/X.unity" [--mode single\|additive]` | `open_scene` |
 
+## Particle / VFX iteration — `com.dreamer.agent-bridge.fx` add-on (see `dreamer-fx` skill)
+
+| Task | Command | Kind |
+|---|---|---|
+| **Capture a particle effect at multiple timestamps** (so you can SEE it) | `capture-particle --asset Assets/FX/Explosion.prefab --frames 5 --seed 42` | `capture_particle` |
+| Tight burst-falloff sampling | `capture-particle --asset X.prefab --times "[0,0.05,0.15,0.5,1.5]" --seed 42` | `capture_particle` |
+| Fixed duration, looping system | `capture-particle --asset X.prefab --frames 8 --duration 3.0 --seed 42` | `capture_particle` |
+| Iso angle, transparent background for compositing | `capture-particle --asset X.prefab --angle iso --transparent` | `capture_particle` |
+| Edit a particle module field (loop: edit → capture → judge → repeat) | `set-particle-property --asset X.prefab --component ParticleSystem --property emission.rateOverTime --value 100` | `set_particle_property` |
+
+The capture-iterate loop assumes a fixed `--seed N` (any int) so re-captures of the same prefab produce pixel-identical RNG — critical for diff-by-eye. Always Read the returned `frames[].path` PNGs to actually see the effect.
+
 ## Sprite-sheet authoring — `com.dreamer.agent-bridge.sprite-2d` add-on (see `dreamer-sprite` skill)
 
 | Task | Command | Kind |

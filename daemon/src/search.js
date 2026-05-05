@@ -135,6 +135,9 @@ const KIND_KEYWORDS = {
   inspect_shader:         ['shader_dump'],
   set_particle_property:  ['particles', 'fx', 'effect', 'emitter'],
 
+  // FX add-on
+  capture_particle:       ['particles', 'fx', 'effect', 'preview_particles', 'render_particles', 'simulate', 'visualize_fx', 'particle_screenshot', 'vfx_iteration', 'burst', 'explosion', 'spark', 'trail'],
+
   // Play / runtime
   set_play_mode:          ['play', 'run', 'simulate', 'runtime', 'editor_mode', 'playmode', 'start_game', 'stop'],
 

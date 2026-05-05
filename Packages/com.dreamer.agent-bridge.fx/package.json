@@ -1,0 +1,15 @@
+{
+  "name": "com.dreamer.agent-bridge.fx",
+  "version": "0.1.0",
+  "displayName": "Dreamer - FX Add-on",
+  "description": "Optional VFX iteration add-on for the Dreamer agent bridge. Adds capture-particle (deterministic ParticleSystem.Simulate driven multi-frame screenshots so an LLM can see how the effect looks at each timestamp). Future: VFX Graph capture.",
+  "unity": "6000.0",
+  "dependencies": {
+    "com.dreamer.agent-bridge": "0.2.0"
+  },
+  "keywords": ["agent", "automation", "ai", "bridge", "particles", "vfx", "fx"],
+  "author": {
+    "name": "Dreamer"
+  },
+  "type": "library"
+}

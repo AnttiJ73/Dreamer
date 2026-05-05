@@ -199,6 +199,15 @@ If `create-ui-tree` returns "Unknown command kind: create_ui_tree", the add-on i
 
 No UI commands ship in core Dreamer by design — the UGUI surface is large and only relevant for a subset of Unity work.
 
+## Particle / VFX iteration (optional add-on)
+
+For ParticleSystem effects where you need to SEE the result — `capture-particle` simulates the effect deterministically at N timestamps and renders each tick to PNG, closing the visual feedback gap. DEFAULT to the `dreamer-fx` skill (auto-loads on particle / VFX tasks). Iteration loop: `set-particle-property` → `capture-particle --seed 42` → Read PNGs → repeat.
+
+If `capture-particle` returns "Unknown command kind: capture_particle", the add-on isn't installed. Tell the user:
+> To enable particle capture, run: `./bin/dreamer addon install fx`
+
+`set-particle-property` (the module-field editor) ships in core and works regardless — but it's blind without the capture command.
+
 ## Sprite-sheet authoring (optional add-on)
 
 For 2D sprite-sheet work — slicing, composite-island merging, non-destructive re-slicing after artist edits, pixel-accurate validation, TextureImporter property tweaks (PPU, filterMode, isReadable, textureType) — DEFAULT to the `dreamer-sprite` skill (auto-loads when the task mentions sprites/atlas/PPU). Always prefer `extend-sprite` over `slice-sprite` when the sheet already has rects: it preserves `spriteID`s so prefab/animation references survive.

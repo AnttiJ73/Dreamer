@@ -1874,6 +1874,33 @@ async function run(argv) {
         break;
       }
 
+      case 'capture-particle': {
+        const target = flags.asset || positional[1];
+        if (!target) fail('Usage: dreamer capture-particle --asset Assets/FX/Explosion.prefab [--frames 5] [--duration 2.0] [--times "[0.1,0.5,1.0]"] [--size 512x512] [--angle front|iso|top|...] [--bg "#000000"] [--seed N] [--transparent]');
+        const isGuidCP = /^[0-9a-f]{32}$/i.test(target);
+        const cpArgs = isGuidCP ? { guid: target } : { assetPath: target };
+        if (flags.frames !== undefined) cpArgs.frames = parseInt(flags.frames, 10);
+        if (flags.duration !== undefined) cpArgs.duration = parseFloat(flags.duration);
+        if (flags.times) {
+          try { cpArgs.times = JSON.parse(flags.times); }
+          catch (e) { fail(`--times must be a JSON array of numbers: ${e.message}`); }
+        }
+        if (flags.size) {
+          const m = String(flags.size).match(/^(\d+)x(\d+)$/i);
+          if (!m) fail('--size must be WIDTHxHEIGHT (e.g. 512x512)');
+          cpArgs.width = parseInt(m[1], 10);
+          cpArgs.height = parseInt(m[2], 10);
+        }
+        if (flags.width !== undefined) cpArgs.width = parseInt(flags.width, 10);
+        if (flags.height !== undefined) cpArgs.height = parseInt(flags.height, 10);
+        if (flags.angle) cpArgs.angle = String(flags.angle);
+        if (flags.bg) cpArgs.backgroundColor = String(flags.bg);
+        if (flags.transparent === true || flags.transparent === 'true') cpArgs.transparent = true;
+        if (flags.seed !== undefined) cpArgs.seed = parseInt(flags.seed, 10);
+        await submitCommand('capture_particle', cpArgs, flags);
+        break;
+      }
+
       case 'preview-sprite': {
         const target = flags.asset || positional[1];
         if (!target) fail('Usage: dreamer preview-sprite --asset Assets/Sheet.png [--sub-sprite NAME] [--outline-thickness 2] [--save-to PATH]');
@@ -2155,6 +2182,12 @@ async function run(argv) {
             { src: 'Packages/com.dreamer.agent-bridge.animation', dst: 'Packages/com.dreamer.agent-bridge.animation', type: 'dir' },
           );
         }
+        if (installedAddons.includes('fx')) {
+          targets.push(
+            { src: 'Packages/com.dreamer.agent-bridge.fx', dst: 'Packages/com.dreamer.agent-bridge.fx', type: 'dir' },
+            { src: '.claude/skills/dreamer-fx', dst: '.claude/skills/dreamer-fx', type: 'dir' },
+          );
+        }
 
         const missing = targets.filter((t) => !t.optional && !fs.existsSync(path.join(cloneDir, t.src)));
         if (missing.length > 0) {
@@ -2268,6 +2301,23 @@ For any Canvas (uGUI) UI task — menus, HUDs, panels, buttons, scroll views —
             paths: [
               { src: 'Packages/com.dreamer.agent-bridge.animation', dst: 'Packages/com.dreamer.agent-bridge.animation', type: 'dir' },
             ],
+          },
+          fx: {
+            description: 'FX add-on — capture-particle (deterministic ParticleSystem.Simulate-driven multi-frame screenshots so an LLM can SEE how the effect looks at t=0, t=0.5s, t=1.0s, …). Asset-only Phase 1; planned: VFX Graph capture, scene-object capture.',
+            paths: [
+              { src: 'Packages/com.dreamer.agent-bridge.fx', dst: 'Packages/com.dreamer.agent-bridge.fx', type: 'dir' },
+              { src: '.claude/skills/dreamer-fx', dst: '.claude/skills/dreamer-fx', type: 'dir' },
+            ],
+            claudeMdSection: `<!-- dreamer-addon:fx:start -->
+## Dreamer FX add-on
+
+For particle-system iteration where you need to SEE the effect — \`capture-particle\` spawns the prefab into a sandboxed preview scene, runs \`ParticleSystem.Simulate(t)\` deterministically at N timestamps, and renders each tick to PNG. Pair with \`set-particle-property\` to tweak module fields, then re-capture to compare.
+
+- Skill: \`.claude/skills/dreamer-fx/SKILL.md\` (auto-loads on particle / VFX tasks)
+- Asset-only (Phase 1) — instantiates into a PreviewRenderUtility scene; user's active scene is untouched.
+- Always pass \`--wait\` and read the returned \`frames[].path\` PNGs back with the Read tool to judge the effect.
+- Use \`--seed N\` for pixel-identical captures across edits (otherwise random emission diff drowns out the change you actually made).
+<!-- dreamer-addon:fx:end -->`,
           },
           'sprite-2d': {
             description: 'Sprite-2D add-on — preview-sprite (sheet visualization w/ rect outlines), slice-sprite (grid/auto/rects/merge), extend-sprite (re-slice without losing spriteIDs), validate-sprite (8 sanity checks w/ pre-computed fixes). Requires com.unity.2d.sprite.',
@@ -2384,6 +2434,9 @@ For sprite-sheet authoring — slicing, composite-island merging, non-destructiv
                   : null,
                 name === 'sprite-2d'
                   ? `Skill: .claude/skills/dreamer-sprite/SKILL.md (auto-loads on sprite tasks). Prefer extend-sprite over slice-sprite when the sheet already has rects.`
+                  : null,
+                name === 'fx'
+                  ? `Skill: .claude/skills/dreamer-fx/SKILL.md (auto-loads on particle / VFX tasks). Iteration loop: set-particle-property → capture-particle → read PNGs → repeat.`
                   : null,
               ].filter(Boolean),
             });
