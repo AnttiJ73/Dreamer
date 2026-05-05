@@ -175,71 +175,139 @@ namespace Dreamer.AgentBridge.FX
                 pru.camera.transform.position = bounds.center + dirLocal.normalized * distance * 1.4f;
                 pru.camera.transform.LookAt(bounds.center);
 
-                // Pass B: capture each frame.
+                // Pass B: capture each frame into memory, compose into a grid.
                 EnsureScreenshotDir();
                 string assetGuid = AssetDatabase.AssetPathToGUID(assetPath);
                 string stem = Path.GetFileNameWithoutExtension(assetPath);
                 long ticks = DateTime.UtcNow.Ticks;
+                bool individualFrames = SimpleJson.GetBool(args, "individualFrames", false);
 
+                var rendered = new Texture2D[frameTimes.Count];
                 var framesJson = SimpleJson.Array();
-                long totalBytes = 0;
-                foreach (var t in frameTimes)
+                long individualBytes = 0;
+
+                // Grid layout: prefer wider-than-tall (most monitors are landscape).
+                int n = frameTimes.Count;
+                int cols = Mathf.Max(1, (int)Mathf.Ceil(Mathf.Sqrt(n)));
+                if (n == 5) cols = 3;          // 3×2 reads better than 3×2/2×3 ambiguity
+                if (n == 7 || n == 8) cols = 4; // 4×2 wider than 3×3
+                if (n == 10) cols = 5;          // 5×2 explicit per user request
+                int rows = Mathf.CeilToInt(n / (float)cols);
+
+                try
                 {
-                    SimulateAll(roots, t);
-
-                    var rt = RenderTexture.GetTemporary(width, height, 24, RenderTextureFormat.ARGB32);
-                    rt.Create();
-                    var prevTarget = pru.camera.targetTexture;
-                    var prevActive = RenderTexture.active;
-                    Texture2D rendered = null;
-                    try
+                    for (int i = 0; i < n; i++)
                     {
-                        pru.camera.targetTexture = rt;
-                        RenderTexture.active = rt;
-                        GL.Clear(true, true, background);
-                        pru.camera.Render();
-                        rendered = new Texture2D(width, height, TextureFormat.RGBA32, mipChain: false);
-                        rendered.ReadPixels(new Rect(0, 0, width, height), 0, 0);
-                        rendered.Apply();
+                        float t = frameTimes[i];
+                        SimulateAll(roots, t);
+
+                        var rt = RenderTexture.GetTemporary(width, height, 24, RenderTextureFormat.ARGB32);
+                        rt.Create();
+                        var prevTarget = pru.camera.targetTexture;
+                        var prevActive = RenderTexture.active;
+                        try
+                        {
+                            pru.camera.targetTexture = rt;
+                            RenderTexture.active = rt;
+                            GL.Clear(true, true, background);
+                            pru.camera.Render();
+                            rendered[i] = new Texture2D(width, height, TextureFormat.RGBA32, mipChain: false);
+                            rendered[i].ReadPixels(new Rect(0, 0, width, height), 0, 0);
+                            rendered[i].Apply();
+                        }
+                        finally
+                        {
+                            RenderTexture.active = prevActive;
+                            pru.camera.targetTexture = prevTarget;
+                            RenderTexture.ReleaseTemporary(rt);
+                        }
+                        if (rendered[i] == null)
+                            return CommandResult.Fail("Render returned null. Likely cause: graphics device unavailable (headless/batch without -nographics workaround), or Unity is unfocused on a platform that throttles render.");
+
+                        int row = i / cols;
+                        int col = i % cols;
+
+                        var frameJson = SimpleJson.Object()
+                            .Put("time", t)
+                            .Put("row", row)
+                            .Put("col", col);
+
+                        if (individualFrames)
+                        {
+                            byte[] frPng = rendered[i].EncodeToPNG();
+                            int msec = Mathf.RoundToInt(t * 1000f);
+                            string framePath = Path.Combine(DefaultDir, $"particle-{stem}-{assetGuid.Substring(0, 8)}-{ticks}-t{msec:D5}.png").Replace('\\', '/');
+                            File.WriteAllBytes(framePath, frPng);
+                            individualBytes += frPng.Length;
+                            frameJson.Put("path", framePath).Put("byteCount", frPng.Length);
+                        }
+                        framesJson.AddRaw(frameJson.ToString());
                     }
-                    finally
+
+                    // Compose grid: cell = (width × height), label strip above each cell with t=Xs.
+                    int labelHeight = 22;       // px above each cell for the timestamp label
+                    int gutter = 4;             // px between cells
+                    int cellW = width;
+                    int cellH = height + labelHeight;
+                    int gridW = cols * cellW + (cols + 1) * gutter;
+                    int gridH = rows * cellH + (rows + 1) * gutter;
+
+                    var grid = new Texture2D(gridW, gridH, TextureFormat.RGBA32, mipChain: false);
+                    var bg = new Color(0.08f, 0.08f, 0.10f, 1f);
+                    var fill = new Color[gridW * gridH];
+                    for (int p = 0; p < fill.Length; p++) fill[p] = bg;
+                    grid.SetPixels(fill);
+
+                    for (int i = 0; i < n; i++)
                     {
-                        RenderTexture.active = prevActive;
-                        pru.camera.targetTexture = prevTarget;
-                        RenderTexture.ReleaseTemporary(rt);
+                        int row = i / cols;
+                        int col = i % cols;
+                        int cellX = gutter + col * (cellW + gutter);
+                        // Y axis: Texture2D has bottom-left origin. Our grid is read top-to-bottom, so row 0 is the TOP.
+                        int cellYTop = gridH - (gutter + row * (cellH + gutter));    // top of cell strip
+                        int frameYBottom = cellYTop - cellH;                          // bottom of frame area
+                        // Paste the rendered frame.
+                        var px = rendered[i].GetPixels();
+                        grid.SetPixels(cellX, frameYBottom, width, height, px);
+
+                        // Label strip just above the frame ("t=X.XXs"). White text on dark bg.
+                        int labelY = frameYBottom + height;
+                        DrawLabelStrip(grid, cellX, labelY, cellW, labelHeight, $"t={frameTimes[i]:F2}s");
                     }
-                    if (rendered == null)
-                        return CommandResult.Fail("Render returned null. Likely cause: graphics device unavailable (headless/batch without -nographics workaround), or Unity is unfocused on a platform that throttles render.");
+                    grid.Apply();
 
-                    byte[] png = rendered.EncodeToPNG();
-                    UnityEngine.Object.DestroyImmediate(rendered);
+                    byte[] gridPng = grid.EncodeToPNG();
+                    UnityEngine.Object.DestroyImmediate(grid);
+                    string gridPath = Path.Combine(DefaultDir, $"particle-{stem}-{assetGuid.Substring(0, 8)}-{ticks}-grid.png").Replace('\\', '/');
+                    File.WriteAllBytes(gridPath, gridPng);
 
-                    int msec = Mathf.RoundToInt(t * 1000f);
-                    string savePath = Path.Combine(DefaultDir, $"particle-{stem}-{assetGuid.Substring(0, 8)}-{ticks}-t{msec:D5}.png").Replace('\\', '/');
-                    File.WriteAllBytes(savePath, png);
-                    totalBytes += png.Length;
-
-                    framesJson.AddRaw(SimpleJson.Object()
-                        .Put("time", t)
-                        .Put("path", savePath)
-                        .Put("byteCount", png.Length)
+                    return CommandResult.Ok(SimpleJson.Object()
+                        .Put("captured", true)
+                        .Put("path", gridPath)
+                        .Put("assetPath", assetPath)
+                        .Put("rootName", instance.name.Replace("(Clone)", ""))
+                        .Put("particleSystems", systems.Length)
+                        .Put("loops", anyLoops)
+                        .Put("duration", duration)
+                        .Put("cellWidth", width)
+                        .Put("cellHeight", height)
+                        .Put("gridWidth", gridW)
+                        .Put("gridHeight", gridH)
+                        .Put("cols", cols)
+                        .Put("rows", rows)
+                        .Put("frameCount", n)
+                        .PutRaw("bounds", BoundsJson(bounds).ToString())
+                        .PutRaw("frames", framesJson.ToString())
+                        .Put("byteCount", gridPng.Length)
+                        .Put("individualByteCount", individualBytes)
+                        .Put("hint", "Open `path` with the Read tool — it's a single grid image with all frames laid out left-to-right, top-to-bottom. Each cell has a timestamp label. Use `--individual-frames` to also save per-frame PNGs.")
                         .ToString());
                 }
-
-                return CommandResult.Ok(SimpleJson.Object()
-                    .Put("captured", true)
-                    .Put("assetPath", assetPath)
-                    .Put("rootName", instance.name.Replace("(Clone)", ""))
-                    .Put("particleSystems", systems.Length)
-                    .Put("loops", anyLoops)
-                    .Put("duration", duration)
-                    .Put("width", width)
-                    .Put("height", height)
-                    .PutRaw("bounds", BoundsJson(bounds).ToString())
-                    .PutRaw("frames", framesJson.ToString())
-                    .Put("totalByteCount", totalBytes)
-                    .Put("hint", "Open each frame's `path` with the Read tool to view it. `time` is the simulated seconds-since-start. Use `set-particle-property` to tweak, then re-capture to compare.")
-                    .ToString());
+                finally
+                {
+                    foreach (var tex in rendered)
+                        if (tex != null) UnityEngine.Object.DestroyImmediate(tex);
+                }
             }
             finally
             {
@@ -360,5 +428,77 @@ namespace Dreamer.AgentBridge.FX
             SimpleJson.Object()
                 .PutRaw("center", $"[{b.center.x:F3},{b.center.y:F3},{b.center.z:F3}]")
                 .PutRaw("size",   $"[{b.size.x:F3},{b.size.y:F3},{b.size.z:F3}]");
+
+        // ── tiny bitmap font (5×7) for grid cell labels ────────────────────
+        // Glyphs are 7 rows of 5-bit values, MSB = leftmost pixel. Encoded inline
+        // so the addon stays self-contained; NOT a substitute for a real font system.
+        // Used for rendering "t=0.50s" timestamp labels above each cell.
+        static readonly Dictionary<char, byte[]> Glyphs = new Dictionary<char, byte[]>
+        {
+            { '0', new byte[] { 0x0E, 0x11, 0x13, 0x15, 0x19, 0x11, 0x0E } },
+            { '1', new byte[] { 0x04, 0x0C, 0x04, 0x04, 0x04, 0x04, 0x0E } },
+            { '2', new byte[] { 0x0E, 0x11, 0x01, 0x02, 0x04, 0x08, 0x1F } },
+            { '3', new byte[] { 0x1E, 0x01, 0x01, 0x0E, 0x01, 0x01, 0x1E } },
+            { '4', new byte[] { 0x02, 0x06, 0x0A, 0x12, 0x1F, 0x02, 0x02 } },
+            { '5', new byte[] { 0x1F, 0x10, 0x1E, 0x01, 0x01, 0x11, 0x0E } },
+            { '6', new byte[] { 0x06, 0x08, 0x10, 0x1E, 0x11, 0x11, 0x0E } },
+            { '7', new byte[] { 0x1F, 0x01, 0x02, 0x04, 0x08, 0x08, 0x08 } },
+            { '8', new byte[] { 0x0E, 0x11, 0x11, 0x0E, 0x11, 0x11, 0x0E } },
+            { '9', new byte[] { 0x0E, 0x11, 0x11, 0x0F, 0x01, 0x02, 0x0C } },
+            { '.', new byte[] { 0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x04 } },
+            { 's', new byte[] { 0x00, 0x00, 0x0F, 0x10, 0x0E, 0x01, 0x1E } },
+            { 't', new byte[] { 0x08, 0x1E, 0x08, 0x08, 0x08, 0x09, 0x06 } },
+            { '=', new byte[] { 0x00, 0x1F, 0x00, 0x1F, 0x00, 0x00, 0x00 } },
+            { ' ', new byte[] { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 } },
+            { '-', new byte[] { 0x00, 0x00, 0x00, 0x1F, 0x00, 0x00, 0x00 } },
+        };
+
+        const int GlyphW = 5;
+        const int GlyphH = 7;
+        const int GlyphScale = 2;          // 5×7 → 10×14 drawn
+        const int GlyphAdvance = (GlyphW + 1) * GlyphScale;
+        const int LabelTextH = GlyphH * GlyphScale;
+
+        static void DrawLabelStrip(Texture2D tex, int x, int y, int w, int h, string text)
+        {
+            // Background: medium-dark grey so white text reads cleanly regardless of frame contents.
+            var stripBg = new Color(0.15f, 0.15f, 0.18f, 1f);
+            var fill = new Color[w * h];
+            for (int p = 0; p < fill.Length; p++) fill[p] = stripBg;
+            tex.SetPixels(x, y, w, h, fill);
+
+            // Center the text horizontally + vertically within the strip.
+            int textW = text.Length * GlyphAdvance;
+            int tx = x + Mathf.Max(2, (w - textW) / 2);
+            int ty = y + Mathf.Max(2, (h - LabelTextH) / 2);
+
+            var ink = Color.white;
+            foreach (var ch in text)
+            {
+                if (!Glyphs.TryGetValue(ch, out var glyph)) glyph = Glyphs[' '];
+                DrawGlyph(tex, tx, ty, glyph, ink);
+                tx += GlyphAdvance;
+                if (tx + GlyphW * GlyphScale > x + w) break;  // clip rather than overflow.
+            }
+        }
+
+        static void DrawGlyph(Texture2D tex, int x, int y, byte[] glyph, Color color)
+        {
+            // Texture origin = bottom-left. Glyph row 0 is the TOP visual row, so we paint top-down.
+            for (int row = 0; row < GlyphH; row++)
+            {
+                byte bits = glyph[row];
+                int py = y + (GlyphH - 1 - row) * GlyphScale;
+                for (int col = 0; col < GlyphW; col++)
+                {
+                    bool on = (bits & (1 << (GlyphW - 1 - col))) != 0;
+                    if (!on) continue;
+                    int px = x + col * GlyphScale;
+                    for (int dy = 0; dy < GlyphScale; dy++)
+                        for (int dx = 0; dx < GlyphScale; dx++)
+                            tex.SetPixel(px + dx, py + dy, color);
+                }
+            }
+        }
     }
 }

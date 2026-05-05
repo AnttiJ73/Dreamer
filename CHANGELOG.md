@@ -11,20 +11,22 @@ tags, breaking changes bump the minor version (0.x.0), fixes bump patch.
 
 ### Added — `capture-particle` command + `dreamer-fx` add-on (visual VFX iteration)
 
-Closes the visual-feedback gap for particle iteration: an LLM editing `ParticleSystem` properties can now SEE how the effect looks at each timestamp instead of guessing. `capture-particle --asset FX.prefab` spawns the prefab into a sandboxed `PreviewRenderUtility` scene, runs `ParticleSystem.Simulate(t, fixedTimeStep=true, restart=true)` at N evenly-spaced timestamps (or explicit `--times "[0, 0.05, 0.5, 1.0]"`), and renders each tick to PNG. The user's active scene is untouched.
+Closes the visual-feedback gap for particle iteration: an LLM editing `ParticleSystem` properties can now SEE how the effect looks at each timestamp instead of guessing. `capture-particle --asset FX.prefab` spawns the prefab into a sandboxed `PreviewRenderUtility` scene, runs `ParticleSystem.Simulate(t, fixedTimeStep=true, restart=true)` at N evenly-spaced timestamps (or explicit `--times "[0, 0.05, 0.5, 1.0]"`), and composes all frames into **one grid PNG** with timestamp labels above each cell. The user's active scene is untouched.
 
 ```bash
-./bin/dreamer capture-particle --asset Assets/FX/Explosion.prefab --frames 5 --seed 42 --wait
-# Returns frames[].path → 5 PNGs, t=0..duration evenly. Read each to judge.
+./bin/dreamer capture-particle --asset Assets/FX/Explosion.prefab --frames 10 --seed 42 --wait
+# Returns result.path → ONE PNG, 5×2 grid, every cell labelled "t=X.XXs". Read it.
 ```
 
-Iteration loop: `set-particle-property` → `capture-particle --seed 42` → Read PNGs → judge → repeat. The fixed seed makes diff-by-eye productive — re-capturing after a tweak shows ONLY what your edit changed, not random emission noise.
+Iteration loop: `set-particle-property` → `capture-particle --seed 42` → Read the grid PNG → judge → repeat. The fixed seed makes diff-by-eye productive — re-capturing after a tweak shows ONLY what your edit changed, not random emission noise.
 
+- **Grid composite by default.** All N frames in one image, left-to-right top-to-bottom, with `t=X.XXs` labels (rendered via inline 5×7 bitmap font for self-containment). Layout heuristic: 5 frames → 3×2, 7-8 → 4×2, 10 → 5×2, otherwise near-square. `--individual-frames` opts in to also dumping per-frame PNGs.
 - Two-pass camera framing: simulate at every sample time first to compute the union of `Renderer.bounds` across all frames, then position the camera so no frame's particles fall outside view (a frame where particles spread far doesn't push earlier frames offscreen).
-- Sub-emitter chains and trail Renderers are included in bounds and rendering.
-- `--frames N` (default 5, 1..60), `--duration SEC` (default = root system's `main.duration`, fallback 2.0s for loops), `--times "[…]"` for non-uniform sampling, `--angle front|iso|top|...`, `--size WxH` (up to 4096), `--bg "#RRGGBB"` or `--transparent`, `--seed N` for reproducible RNG.
+- Sub-emitter chains and trail Renderers are included in bounds and rendering. `Simulate(withChildren=true)` is called on top-level PS roots so birth/death events drive sub-emitters correctly.
+- `--frames N` (default 5, 1..60), `--duration SEC` (default = root system's `main.duration`, fallback 2.0s for loops), `--times "[…]"` for non-uniform sampling, `--angle front|iso|top|...`, `--size WxH` per cell (up to 4096), `--bg "#RRGGBB"` or `--transparent`, `--seed N` for reproducible RNG, `--individual-frames` for per-frame PNGs.
 - Asset-only in Phase 1 (prefab path). Scene-object capture and VFX Graph (`UnityEngine.VFX.VisualEffect`) deferred to a future phase.
 - Ships as the new `com.dreamer.agent-bridge.fx` add-on. Install via `./bin/dreamer addon install fx`. New `dreamer-fx` skill auto-loads on particle / VFX tasks. Search keywords: particles, vfx, effect, explosion, spark, trail, burst, simulate.
+- Verified end-to-end on a freshly-created ParticleSystem prefab: 10-frame grid renders cleanly with label strips, particles progress deterministically t=0.00s → t=2.00s.
 
 ### Fixed — Bridge timed out connecting to daemon on Windows (IPv4/IPv6 mismatch)
 

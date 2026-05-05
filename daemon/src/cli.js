@@ -1897,6 +1897,7 @@ async function run(argv) {
         if (flags.bg) cpArgs.backgroundColor = String(flags.bg);
         if (flags.transparent === true || flags.transparent === 'true') cpArgs.transparent = true;
         if (flags.seed !== undefined) cpArgs.seed = parseInt(flags.seed, 10);
+        if (flags['individual-frames'] === true || flags['individual-frames'] === 'true') cpArgs.individualFrames = true;
         await submitCommand('capture_particle', cpArgs, flags);
         break;
       }

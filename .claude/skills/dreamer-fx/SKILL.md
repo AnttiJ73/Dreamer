@@ -13,6 +13,8 @@ set-particle-property → capture-particle → Read PNGs → judge → repeat
 
 Asset-only in Phase 1 — captures from a `.prefab` containing one or more `ParticleSystem` components. Instantiates into a `PreviewRenderUtility` scene; the user's active scene is untouched.
 
+**Output is a single grid PNG by default.** All N frames are composed into one image (left-to-right, top-to-bottom) with `t=0.50s` timestamp labels above each cell. You only need to Read one file (`result.path`) to see the entire effect timeline. Pass `--individual-frames` to also dump per-frame PNGs alongside the grid.
+
 If you forget the verb, run `./bin/dreamer search "particles"` (or `"vfx"`, `"explosion"`, `"simulate effect"`).
 
 ## Commands
@@ -24,8 +26,8 @@ If you forget the verb, run `./bin/dreamer search "particles"` (or `"vfx"`, `"ex
 
 ## Hard rules
 
-- **Always pass `--wait`** — you need the PNG paths before you can Read them.
-- **Read every returned PNG.** The whole point is visual feedback. `result.frames[i].path` → Read tool.
+- **Always pass `--wait`** — you need the PNG path before you can Read it.
+- **Read `result.path`.** That's the grid composite — one file, every frame. The whole point is visual feedback at a glance.
 - **Use `--seed N` for diffing.** Without a fixed seed, two consecutive captures of the same prefab produce different particles (random emission), which drowns out the actual change you made. Pick any int (e.g. 42); use the same value across the iteration session.
 - **Pass `--duration` for looping systems.** `main.loop=true` means there's no natural end; the command picks a default but it may not match the cycle you want to inspect.
 - **Phase 1 limits**: prefab path only (no scene-object), no VFX Graph (`UnityEngine.VFX.VisualEffect`). Workaround for scene-object tweaking: duplicate the live PS into a temporary prefab, iterate there, copy values back when satisfied.
@@ -81,22 +83,30 @@ The camera **auto-frames to the union of particle bounds across all sample times
 ```json
 {
   "captured": true,
+  "path": "DreamerScreenshots/particle-Explosion-XX-NN-grid.png",   // ← Read this
   "assetPath": "Assets/FX/Explosion.prefab",
   "rootName": "Explosion",
   "particleSystems": 3,            // total PS components in the subtree
   "loops": false,
   "duration": 2.0,
-  "width": 512, "height": 512,
-  "bounds": { "center": [...], "size": [...] },  // what the camera was framed to
+  "cellWidth": 512, "cellHeight": 512,
+  "gridWidth": 1556, "gridHeight": 1080,   // single composite dimensions
+  "cols": 3, "rows": 2,
+  "frameCount": 5,
+  "bounds": { "center": [...], "size": [...] },
   "frames": [
-    { "time": 0.0, "path": "DreamerScreenshots/particle-Explosion-XX-NN-t00000.png", "byteCount": 12345 },
-    { "time": 0.5, "path": "DreamerScreenshots/particle-Explosion-XX-NN-t00500.png", "byteCount": 23456 },
-    ...
+    { "time": 0.0, "row": 0, "col": 0 },
+    { "time": 0.5, "row": 0, "col": 1 },
+    { "time": 1.0, "row": 0, "col": 2 },
+    { "time": 1.5, "row": 1, "col": 0 },
+    { "time": 2.0, "row": 1, "col": 1 }
   ]
 }
 ```
 
-`time` is the simulated seconds-since-start the frame represents. The `t<msec>` suffix in the filename is the same number, padded for sortability.
+`row`/`col` is the cell position in the grid (0-indexed, top-left origin). `time` is the simulated seconds-since-start that cell represents. With `--individual-frames`, each frame gains a `path` and `byteCount`.
+
+Grid layout heuristic: 5 frames → 3×2, 7-8 → 4×2, 10 → 5×2, otherwise near-square. Designed to read better on landscape monitors.
 
 ## Common edits to capture-iterate against
 

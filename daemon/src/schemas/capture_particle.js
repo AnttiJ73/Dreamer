@@ -4,7 +4,7 @@ const { commonArgs } = require('./_common');
 
 module.exports = {
   kind: 'capture_particle',
-  summary: 'Spawn a particle-system prefab into a sandboxed preview scene, run `ParticleSystem.Simulate(t)` deterministically at N timestamps, render each tick to PNG. Closes the visual-feedback gap for VFX iteration: edit a property with `set-particle-property`, capture again, read the PNGs back to judge the change. Asset-only (Phase 1) — instantiates into a PreviewRenderUtility scene so the user\'s active scene is untouched. Output PNGs land in `DreamerScreenshots/`.',
+  summary: 'Spawn a particle-system prefab into a sandboxed preview scene, run `ParticleSystem.Simulate(t)` deterministically at N timestamps, and compose all frames into ONE grid PNG (left-to-right, top-to-bottom, with `t=0.50s` timestamp labels above each cell). Closes the visual-feedback gap for VFX iteration: edit a property with `set-particle-property`, capture again, Read the single grid PNG to judge the change at every moment of the effect. Asset-only (Phase 1) — instantiates into a PreviewRenderUtility scene so the user\'s active scene is untouched. Output lands in `DreamerScreenshots/`.',
   requirements: null,
   args: {
     ...commonArgs.target(['asset', 'guid']),
@@ -54,28 +54,40 @@ module.exports = {
       cli: '--seed',
       description: 'Force `randomSeed` on every ParticleSystem in the prefab subtree so re-captures are pixel-identical. Default: leave whatever the prefab has (deterministic only if all PS already had useAutoRandomSeed=false).',
     },
+    individualFrames: {
+      type: 'boolean',
+      cli: '--individual-frames',
+      description: 'Also save each frame as a separate PNG alongside the grid composite. Default: false (grid-only). Use this when you want to compare the same timestamp across two captures via image-diff tools that need separate files.',
+    },
   },
   constraints: [commonArgs.targetAtLeastOne(['asset', 'guid'])],
   result: {
     type: 'object',
     fields: {
       captured: { type: 'boolean' },
+      path: { type: 'string', description: 'Path to the GRID composite PNG — single image with all frames laid out left-to-right, top-to-bottom, each cell labelled `t=X.XXs`. Open this with the Read tool.' },
       assetPath: { type: 'string' },
       rootName: { type: 'string' },
       particleSystems: { type: 'integer', description: 'Total ParticleSystem components found in the subtree.' },
       loops: { type: 'boolean', description: 'True if any system in the prefab has `main.loop=true`.' },
       duration: { type: 'number' },
-      width: { type: 'integer' },
-      height: { type: 'integer' },
+      cellWidth: { type: 'integer', description: 'Width of one frame cell (= --width).' },
+      cellHeight: { type: 'integer' },
+      gridWidth: { type: 'integer', description: 'Total composite PNG width (cols × cellWidth + gutters + label strips).' },
+      gridHeight: { type: 'integer' },
+      cols: { type: 'integer' },
+      rows: { type: 'integer' },
+      frameCount: { type: 'integer' },
       bounds: {
         type: 'object',
         description: 'Union of particle Renderer.bounds across all sample times — what the camera was framed to. `{ center: [x,y,z], size: [w,h,d] }`.',
       },
       frames: {
         type: 'array',
-        description: 'Per-frame: `{ time, path, byteCount }`. Open `path` with the Read tool to view the PNG.',
+        description: 'Per-frame metadata: `{ time, row, col, path?, byteCount? }`. `row`/`col` are the cell position in the grid (0-indexed, top-left origin). `path` only set when --individual-frames passed.',
       },
-      totalByteCount: { type: 'integer' },
+      byteCount: { type: 'integer', description: 'Size of the grid PNG in bytes.' },
+      individualByteCount: { type: 'integer', description: 'Sum of per-frame PNGs (only > 0 when --individual-frames passed).' },
     },
   },
   examples: [
@@ -101,6 +113,7 @@ module.exports = {
     },
   ],
   pitfalls: [
+    'The default output is ONE grid composite PNG (cell layout: 5 frames → 3×2, 10 frames → 5×2, otherwise near-square). Read just `result.path` — no need to chase per-frame files. Pass `--individual-frames` if you specifically need separate PNGs.',
     'Asset-only in Phase 1 — pass a `.prefab` path. Scene-object capture isn\'t supported yet (would require destructive simulate-then-restore on a live PS). Workflow: tweak a copy of your effect prefab, capture, copy values back to the live one when satisfied.',
     'Looping systems (`main.loop=true`) need an explicit `--duration` to bound the capture. Without one, the command picks a sensible default but it may not match your intent — pass the exact second-count of the cycle you want to inspect.',
     'For pixel-identical re-captures across edits, use `--seed N`. Without it, prefabs that have `useAutoRandomSeed=true` (the default) will produce different particles each run, making diff comparisons noisy.',
