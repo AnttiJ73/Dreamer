@@ -9,6 +9,23 @@ tags, breaking changes bump the minor version (0.x.0), fixes bump patch.
 
 ## [Unreleased]
 
+### Added — `setup-particle-material` + `capture-particle --auto-material`
+
+New command in the `dreamer-fx` add-on that closes the "particles invisible / magenta" gap on freshly-created particle prefabs. `setup-particle-material --asset Path.prefab` walks every `ParticleSystemRenderer` in the prefab subtree and assigns a placeholder material (created at `Assets/Materials/{prefabName}_Particle.mat` with a particle-friendly Unlit shader, white tint, additive blend) when a renderer has none. Existing materials are preserved unless `--force` is passed.
+
+```bash
+./bin/dreamer setup-particle-material --asset Assets/FX/Explosion.prefab --wait
+./bin/dreamer setup-particle-material --asset Assets/FX/Fire.prefab --color "#FFAA22" --texture Assets/Textures/flame.png --blend additive --wait
+./bin/dreamer setup-particle-material --asset Assets/FX/Spark.prefab --shader "Sprites/Default" --force --wait
+```
+
+`capture-particle` also gains a `--auto-material` flag: if any PSR has no material, it runs the same setup before capturing so the agent doesn't get a black square back from a brand-new prefab.
+
+- Shader fallback chain (when `--shader` is omitted): `Particles/Standard Unlit` → `Universal Render Pipeline/Particles/Unlit` → `HDRP/Particles/Lit` → `Sprites/Default`. First hit wins.
+- Blend mode presets: `--blend additive|alpha|multiply|opaque`. Sets `_Mode` plus the corresponding `_SrcBlend`/`_DstBlend`/`_ZWrite`/render queue + shader keywords for built-in particle shaders, or `_Surface`/`_Blend` for URP.
+- `--force` replaces an already-assigned material; default is no-op when one exists.
+- Color via `--color "#RRGGBB"` or `"#RRGGBBAA"`. Tries `_TintColor`, `_BaseColor`, `_Color` in turn (whichever the shader exposes).
+
 ### Changed — `capture-particle` GIF now has timestamps + plays at exact realtime
 
 GIF frames are now extended with the same `t=X.XXs` label strip the grid cells use, burned into the top of each frame canvas. The animation tells you how the effect develops over absolute time, not just shape order. Useful for tuning emission timing (e.g. "the burst should peak at t=0.3s, but the GIF shows the peak landing at t=0.5s — bump emission rate up").

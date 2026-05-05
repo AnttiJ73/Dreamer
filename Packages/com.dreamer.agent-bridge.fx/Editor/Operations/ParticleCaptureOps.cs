@@ -75,6 +75,24 @@ namespace Dreamer.AgentBridge.FX
             if (prefabSystems.Length == 0)
                 return CommandResult.Fail($"'{assetPath}' contains no ParticleSystem components. capture-particle requires at least one.");
 
+            // --auto-material: ensure every PSR has a placeholder material before we capture,
+            // so the user doesn't get a black/magenta image from a freshly-created prefab.
+            if (SimpleJson.GetBool(args, "autoMaterial", false))
+            {
+                var prsList = prefab.GetComponentsInChildren<ParticleSystemRenderer>(true);
+                bool needsSetup = false;
+                foreach (var r in prsList) if (r.sharedMaterial == null) { needsSetup = true; break; }
+                if (needsSetup)
+                {
+                    var setupArgs = new Dictionary<string, object> { { "assetPath", assetPath } };
+                    var setupResult = ParticleMaterialOps.SetupParticleMaterial(setupArgs);
+                    if (!setupResult.success)
+                        return CommandResult.Fail("auto-material failed: " + setupResult.error);
+                    // Reload prefab now that the material has been assigned + saved.
+                    prefab = AssetDatabase.LoadAssetAtPath<GameObject>(assetPath);
+                }
+            }
+
             PreviewRenderUtility pru = null;
             GameObject instance = null;
             try

@@ -10,6 +10,7 @@ namespace Dreamer.AgentBridge.FX
         {
             if (handlers == null) return;
             handlers["capture_particle"] = ParticleCaptureOps.CaptureParticle;
+            handlers["setup_particle_material"] = ParticleMaterialOps.SetupParticleMaterial;
         }
     }
 }

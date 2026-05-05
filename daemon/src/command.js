@@ -89,8 +89,9 @@ const KIND_DEFS = {
   validate_sprite:       { label: 'Validate Sprite',       requirements: null },
 
   // FX add-on — provided by `com.dreamer.agent-bridge.fx`. Multi-frame
-  // ParticleSystem.Simulate-driven captures.
-  capture_particle:      { label: 'Capture Particle',      requirements: null },
+  // ParticleSystem.Simulate-driven captures + helpers.
+  capture_particle:         { label: 'Capture Particle',         requirements: null },
+  setup_particle_material:  { label: 'Setup Particle Material',  requirements: null },
 
   // UI Canvas (uGUI) add-on — kinds are known here so the CLI + scheduler
   // treat them uniformly, but the bridge-side handlers only exist when

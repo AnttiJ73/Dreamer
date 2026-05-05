@@ -74,6 +74,11 @@ module.exports = {
       cli: '--gif-loop',
       description: 'GIF loop count. Default 0 = infinite. Set to N for a finite loop count.',
     },
+    autoMaterial: {
+      type: 'boolean',
+      cli: '--auto-material',
+      description: 'If the prefab\'s ParticleSystemRenderer has no material assigned, run `setup-particle-material` first to create + assign a default white-additive placeholder. Saves a manual round-trip when capturing a freshly-created particle prefab. No-op if a material is already set.',
+    },
   },
   constraints: [commonArgs.targetAtLeastOne(['asset', 'guid'])],
   result: {

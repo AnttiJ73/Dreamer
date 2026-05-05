@@ -1903,7 +1903,24 @@ async function run(argv) {
         else if (flags.gif === true || flags.gif === 'true') cpArgs.gif = true;
         if (flags['gif-delay-ms'] !== undefined) cpArgs.gifDelayMs = parseInt(flags['gif-delay-ms'], 10);
         if (flags['gif-loop'] !== undefined) cpArgs.gifLoop = parseInt(flags['gif-loop'], 10);
+        if (flags['auto-material'] === true || flags['auto-material'] === 'true') cpArgs.autoMaterial = true;
         await submitCommand('capture_particle', cpArgs, flags);
+        break;
+      }
+
+      case 'setup-particle-material': {
+        const target = flags.asset || positional[1];
+        if (!target) fail('Usage: dreamer setup-particle-material --asset Assets/FX/Explosion.prefab [--name MyMat] [--path Assets/Materials] [--shader "..."] [--color "#FFAA22"] [--texture Assets/.../tex.png] [--blend additive|alpha|multiply|opaque] [--force]');
+        const isGuidSPM = /^[0-9a-f]{32}$/i.test(target);
+        const spmArgs = isGuidSPM ? { guid: target } : { assetPath: target };
+        if (flags.name) spmArgs.name = String(flags.name);
+        if (flags.path) spmArgs.path = String(flags.path);
+        if (flags.shader) spmArgs.shader = String(flags.shader);
+        if (flags.color) spmArgs.color = String(flags.color);
+        if (flags.texture) spmArgs.texture = String(flags.texture);
+        if (flags.blend) spmArgs.blendMode = String(flags.blend);
+        if (flags.force === true || flags.force === 'true') spmArgs.force = true;
+        await submitCommand('setup_particle_material', spmArgs, flags);
         break;
       }
 
