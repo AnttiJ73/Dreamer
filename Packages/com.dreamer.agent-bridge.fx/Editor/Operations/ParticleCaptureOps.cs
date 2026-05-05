@@ -285,17 +285,36 @@ namespace Dreamer.AgentBridge.FX
                     File.WriteAllBytes(gridPath, gridPng);
 
                     // Optional GIF — animation preview, default ON. Quantizes to 256 colors.
+                    // Each GIF frame gets the same `t=X.XXs` label strip the grid cells use, burned
+                    // into the top of the frame canvas. Lets the user judge timing while watching the
+                    // animation play (timestamps tell you how the effect develops over absolute time,
+                    // not just shape order). Total cycle = duration exactly (`/N` divisor, not `/N-1`)
+                    // so a 5s 10-frame capture plays back in 5s.
                     string gifPath = null;
                     long gifBytes = 0;
+                    Texture2D[] gifFrames = null;
                     if (emitGif && n >= 2)
                     {
-                        int delay = gifDelayMs > 0
-                            ? gifDelayMs
-                            : Mathf.Max(40, Mathf.RoundToInt((duration / Mathf.Max(1, n - 1)) * 1000f));
-                        byte[] gifData = GifEncoder.Encode(rendered, delay, gifLoop);
-                        gifPath = Path.Combine(DefaultDir, $"particle-{stem}-{assetGuid.Substring(0, 8)}-{ticks}.gif").Replace('\\', '/');
-                        File.WriteAllBytes(gifPath, gifData);
-                        gifBytes = gifData.Length;
+                        gifFrames = new Texture2D[n];
+                        try
+                        {
+                            for (int i = 0; i < n; i++)
+                                gifFrames[i] = BuildLabelledFrame(rendered[i], frameTimes[i], width, height, labelHeight);
+
+                            int delay = gifDelayMs > 0
+                                ? gifDelayMs
+                                : Mathf.Max(40, Mathf.RoundToInt((duration / n) * 1000f));
+                            byte[] gifData = GifEncoder.Encode(gifFrames, delay, gifLoop);
+                            gifPath = Path.Combine(DefaultDir, $"particle-{stem}-{assetGuid.Substring(0, 8)}-{ticks}.gif").Replace('\\', '/');
+                            File.WriteAllBytes(gifPath, gifData);
+                            gifBytes = gifData.Length;
+                        }
+                        finally
+                        {
+                            if (gifFrames != null)
+                                foreach (var t2d in gifFrames)
+                                    if (t2d != null) UnityEngine.Object.DestroyImmediate(t2d);
+                        }
                     }
 
                     var resultJson = SimpleJson.Object()
@@ -481,6 +500,20 @@ namespace Dreamer.AgentBridge.FX
         const int GlyphScale = 2;          // 5×7 → 10×14 drawn
         const int GlyphAdvance = (GlyphW + 1) * GlyphScale;
         const int LabelTextH = GlyphH * GlyphScale;
+
+        // Composes a (w, h + labelH) Texture2D with a "t=X.XXs" label strip across the top
+        // and the source frame below it. Used for GIF frames so the animation displays its
+        // own timestamp; the grid composite still uses the un-labelled `rendered[]` directly.
+        static Texture2D BuildLabelledFrame(Texture2D source, float t, int w, int h, int labelH)
+        {
+            var dst = new Texture2D(w, h + labelH, TextureFormat.RGBA32, mipChain: false);
+            // Copy source into bottom region. Texture2D origin = bottom-left, so source pixels
+            // sit at y=[0, h) and the label strip occupies y=[h, h+labelH).
+            dst.SetPixels(0, 0, w, h, source.GetPixels());
+            DrawLabelStrip(dst, 0, h, w, labelH, $"t={t:F2}s");
+            dst.Apply();
+            return dst;
+        }
 
         static void DrawLabelStrip(Texture2D tex, int x, int y, int w, int h, string text)
         {

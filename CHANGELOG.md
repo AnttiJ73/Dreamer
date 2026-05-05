@@ -9,6 +9,12 @@ tags, breaking changes bump the minor version (0.x.0), fixes bump patch.
 
 ## [Unreleased]
 
+### Changed — `capture-particle` GIF now has timestamps + plays at exact realtime
+
+GIF frames are now extended with the same `t=X.XXs` label strip the grid cells use, burned into the top of each frame canvas. The animation tells you how the effect develops over absolute time, not just shape order. Useful for tuning emission timing (e.g. "the burst should peak at t=0.3s, but the GIF shows the peak landing at t=0.5s — bump emission rate up").
+
+Also fixes a 10% playback drift: the previous delay calculation used `duration / (frames - 1)` so a 5s 10-frame capture played back in 5.5s. Now uses `duration / frames` so total cycle = duration exactly. Override with `--gif-delay-ms` if you want a different speed.
+
 ### Added — `capture-particle` emits an animated GIF alongside the grid PNG
 
 `capture-particle` now writes an animated GIF in addition to the static grid composite, so you can actually watch the effect play instead of only diffing still frames. Defaults: GIF on whenever `frames >= 2`, frame delay derived from `duration / (frames - 1)` so the loop spans the same simulated time as the capture, infinite loop, single global 256-color palette via median-cut quantization. Result includes `gifPath` and `gifByteCount`.
