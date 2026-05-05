@@ -11,26 +11,10 @@ const DAEMON_PROJECT_ROOT = path.resolve(DAEMON_DIR, '..');
 const PID_FILE = path.join(DAEMON_DIR, '.dreamer-daemon.pid');
 const SERVER_JS = path.join(__dirname, 'server.js');
 
-/**
- * Get the daemon base URL. Resolves the port from the projects registry for
- * this daemon's Unity project root.
- *
- * Precedence (see config.getPort): DREAMER_PORT env > registry entry >
- * legacy .dreamer-config.json > 18710.
- *
- * @returns {string}
- */
 function getDaemonUrl() {
   return `http://127.0.0.1:${getPort(DAEMON_PROJECT_ROOT)}`;
 }
 
-/**
- * Make a simple HTTP request and return parsed JSON.
- * @param {string} method
- * @param {string} urlPath
- * @param {object|null} [body]
- * @returns {Promise<{ status: number, data: any }>}
- */
 function httpRequest(method, urlPath, body = null) {
   return new Promise((resolve, reject) => {
     const base = getDaemonUrl();
@@ -68,12 +52,7 @@ function httpRequest(method, urlPath, body = null) {
   });
 }
 
-/**
- * Check if the daemon is running by PID file + HTTP health check.
- * @returns {Promise<boolean>}
- */
 async function isDaemonRunning() {
-  // Quick check: PID file exists?
   if (!fs.existsSync(PID_FILE)) return false;
 
   let pid;
@@ -83,16 +62,14 @@ async function isDaemonRunning() {
     return false;
   }
 
-  // Check if process exists
   try {
-    process.kill(pid, 0); // signal 0 = check existence
+    process.kill(pid, 0);
   } catch {
-    // Process doesn't exist — stale PID file
+    // Stale PID file — process is gone.
     try { fs.unlinkSync(PID_FILE); } catch { /* ignore */ }
     return false;
   }
 
-  // Verify via HTTP health check
   try {
     const resp = await httpRequest('GET', '/api/status');
     return resp.status === 200;
@@ -101,28 +78,18 @@ async function isDaemonRunning() {
   }
 }
 
-/**
- * Start the daemon as a detached background process.
- *
- * Ensures this project has a port registered first so both the CLI and the
- * spawned daemon agree on which port to use. Without this, the CLI's cached
- * getDaemonUrl() could resolve to the fallback default while the daemon's
- * own startup allocates a different port, leaving the CLI unable to reach it.
- *
- * @returns {Promise<void>}
- */
 async function startDaemon() {
   const already = await isDaemonRunning();
   if (already) return;
 
-  // Register/resolve port before spawn so the CLI agrees with the daemon.
+  // Register/resolve port BEFORE spawn — otherwise the CLI's cached getDaemonUrl()
+  // can fall through to the default while the daemon allocates a different port.
   try {
     await ensureRegisteredPort(DAEMON_PROJECT_ROOT, { daemonRoot: DAEMON_DIR });
   } catch (err) {
     throw new Error(`Cannot start daemon: failed to register project port — ${err.message}`);
   }
 
-  // Spawn detached
   const child = spawn(process.execPath, [SERVER_JS, '--daemon'], {
     cwd: DAEMON_DIR,
     detached: true,
@@ -131,7 +98,6 @@ async function startDaemon() {
   });
   child.unref();
 
-  // Wait for the daemon to become ready (poll for up to 5s)
   const deadline = Date.now() + 5000;
   while (Date.now() < deadline) {
     await sleep(200);
@@ -144,22 +110,14 @@ async function startDaemon() {
   throw new Error('Daemon failed to start within 5 seconds');
 }
 
-/**
- * Stop the daemon gracefully.
- * @returns {Promise<void>}
- */
 async function stopDaemon() {
-  // Try HTTP shutdown first
   try {
     await httpRequest('POST', '/api/shutdown');
-    // Wait a moment for clean exit
     await sleep(500);
-    // Verify
     const running = await isDaemonRunning();
     if (!running) return;
   } catch { /* HTTP failed, try PID kill */ }
 
-  // Fallback: kill by PID
   if (fs.existsSync(PID_FILE)) {
     try {
       const pid = parseInt(fs.readFileSync(PID_FILE, 'utf8').trim(), 10);
@@ -167,46 +125,23 @@ async function stopDaemon() {
       await sleep(500);
     } catch { /* ignore */ }
 
-    // Clean up PID file
     try { fs.unlinkSync(PID_FILE); } catch { /* ignore */ }
   }
 }
 
-/**
- * Ensure the daemon is running. Starts it if not.
- * @returns {Promise<void>}
- */
 async function ensureDaemon() {
   const running = await isDaemonRunning();
-  if (!running) {
-    await startDaemon();
-  }
+  if (!running) await startDaemon();
 }
 
 /**
- * Focus the Unity Editor window (Windows only).
- *
- * When multiple Unity instances run on the same machine (e.g. one for the
- * game project, one for a Dreamer dev project), `Get-Process -Name Unity`
- * returns all of them. Picking the first via `Select -First 1` used to be
- * good enough but silently focused the wrong window in multi-project
- * setups — commands meant for project A would nudge project B's editor.
- *
- * Now matches the Unity process whose command-line `-projectpath` matches
- * <paramref name="projectRoot"/>. Falls back to first-window behaviour when
- * projectRoot isn't supplied (keeps the command usable without context),
- * but always prefers the path-match when it can compute one.
- *
- * @param {string} [projectRoot] - absolute path to the Unity project root.
- *   When omitted, defaults to the project that owns this Dreamer install
- *   (path.resolve(__dirname, '..', '..')).
- * @returns {Promise<boolean>} true if Unity was found and focused
+ * Focus the Unity Editor window matching `projectRoot` (Windows only).
+ * Falls back to first foreground-capable Unity.exe when projectRoot is omitted.
+ * The path-match is load-bearing — multi-Unity-instance setups otherwise focus
+ * the wrong window and nudge the wrong project.
  */
 async function focusUnity(projectRoot) {
-  if (process.platform !== 'win32') {
-    // macOS/Linux: not implemented yet
-    return false;
-  }
+  if (process.platform !== 'win32') return false;
 
   const targetRoot = projectRoot || path.resolve(__dirname, '..', '..');
   // Normalize to forward slashes + lowercase so PowerShell -like matches case-insensitively
@@ -296,7 +231,6 @@ async function focusUnity(projectRoot) {
     });
     ps.on('error', () => resolve(false));
 
-    // Timeout after 3s
     setTimeout(() => { try { ps.kill(); } catch {} resolve(false); }, 3000);
   });
 }

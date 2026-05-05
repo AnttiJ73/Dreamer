@@ -1,0 +1,17 @@
+{
+  "name": "Dreamer.AgentBridge.Animation.Editor",
+  "rootNamespace": "Dreamer.AgentBridge.Animation",
+  "references": [
+    "Dreamer.AgentBridge.Editor"
+  ],
+  "includePlatforms": ["Editor"],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": true,
+  "defineConstraints": [],
+  "versionDefines": [],
+  "noEngineReferences": false,
+  "version": "0.1.0"
+}

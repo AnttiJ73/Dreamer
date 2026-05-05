@@ -1,32 +1,16 @@
 'use strict';
 
-/**
- * Tiny schema validator used by the command schema layer.
- *
- * Not full JSON Schema — our schemas are narrow and self-contained, so a
- * handful of rules covers every command. See daemon/src/schemas/ for the
- * schema shape this validator expects:
- *
- *   {
- *     args: {
- *       <name>: { type, required?, enum?, description? }
- *     },
- *     constraints?: [
- *       { rule: 'exactlyOne', fields: [...] },
- *       { rule: 'atLeastOne', fields: [...] }
- *     ]
- *   }
- *
- * Supported types: 'string', 'number', 'boolean', 'object', 'array', 'any'.
- *
- * Returns { valid: boolean, errors: string[] }.
- */
+// Tiny schema validator (not full JSON Schema). Schema shape:
+//   { args: { <name>: { type, required?, enum?, description? } },
+//     constraints?: [ { rule: 'exactlyOne'|'atLeastOne', fields: [...] } ] }
+// Types: string, number, integer, boolean, object, array, any. Union: ['string', 'number']. Returns { valid, errors }.
 
-const KNOWN_TYPES = new Set(['string', 'number', 'boolean', 'object', 'array', 'any']);
+const KNOWN_TYPES = new Set(['string', 'number', 'integer', 'boolean', 'object', 'array', 'any']);
 
 function typeOf(value) {
   if (value === null) return 'null';
   if (Array.isArray(value)) return 'array';
+  if (typeof value === 'number' && Number.isInteger(value)) return 'integer';
   return typeof value;
 }
 
@@ -34,7 +18,6 @@ function validate(schema, args) {
   const errors = [];
   const input = args && typeof args === 'object' && !Array.isArray(args) ? args : {};
 
-  // Per-arg type and required-ness
   const spec = schema.args || {};
   for (const [name, field] of Object.entries(spec)) {
     const value = input[name];
@@ -46,13 +29,16 @@ function validate(schema, args) {
     }
 
     if (field.type && field.type !== 'any') {
-      if (!KNOWN_TYPES.has(field.type)) {
-        errors.push(`Schema bug: unknown type '${field.type}' on arg '${name}'`);
-      } else {
+      const types = Array.isArray(field.type) ? field.type : [field.type];
+      const unknown = types.find(t => t !== 'any' && !KNOWN_TYPES.has(t));
+      if (unknown) {
+        errors.push(`Schema bug: unknown type '${unknown}' on arg '${name}'`);
+      } else if (!types.includes('any')) {
         const actual = typeOf(value);
-        const expected = field.type;
-        if (expected !== actual) {
-          errors.push(`arg '${name}' must be ${expected}, got ${actual}`);
+        const ok = types.some(expected =>
+          expected === actual || (expected === 'number' && actual === 'integer'));
+        if (!ok) {
+          errors.push(`arg '${name}' must be ${types.join(' or ')}, got ${actual}`);
         }
       }
     }
@@ -62,7 +48,6 @@ function validate(schema, args) {
     }
   }
 
-  // Constraints across multiple args
   for (const constraint of schema.constraints || []) {
     if (constraint.rule === 'exactlyOne') {
       const present = constraint.fields.filter((f) => input[f] !== undefined && input[f] !== null);

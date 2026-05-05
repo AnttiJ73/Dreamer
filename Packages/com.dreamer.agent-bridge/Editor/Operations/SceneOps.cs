@@ -10,14 +10,26 @@ namespace Dreamer.AgentBridge
 {
     public static class SceneOps
     {
-        /// <summary>
-        /// Create a new empty GameObject in the active scene.
-        /// Args: { name: "ObjectName", parentPath?: "/Canvas/Panel", scene?: "SceneName" }
-        /// </summary>
+        // Canonical key is parentPath; `parent` is an alias because agents reach for it naturally
+        // and silent-ignore previously placed the GO at scene root with no error.
+        static string ResolveParentPath(Dictionary<string, object> args)
+        {
+            string canonical = SimpleJson.GetString(args, "parentPath");
+            if (!string.IsNullOrEmpty(canonical)) return canonical;
+            string alias = SimpleJson.GetString(args, "parent");
+            if (!string.IsNullOrEmpty(alias))
+            {
+                DreamerLog.Warn($"'parent' is accepted as an alias — use 'parentPath' in future calls. Resolved to: '{alias}'");
+                return alias;
+            }
+            return null;
+        }
+
+        /// <summary>Create a new empty GameObject in the active scene. Args: { name, parentPath?, scene? }</summary>
         public static CommandResult CreateGameObject(Dictionary<string, object> args)
         {
             string name = SimpleJson.GetString(args, "name", "GameObject");
-            string parentPath = SimpleJson.GetString(args, "parentPath");
+            string parentPath = ResolveParentPath(args);
 
             var go = new GameObject(name);
             Undo.RegisterCreatedObjectUndo(go, $"Create {name}");
@@ -43,11 +55,7 @@ namespace Dreamer.AgentBridge
             return CommandResult.Ok(json);
         }
 
-        /// <summary>
-        /// Rename a GameObject in scene or within a prefab.
-        /// Scene: { sceneObjectPath: "OldName", newName: "NewName" }
-        /// Prefab: { assetPath: "X.prefab", childPath?: "Child", newName: "NewName" }
-        /// </summary>
+        /// <summary>Rename a GameObject in scene or prefab. Scene: { sceneObjectPath, newName }. Prefab: { assetPath, childPath?, newName }.</summary>
         public static CommandResult RenameGameObject(Dictionary<string, object> args)
         {
             string newName = SimpleJson.GetString(args, "newName");
@@ -71,7 +79,6 @@ namespace Dreamer.AgentBridge
                     .Put("path", GetGameObjectPath(go)).ToString());
             }
 
-            // Prefab
             string assetPath = AssetOps.ResolveAssetPath(args);
             if (assetPath == null)
                 return CommandResult.Fail("Provide 'sceneObjectPath' or 'assetPath'.");
@@ -80,7 +87,6 @@ namespace Dreamer.AgentBridge
 
             if (!assetPath.EndsWith(".prefab", StringComparison.OrdinalIgnoreCase))
             {
-                // Rename asset file
                 string error = AssetDatabase.RenameAsset(assetPath, newName);
                 if (!string.IsNullOrEmpty(error))
                     return CommandResult.Fail($"Failed to rename asset: {error}");
@@ -90,7 +96,6 @@ namespace Dreamer.AgentBridge
 
             if (string.IsNullOrEmpty(childPath))
             {
-                // Rename the prefab asset file itself
                 string error = AssetDatabase.RenameAsset(assetPath, newName);
                 if (!string.IsNullOrEmpty(error))
                     return CommandResult.Fail($"Failed to rename prefab: {error}");
@@ -98,7 +103,6 @@ namespace Dreamer.AgentBridge
                     .Put("renamed", true).Put("assetPath", assetPath).Put("newName", newName).ToString());
             }
 
-            // Rename a child inside a prefab
             var prefabRoot = PrefabUtility.LoadPrefabContents(assetPath);
             if (prefabRoot == null)
                 return CommandResult.Fail($"Failed to load prefab: {assetPath}");
@@ -126,12 +130,7 @@ namespace Dreamer.AgentBridge
             }
         }
 
-        /// <summary>
-        /// Duplicate a GameObject in scene or within a prefab.
-        /// Scene: { sceneObjectPath: "MyObject", newName?: "MyObject (Copy)" }
-        /// Prefab child: { assetPath: "X.prefab", childPath: "Child", newName?: "Child (Copy)" }
-        /// Asset: { assetPath: "X.prefab", newName?: "X_Copy" } (duplicates the whole asset file)
-        /// </summary>
+        /// <summary>Duplicate a GameObject in scene or within a prefab. Scene: { sceneObjectPath, newName? }. Prefab child: { assetPath, childPath, newName? }. Asset: { assetPath, newName? } duplicates the file.</summary>
         public static CommandResult DuplicateGameObject(Dictionary<string, object> args)
         {
             string newName = SimpleJson.GetString(args, "newName");
@@ -161,7 +160,6 @@ namespace Dreamer.AgentBridge
 
             string childPath = SimpleJson.GetString(args, "childPath");
 
-            // Duplicate a child inside a prefab
             if (!string.IsNullOrEmpty(childPath))
             {
                 if (!assetPath.EndsWith(".prefab", StringComparison.OrdinalIgnoreCase))
@@ -196,7 +194,6 @@ namespace Dreamer.AgentBridge
                 }
             }
 
-            // Duplicate the asset file
             string dir = System.IO.Path.GetDirectoryName(assetPath).Replace('\\', '/');
             string ext = System.IO.Path.GetExtension(assetPath);
             string baseName = System.IO.Path.GetFileNameWithoutExtension(assetPath);
@@ -215,12 +212,155 @@ namespace Dreamer.AgentBridge
                 .ToString());
         }
 
-        /// <summary>
-        /// Delete a GameObject from the scene or from within a prefab.
-        /// Scene: { sceneObjectPath: "Canvas/Panel/OldButton" }
-        /// Prefab: { assetPath: "X.prefab", childPath: "OldChild" }
-        /// Children are always destroyed with the parent (Unity default behavior).
-        /// </summary>
+        /// <summary>Reparent a GameObject. Scene: { sceneObjectPath, newParentPath?, keepWorldSpace?, siblingIndex? }. Prefab: { assetPath, childPath, newParentPath?, keepWorldSpace?, siblingIndex? } — paths relative to prefab root, empty newParentPath → root.</summary>
+        public static CommandResult ReparentGameObject(Dictionary<string, object> args)
+        {
+            string sceneObjectPath = SimpleJson.GetString(args, "sceneObjectPath");
+            if (!string.IsNullOrEmpty(sceneObjectPath))
+                return ReparentInScene(sceneObjectPath, args);
+
+            string assetPath = AssetOps.ResolveAssetPath(args);
+            if (!string.IsNullOrEmpty(assetPath))
+                return ReparentInPrefab(assetPath, args);
+
+            return CommandResult.Fail("Provide 'sceneObjectPath' (scene mode) or 'assetPath' + 'childPath' (prefab mode).");
+        }
+
+        static CommandResult ReparentInScene(string sceneObjectPath, Dictionary<string, object> args)
+        {
+            var go = PropertyOps.FindSceneObject(sceneObjectPath, out string findError);
+            if (go == null)
+                return CommandResult.Fail(findError ?? $"Scene object not found at path: {sceneObjectPath}");
+
+            // Empty/null newParentPath → scene root.
+            string newParentPath = SimpleJson.GetString(args, "newParentPath");
+            Transform newParent = null;
+            if (!string.IsNullOrEmpty(newParentPath))
+            {
+                var parentGo = PropertyOps.FindSceneObject(newParentPath, out string parentError);
+                if (parentGo == null)
+                    return CommandResult.Fail(parentError ?? $"New parent not found at path: {newParentPath}");
+                newParent = parentGo.transform;
+
+                if (parentGo == go)
+                    return CommandResult.Fail("Cannot reparent a GameObject under itself.");
+                for (var t = newParent; t != null; t = t.parent)
+                {
+                    if (t == go.transform)
+                        return CommandResult.Fail($"Cannot reparent '{go.name}' under its own descendant '{parentGo.name}'.");
+                }
+            }
+
+            bool keepWorldSpace = SimpleJson.GetBool(args, "keepWorldSpace", false);
+            string oldParentPath = go.transform.parent != null ? GetGameObjectPath(go.transform.parent.gameObject) : null;
+
+            Undo.SetTransformParent(go.transform, newParent, $"Reparent {go.name}");
+            // SetTransformParent doesn't expose worldPositionStays in all Unity versions;
+            // SetParent right after enforces the user's choice.
+            go.transform.SetParent(newParent, keepWorldSpace);
+
+            ApplySiblingIndex(go.transform, newParent, args);
+            EditorUtility.SetDirty(go);
+
+            return CommandResult.Ok(SimpleJson.Object()
+                .Put("reparented", true)
+                .Put("mode", "scene")
+                .Put("name", go.name)
+                .Put("oldParentPath", oldParentPath)
+                .Put("newParentPath", newParent != null ? GetGameObjectPath(newParent.gameObject) : null)
+                .Put("keepWorldSpace", keepWorldSpace)
+                .Put("path", GetGameObjectPath(go))
+                .ToString());
+        }
+
+        static CommandResult ReparentInPrefab(string assetPath, Dictionary<string, object> args)
+        {
+            if (!assetPath.EndsWith(".prefab", StringComparison.OrdinalIgnoreCase))
+                return CommandResult.Fail($"Asset is not a prefab: {assetPath}");
+
+            string childPath = SimpleJson.GetString(args, "childPath");
+            if (string.IsNullOrEmpty(childPath))
+                return CommandResult.Fail("'childPath' is required for prefab reparent (the path of the GameObject to move, relative to the prefab root).");
+
+            string newParentPath = SimpleJson.GetString(args, "newParentPath");
+            bool keepWorldSpace = SimpleJson.GetBool(args, "keepWorldSpace", false);
+
+            var prefabRoot = PrefabUtility.LoadPrefabContents(assetPath);
+            if (prefabRoot == null)
+                return CommandResult.Fail($"Failed to load prefab contents: {assetPath}");
+
+            try
+            {
+                Transform target = prefabRoot.transform.Find(childPath);
+                if (target == null)
+                    return CommandResult.Fail($"Child '{childPath}' not found in prefab '{assetPath}'.");
+
+                Transform newParent;
+                if (string.IsNullOrEmpty(newParentPath))
+                {
+                    newParent = prefabRoot.transform;
+                }
+                else
+                {
+                    Transform candidate = prefabRoot.transform.Find(newParentPath);
+                    if (candidate == null)
+                        return CommandResult.Fail($"New parent '{newParentPath}' not found in prefab '{assetPath}'.");
+                    newParent = candidate;
+                }
+
+                if (newParent == target)
+                    return CommandResult.Fail("Cannot reparent a GameObject under itself.");
+                for (var t = newParent; t != null; t = t.parent)
+                {
+                    if (t == target)
+                        return CommandResult.Fail($"Cannot reparent '{target.name}' under its own descendant '{newParent.name}'.");
+                }
+
+                string oldParentRel = GetPrefabRelativePath(target.parent, prefabRoot.transform);
+                target.SetParent(newParent, keepWorldSpace);
+                ApplySiblingIndex(target, newParent, args);
+
+                PrefabUtility.SaveAsPrefabAsset(prefabRoot, assetPath);
+
+                return CommandResult.Ok(SimpleJson.Object()
+                    .Put("reparented", true)
+                    .Put("mode", "prefab")
+                    .Put("assetPath", assetPath)
+                    .Put("childPath", GetPrefabRelativePath(target, prefabRoot.transform))
+                    .Put("oldParentPath", oldParentRel)
+                    .Put("newParentPath", string.IsNullOrEmpty(newParentPath) ? "" : newParentPath)
+                    .Put("keepWorldSpace", keepWorldSpace)
+                    .ToString());
+            }
+            finally
+            {
+                PrefabOps.SafeUnloadPrefabContents(prefabRoot);
+            }
+        }
+
+        static void ApplySiblingIndex(Transform target, Transform newParent, Dictionary<string, object> args)
+        {
+            if (!args.TryGetValue("siblingIndex", out object siRaw)) return;
+            int idx;
+            try { idx = Convert.ToInt32(siRaw); }
+            catch { idx = -1; }
+            if (idx < 0) return;
+            int max = newParent != null ? newParent.childCount - 1 : 0;
+            target.SetSiblingIndex(Mathf.Clamp(idx, 0, max));
+        }
+
+        /// <summary>Path of t relative to root, or "" if t == root.</summary>
+        static string GetPrefabRelativePath(Transform t, Transform root)
+        {
+            if (t == null || t == root) return "";
+            var stack = new System.Collections.Generic.List<string>();
+            for (var cur = t; cur != null && cur != root; cur = cur.parent)
+                stack.Add(cur.name);
+            stack.Reverse();
+            return string.Join("/", stack);
+        }
+
+        /// <summary>Delete a GameObject from scene or prefab. Children destroyed with parent. Scene: { sceneObjectPath }. Prefab: { assetPath, childPath }.</summary>
         public static CommandResult DeleteGameObject(Dictionary<string, object> args)
         {
             string sceneObjectPath = SimpleJson.GetString(args, "sceneObjectPath");
@@ -244,7 +384,6 @@ namespace Dreamer.AgentBridge
                 return CommandResult.Ok(json);
             }
 
-            // Prefab child deletion
             string assetPath = AssetOps.ResolveAssetPath(args);
             if (assetPath == null)
                 return CommandResult.Fail("Target not found. Provide 'sceneObjectPath' or 'assetPath'+'childPath'.");
@@ -290,12 +429,187 @@ namespace Dreamer.AgentBridge
             }
         }
 
-        /// <summary>
-        /// Inspect the scene hierarchy.
-        /// Args: { scene?: "SceneName" }
-        /// </summary>
+        /// <summary>Set GameObject.layer (the anchor field set-property can't reach). Scene: { sceneObjectPath, layer, recursive? }. Prefab: { assetPath, childPath?, layer, recursive? }. layer = name (string) or index (0–31).</summary>
+        public static CommandResult SetLayer(Dictionary<string, object> args)
+        {
+            object layerArg = SimpleJson.GetValue(args, "layer");
+            if (layerArg == null)
+                return CommandResult.Fail("'layer' is required (layer name or numeric index 0–31).");
+
+            int layerIndex;
+            string layerName;
+            var resolveErr = ResolveLayer(layerArg, out layerIndex, out layerName);
+            if (resolveErr != null) return CommandResult.Fail(resolveErr);
+
+            bool recursive = SimpleJson.GetBool(args, "recursive", false);
+
+            string sceneObjectPath = SimpleJson.GetString(args, "sceneObjectPath");
+            if (!string.IsNullOrEmpty(sceneObjectPath))
+            {
+                var go = PropertyOps.FindSceneObject(sceneObjectPath, out string findError);
+                if (go == null)
+                    return CommandResult.Fail(findError ?? $"Scene object not found: {sceneObjectPath}");
+
+                int prevLayer = go.layer;
+                int applied = ApplyLayer(go, layerIndex, recursive, "Set Layer");
+
+                return CommandResult.Ok(SimpleJson.Object()
+                    .Put("set", true)
+                    .Put("layerIndex", layerIndex)
+                    .Put("layerName", layerName)
+                    .Put("previousLayerIndex", prevLayer)
+                    .Put("previousLayerName", LayerMask.LayerToName(prevLayer))
+                    .Put("path", GetGameObjectPath(go))
+                    .Put("appliedToCount", applied)
+                    .ToString());
+            }
+
+            string assetPath = AssetOps.ResolveAssetPath(args);
+            if (assetPath == null)
+                return CommandResult.Fail("Provide 'sceneObjectPath' (scene mode) or 'assetPath'/'guid' (prefab mode).");
+
+            if (!assetPath.EndsWith(".prefab", StringComparison.OrdinalIgnoreCase))
+                return CommandResult.Fail($"Asset is not a prefab: {assetPath}. set-layer targets GameObjects only.");
+
+            string childPath = SimpleJson.GetString(args, "childPath");
+
+            var prefabRoot = PrefabUtility.LoadPrefabContents(assetPath);
+            if (prefabRoot == null)
+                return CommandResult.Fail($"Failed to load prefab: {assetPath}");
+
+            try
+            {
+                GameObject target;
+                if (string.IsNullOrEmpty(childPath))
+                {
+                    target = prefabRoot;
+                }
+                else
+                {
+                    Transform child = prefabRoot.transform.Find(childPath);
+                    if (child == null)
+                        return CommandResult.Fail($"Child '{childPath}' not found in prefab '{assetPath}'.");
+                    target = child.gameObject;
+                }
+
+                int prevLayer = target.layer;
+                int applied = ApplyLayer(target, layerIndex, recursive, null); // Undo not applicable inside isolated prefab scene
+                PrefabUtility.SaveAsPrefabAsset(prefabRoot, assetPath);
+
+                return CommandResult.Ok(SimpleJson.Object()
+                    .Put("set", true)
+                    .Put("layerIndex", layerIndex)
+                    .Put("layerName", layerName)
+                    .Put("previousLayerIndex", prevLayer)
+                    .Put("previousLayerName", LayerMask.LayerToName(prevLayer))
+                    .Put("assetPath", assetPath)
+                    .Put("childPath", childPath ?? "")
+                    .Put("appliedToCount", applied)
+                    .ToString());
+            }
+            finally
+            {
+                PrefabOps.SafeUnloadPrefabContents(prefabRoot);
+            }
+        }
+
+        static string ResolveLayer(object layerArg, out int layerIndex, out string layerName)
+        {
+            layerIndex = -1;
+            layerName = null;
+
+            if (layerArg is int i) { layerIndex = i; }
+            else if (layerArg is long l) { layerIndex = (int)l; }
+            else if (layerArg is double d) { layerIndex = (int)d; }
+            else if (layerArg is string s)
+            {
+                if (int.TryParse(s, out int parsed)) layerIndex = parsed;
+                else
+                {
+                    int byName = LayerMask.NameToLayer(s);
+                    if (byName < 0)
+                    {
+                        var named = new List<string>();
+                        for (int n = 0; n < 32; n++)
+                        {
+                            string nm = LayerMask.LayerToName(n);
+                            if (!string.IsNullOrEmpty(nm)) named.Add($"{n}:{nm}");
+                        }
+                        return $"Layer name '{s}' is not defined. Available: {string.Join(", ", named)}. " +
+                            $"Add it first with `./bin/dreamer set-layer-name --index N --name {s} --wait`.";
+                    }
+                    layerIndex = byName;
+                }
+            }
+            else
+            {
+                return $"'layer' must be a string (name) or number (index). Got: {layerArg.GetType().Name}";
+            }
+
+            if (layerIndex < 0 || layerIndex > 31)
+                return $"Layer index {layerIndex} out of range. Unity layers are 0–31 (32-bit mask).";
+
+            layerName = LayerMask.LayerToName(layerIndex);
+            return null;
+        }
+
+        static int ApplyLayer(GameObject go, int layerIndex, bool recursive, string undoLabel)
+        {
+            int count = 0;
+            if (recursive)
+            {
+                foreach (var t in go.GetComponentsInChildren<Transform>(true))
+                {
+                    if (undoLabel != null) Undo.RecordObject(t.gameObject, undoLabel);
+                    t.gameObject.layer = layerIndex;
+                    EditorUtility.SetDirty(t.gameObject);
+                    count++;
+                }
+            }
+            else
+            {
+                if (undoLabel != null) Undo.RecordObject(go, undoLabel);
+                go.layer = layerIndex;
+                EditorUtility.SetDirty(go);
+                count = 1;
+            }
+            return count;
+        }
+
+        /// <summary>Inspect scene hierarchy or a prefab's hierarchy. Args: { scene? } or { assetPath?/guid? }</summary>
         public static CommandResult InspectHierarchy(Dictionary<string, object> args)
         {
+            var opts = new InspectionOptions
+            {
+                Depth = SimpleJson.GetInt(args, "depth", -1),
+                IncludeTransforms = SimpleJson.GetBool(args, "includeTransforms", false),
+                IncludeFields = SimpleJson.GetBool(args, "includeFields", false),
+            };
+
+            string assetPath = SimpleJson.GetString(args, "assetPath");
+            if (string.IsNullOrEmpty(assetPath))
+            {
+                string guid = SimpleJson.GetString(args, "guid");
+                if (!string.IsNullOrEmpty(guid))
+                    assetPath = AssetDatabase.GUIDToAssetPath(guid);
+            }
+            if (!string.IsNullOrEmpty(assetPath))
+            {
+                if (!assetPath.EndsWith(".prefab", System.StringComparison.OrdinalIgnoreCase))
+                    return CommandResult.Fail($"--asset for inspect-hierarchy must be a .prefab. Got: {assetPath}");
+                var prefab = AssetDatabase.LoadAssetAtPath<GameObject>(assetPath);
+                if (prefab == null)
+                    return CommandResult.Fail($"Prefab not found at: {assetPath}");
+                string nodeJson = Inspection.BuildGameObjectInfo(prefab, opts);
+                var json = SimpleJson.Object()
+                    .Put("assetPath", assetPath)
+                    .Put("guid", AssetDatabase.AssetPathToGUID(assetPath))
+                    .Put("source", "prefab")
+                    .PutRaw("root", nodeJson)
+                    .ToString();
+                return CommandResult.Ok(json);
+            }
+
             string sceneName = SimpleJson.GetString(args, "scene");
 
             Scene scene;
@@ -304,7 +618,6 @@ namespace Dreamer.AgentBridge
                 scene = SceneManager.GetSceneByName(sceneName);
                 if (!scene.IsValid() || !scene.isLoaded)
                 {
-                    // Try by path
                     scene = SceneManager.GetSceneByPath(sceneName);
                     if (!scene.IsValid() || !scene.isLoaded)
                         return CommandResult.Fail($"Scene not found or not loaded: {sceneName}");
@@ -320,24 +633,21 @@ namespace Dreamer.AgentBridge
 
             foreach (var root in rootObjects)
             {
-                rootArr.AddRaw(BuildGameObjectInfo(root, includeChildren: true));
+                rootArr.AddRaw(Inspection.BuildGameObjectInfo(root, opts));
             }
 
-            var json = SimpleJson.Object()
+            var sceneJson = SimpleJson.Object()
                 .Put("scene", scene.name)
                 .Put("scenePath", scene.path)
+                .Put("source", "scene")
                 .Put("rootObjectCount", rootObjects.Length)
                 .PutRaw("rootObjects", rootArr.ToString())
                 .ToString();
 
-            return CommandResult.Ok(json);
+            return CommandResult.Ok(sceneJson);
         }
 
-        /// <summary>
-        /// Instantiate a prefab into the active scene.
-        /// Args: { assetPath?: "path", guid?: "guid", name?: "override", parentPath?: "/Parent",
-        ///         position?: {x,y,z}, rotation?: {x,y,z} }
-        /// </summary>
+        /// <summary>Instantiate a prefab into the active scene. Args: { assetPath?, guid?, name?, parentPath?, position?, rotation? }</summary>
         public static CommandResult InstantiatePrefab(Dictionary<string, object> args)
         {
             string assetPath = AssetOps.ResolveAssetPath(args);
@@ -348,20 +658,17 @@ namespace Dreamer.AgentBridge
             if (prefab == null)
                 return CommandResult.Fail($"Asset at '{assetPath}' is not a GameObject/Prefab.");
 
-            // Instantiate as prefab instance (maintains prefab link)
             var instance = PrefabUtility.InstantiatePrefab(prefab) as GameObject;
             if (instance == null)
                 return CommandResult.Fail($"Failed to instantiate prefab: {assetPath}");
 
             Undo.RegisterCreatedObjectUndo(instance, $"Instantiate {prefab.name}");
 
-            // Optional name override
             string nameOverride = SimpleJson.GetString(args, "name");
             if (!string.IsNullOrEmpty(nameOverride))
                 instance.name = nameOverride;
 
-            // Optional parent
-            string parentPath = SimpleJson.GetString(args, "parentPath");
+            string parentPath = ResolveParentPath(args);
             if (!string.IsNullOrEmpty(parentPath))
             {
                 var parent = PropertyOps.FindSceneObject(parentPath, out string parentError);
@@ -371,14 +678,12 @@ namespace Dreamer.AgentBridge
                     DreamerLog.Warn($"Parent not found: {parentPath} ({parentError}), placing at root.");
             }
 
-            // Optional position
             if (args.TryGetValue("position", out object posObj) && posObj is Dictionary<string, object> posDict)
             {
                 instance.transform.position = new Vector3(
                     GetFloat(posDict, "x"), GetFloat(posDict, "y"), GetFloat(posDict, "z"));
             }
 
-            // Optional rotation (euler angles)
             if (args.TryGetValue("rotation", out object rotObj) && rotObj is Dictionary<string, object> rotDict)
             {
                 instance.transform.eulerAngles = new Vector3(
@@ -397,10 +702,7 @@ namespace Dreamer.AgentBridge
             return CommandResult.Ok(json);
         }
 
-        /// <summary>
-        /// Create a new scene.
-        /// Args: { name: "Level2", path?: "Assets/Scenes", setActive?: true }
-        /// </summary>
+        /// <summary>Create a new scene. Args: { name, path?, setActive? }</summary>
         public static CommandResult CreateScene(Dictionary<string, object> args)
         {
             string name = SimpleJson.GetString(args, "name");
@@ -410,7 +712,6 @@ namespace Dreamer.AgentBridge
             string folder = SimpleJson.GetString(args, "path", "Assets/Scenes");
             bool setActive = SimpleJson.GetBool(args, "setActive", true);
 
-            // Ensure directory exists
             string fullDir = Path.GetFullPath(folder);
             if (!Directory.Exists(fullDir))
             {
@@ -439,10 +740,7 @@ namespace Dreamer.AgentBridge
             return CommandResult.Ok(json);
         }
 
-        /// <summary>
-        /// Open an existing scene.
-        /// Args: { path: "Assets/Scenes/Level2.unity", mode?: "single"|"additive" }
-        /// </summary>
+        /// <summary>Open an existing scene. Args: { path, mode?: "single"|"additive" }</summary>
         public static CommandResult OpenScene(Dictionary<string, object> args)
         {
             string scenePath = SimpleJson.GetString(args, "path");
@@ -470,17 +768,13 @@ namespace Dreamer.AgentBridge
             return CommandResult.Ok(json);
         }
 
-        /// <summary>
-        /// Save the current scene or a specific scene.
-        /// Args: { path?: "Assets/Scenes/Level2.unity" }
-        /// </summary>
+        /// <summary>Save the current scene or a specific scene. Args: { path? }</summary>
         public static CommandResult SaveScene(Dictionary<string, object> args)
         {
             string scenePath = SimpleJson.GetString(args, "path");
 
             if (!string.IsNullOrEmpty(scenePath))
             {
-                // Save a specific scene by path
                 var scene = SceneManager.GetSceneByPath(scenePath);
                 if (!scene.IsValid() || !scene.isLoaded)
                     return CommandResult.Fail($"Scene not found or not loaded: {scenePath}");
@@ -499,7 +793,6 @@ namespace Dreamer.AgentBridge
             }
             else
             {
-                // Save all open scenes
                 bool saved = EditorSceneManager.SaveOpenScenes();
                 if (!saved)
                     return CommandResult.Fail("Failed to save open scenes.");
@@ -515,17 +808,12 @@ namespace Dreamer.AgentBridge
             }
         }
 
-        /// <summary>
-        /// Create a hierarchy of GameObjects with components.
-        /// Scene mode (default): { name, components?, children? }
-        /// Prefab mode: { name, components?, children?, savePath: "Assets/Prefabs" }
-        ///   When savePath is provided, builds the hierarchy, saves as prefab, destroys the temp object.
-        /// </summary>
+        /// <summary>Create a hierarchy with components. Scene: { name, components?, children? }. Prefab: same + { savePath } — builds, saves as prefab, destroys temp.</summary>
         public static CommandResult CreateHierarchy(Dictionary<string, object> args)
         {
             string name = SimpleJson.GetString(args, "name", "GameObject");
             string savePath = SimpleJson.GetString(args, "savePath");
-            string parentPath = SimpleJson.GetString(args, "parentPath");
+            string parentPath = ResolveParentPath(args);
 
             Transform parent = null;
             if (!string.IsNullOrEmpty(parentPath))
@@ -541,10 +829,8 @@ namespace Dreamer.AgentBridge
             if (go == null)
                 return CommandResult.Fail("Failed to create root GameObject.");
 
-            // Prefab mode: save as prefab and destroy the temp scene object
             if (!string.IsNullOrEmpty(savePath))
             {
-                // Ensure directory exists
                 string fullDir = System.IO.Path.GetFullPath(savePath);
                 if (!System.IO.Directory.Exists(fullDir))
                 {
@@ -577,14 +863,11 @@ namespace Dreamer.AgentBridge
                 return CommandResult.Ok(prefabJson);
             }
 
-            // Scene mode: keep in scene
             Undo.RegisterCreatedObjectUndo(go, $"Create hierarchy {name}");
 
-            // Build the standard result, then splice warnings in before returning.
+            // Splice warnings into the result via string substitution — re-parsing
+            // is overkill, and the happy-path output stays identical when none.
             string resultJson = BuildHierarchyResult(go);
-            // Quick-and-safe: re-parse-and-extend is overkill. Instead, wrap by
-            // string-replacing the final '}' with ",warnings":[...]"}" only when
-            // we have something to report. Keeps the happy-path output identical.
             if (warnings.Count > 0)
             {
                 int lastBrace = resultJson.LastIndexOf('}');
@@ -605,12 +888,8 @@ namespace Dreamer.AgentBridge
             return arr.ToString();
         }
 
-        /// <summary>
-        /// Build a GameObject + its components and recurse children. Component failures
-        /// are RECORDED into <paramref name="warnings"/> instead of being silently
-        /// dropped — the old behavior let one unresolved type mask the entire gap in
-        /// the hierarchy, which was especially bad during script compile errors.
-        /// </summary>
+        // Component failures land in `warnings` rather than being silently dropped — the old
+        // behavior let one unresolved type mask the gap, especially bad during compile errors.
         static GameObject CreateNode(Dictionary<string, object> nodeArgs, Transform parent, List<string> warnings)
         {
             string name = SimpleJson.GetString(nodeArgs, "name", "GameObject");
@@ -620,7 +899,6 @@ namespace Dreamer.AgentBridge
             if (parent != null)
                 go.transform.SetParent(parent, false);
 
-            // Add components
             if (nodeArgs.TryGetValue("components", out object compsObj) && compsObj is List<object> compList)
             {
                 foreach (var compEntry in compList)
@@ -644,7 +922,6 @@ namespace Dreamer.AgentBridge
                         continue;
                     }
 
-                    // Skip Transform — already present (expected, not a warning)
                     if (compType == typeof(Transform) || compType == typeof(RectTransform)) continue;
 
                     if (go.GetComponent(compType) != null)
@@ -657,7 +934,6 @@ namespace Dreamer.AgentBridge
                 }
             }
 
-            // Create children recursively
             if (nodeArgs.TryGetValue("children", out object childrenObj) && childrenObj is List<object> childList)
             {
                 foreach (var childEntry in childList)
@@ -678,7 +954,6 @@ namespace Dreamer.AgentBridge
                 .Put("path", GetGameObjectPath(go))
                 .Put("created", true);
 
-            // Components
             var comps = SimpleJson.Array();
             foreach (var comp in go.GetComponents<Component>())
             {
@@ -687,7 +962,6 @@ namespace Dreamer.AgentBridge
             }
             obj.PutRaw("components", comps.ToString());
 
-            // Children
             if (go.transform.childCount > 0)
             {
                 var children = SimpleJson.Array();
@@ -711,61 +985,6 @@ namespace Dreamer.AgentBridge
             if (val is long l) return l;
             return 0f;
         }
-
-        // ── Helpers ──
-
-        static string BuildGameObjectInfo(GameObject go, bool includeChildren)
-        {
-            var obj = SimpleJson.Object()
-                .Put("name", go.name)
-                .Put("instanceId", go.GetInstanceID())
-                .Put("active", go.activeSelf)
-                .Put("tag", go.tag)
-                .Put("layer", go.layer)
-                .Put("isStatic", go.isStatic);
-
-            // Components
-            var comps = SimpleJson.Array();
-            foreach (var comp in go.GetComponents<Component>())
-            {
-                if (comp == null) continue; // Missing script
-                comps.AddRaw(SimpleJson.Object()
-                    .Put("type", comp.GetType().Name)
-                    .Put("fullType", comp.GetType().FullName)
-                    .Put("enabled", IsEnabled(comp))
-                    .ToString());
-            }
-            obj.PutRaw("components", comps.ToString());
-
-            // Children (1 level deep)
-            if (includeChildren && go.transform.childCount > 0)
-            {
-                var children = SimpleJson.Array();
-                for (int i = 0; i < go.transform.childCount; i++)
-                {
-                    var child = go.transform.GetChild(i).gameObject;
-                    children.AddRaw(BuildGameObjectInfo(child, includeChildren: false));
-                }
-                obj.PutRaw("children", children.ToString());
-            }
-            else
-            {
-                obj.Put("childCount", go.transform.childCount);
-            }
-
-            return obj.ToString();
-        }
-
-        static bool IsEnabled(Component comp)
-        {
-            if (comp is Behaviour b) return b.enabled;
-            if (comp is Renderer r) return r.enabled;
-            if (comp is Collider c) return c.enabled;
-            return true;
-        }
-
-        // Note: scene-object path resolution is shared via PropertyOps.FindSceneObject,
-        // which supports multi-scene, recursive descendant search, and ambiguity detection.
 
         static string GetGameObjectPath(GameObject go) => PropertyOps.GetScenePath(go);
     }

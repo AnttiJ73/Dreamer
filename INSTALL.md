@@ -129,14 +129,17 @@ Do NOT ignore `.dreamer-config.json` or `.dreamer-source.json` — those are com
 
 Invoke as `./bin/dreamer <command>` (POSIX/bash) or `.\bin\dreamer <command>` (Windows cmd/PowerShell) from the project root. Daemon auto-starts on first use; talks to Unity over localhost.
 
-- Skill: `.claude/skills/dreamer/SKILL.md`
+- Skill: `.claude/skills/dreamer/SKILL.md` (full command surface, auto-loads on Unity tasks)
 - Config: `daemon/.dreamer-config.json` (port, autoFocus, defaultWaitTimeout)
-- Source tracking: `daemon/.dreamer-source.json`
-- Update: `./bin/dreamer update` (preserves config)
+- Source: `daemon/.dreamer-source.json` — `./bin/dreamer update` to pull latest
 - Always pass `--wait` to mutation commands
 - After writing `.cs` files directly, run `./bin/dreamer refresh-assets --wait`
 - Check `./bin/dreamer status` before mutating
+
+For Canvas (uGUI) UI work — menus, HUDs, panels, buttons, scroll views — install the optional UGUI add-on (`./bin/dreamer addon install ugui`). It adds `create-ui-tree` for declarative UI building. Without it, Canvas UI work falls back to manual C# scripting which is much slower.
 ```
+
+The UGUI add-on appends its own CLAUDE.md section on install (between `<!-- dreamer-addon:ugui:start -->` and `:end -->` markers) and strips it on remove. Don't pre-add the UGUI section here — `addon install ugui` handles that.
 
 ---
 
@@ -165,6 +168,23 @@ Delete `<tmp>` recursively.
 4. Smoke test: `./bin/dreamer find-assets --type prefab --wait`.
 5. Report the install commit SHA from Step 2.
 6. To update later: say *"update Dreamer"* to Claude.
+7. **Mention optional add-ons**: uGUI (Canvas UI building) is available as a separate add-on — if the user plans to build uGUI menus/HUDs with Claude, they should also run *"Install the Dreamer UGUI add-on"*.
+
+---
+
+## 10a. Optional: UGUI add-on
+
+If the user asks for the uGUI add-on (either during install or later), run:
+
+```
+./bin/dreamer addon install ugui
+```
+
+This fetches the `com.dreamer.agent-bridge.ugui` Unity package from the source repo and copies it into `Packages/`, plus the `.claude/skills/dreamer-ugui/` skill directory. It also stamps `addons: ["ugui"]` into `daemon/.dreamer-source.json` so future `./bin/dreamer update` invocations keep the add-on in sync.
+
+Remove with: `./bin/dreamer addon remove ugui`. List installed: `./bin/dreamer addon list`.
+
+The add-on adds three commands: `create-ui-tree` (declarative Canvas UI builder), `inspect-ui-tree` (dump an existing UI to the same schema), `set-rect-transform` (anchor/size/pivot helper). Without the add-on, these commands return a clear "add-on not installed" error — core Dreamer is unaffected.
 
 ---
 

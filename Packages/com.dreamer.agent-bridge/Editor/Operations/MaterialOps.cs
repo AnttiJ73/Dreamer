@@ -6,20 +6,12 @@ using UnityEngine;
 
 namespace Dreamer.AgentBridge
 {
-    /// <summary>
-    /// Material and shader operations. Materials have a non-SerializedProperty
-    /// API (MaterialProperty + material.SetColor/SetFloat/SetTexture/etc.) so
-    /// the generic set-property path doesn't reach them cleanly — hence this
-    /// dedicated module.
-    /// </summary>
+    /// <summary>Material operations. Materials use the non-SerializedProperty MaterialProperty API (SetColor/SetFloat/SetTexture/...) so the generic set-property path doesn't reach them.</summary>
     public static class MaterialOps
     {
         // ── create-material ──────────────────────────────────────────────
 
-        /// <summary>
-        /// Create a new material asset.
-        /// Args: { name: "MyMat", path?: "Assets/Materials", shader?: "Universal Render Pipeline/Lit" }
-        /// </summary>
+        /// <summary>Create a new material asset. Args: { name, path?, shader? }</summary>
         public static CommandResult CreateMaterial(Dictionary<string, object> args)
         {
             string name = SimpleJson.GetString(args, "name");
@@ -29,10 +21,8 @@ namespace Dreamer.AgentBridge
             string folder = SimpleJson.GetString(args, "path", "Assets/Materials");
             string shaderName = SimpleJson.GetString(args, "shader");
 
-            // Default to Standard if caller didn't pick one. URP projects should
-            // pass an explicit shader name; Standard still exists but isn't the
-            // right choice for URP/HDRP. Caller gets a warning in the result
-            // either way so they can see what was picked.
+            // Default to Standard; URP/HDRP projects should pass --shader explicitly. Caller
+            // gets a warning in the result either way so they can see what was picked.
             Shader shader = null;
             string shaderPickWarning = null;
             if (!string.IsNullOrEmpty(shaderName))
@@ -76,13 +66,7 @@ namespace Dreamer.AgentBridge
 
         // ── inspect-material ─────────────────────────────────────────────
 
-        /// <summary>
-        /// Return shader name + full property list (name, type, current value,
-        /// display name, range) so the agent knows what it can set without
-        /// guessing. This is the "what does this material look like internally"
-        /// query — pair it with set-material-property.
-        /// Args: { assetPath?: "path", guid?: "guid" }
-        /// </summary>
+        /// <summary>Return shader + property list so the agent knows what it can set without guessing. Pair with set-material-property. Args: { assetPath?, guid? }</summary>
         public static CommandResult InspectMaterial(Dictionary<string, object> args)
         {
             string assetPath = AssetOps.ResolveAssetPath(args);
@@ -130,8 +114,7 @@ namespace Dreamer.AgentBridge
                         break;
                     case ShaderUtil.ShaderPropertyType.TexEnv:
                         var tex = mat.GetTexture(pname);
-                        // Explicit path-or-null, then emit. Bare `null` in a Put call is
-                        // ambiguous between the `string` and `string[]` overloads (CS0121).
+                        // Bare `null` in Put() is ambiguous between string and string[] overloads (CS0121).
                         string texPath = tex != null ? AssetDatabase.GetAssetPath(tex) : null;
                         if (texPath != null) p.Put("value", texPath);
                         else p.PutNull("value");
@@ -146,7 +129,6 @@ namespace Dreamer.AgentBridge
                 props.AddRaw(p.ToString());
             }
 
-            // Keywords (shader features like _EMISSION, _NORMALMAP, etc.)
             var keywords = SimpleJson.Array();
             foreach (var kw in mat.shaderKeywords) keywords.Add(kw);
 
@@ -163,22 +145,7 @@ namespace Dreamer.AgentBridge
 
         // ── set-material-property ────────────────────────────────────────
 
-        /// <summary>
-        /// Set a material property via the MaterialProperty API (not SerializedObject).
-        /// Args: {
-        ///   assetPath?/guid?,
-        ///   property: "_BaseColor",
-        ///   value: {...}  (see below per type)
-        /// }
-        /// Value formats:
-        ///   Color:   {"r":1,"g":0,"b":0,"a":1}
-        ///   Vector:  {"x":1,"y":2,"z":3,"w":0}
-        ///   Float:   0.5  or  "0.5"
-        ///   Texture: {"assetRef":"Assets/Textures/X.png"} or null to clear
-        ///
-        /// Or, for keywords:
-        ///   { keyword: "_EMISSION", enable: true }
-        /// </summary>
+        /// <summary>Set a material property via the MaterialProperty API (not SerializedObject). Args: { assetPath?, guid?, property, value } or { keyword, enable }. Value: Color {r,g,b,a} | Vector {x,y,z,w} | float | Texture {assetRef} or null.</summary>
         public static CommandResult SetMaterialProperty(Dictionary<string, object> args)
         {
             string assetPath = AssetOps.ResolveAssetPath(args);
@@ -189,8 +156,6 @@ namespace Dreamer.AgentBridge
             if (mat == null)
                 return CommandResult.Fail($"Asset at '{assetPath}' is not a Material.");
 
-            // Keyword branch takes priority so callers can set both in one call
-            // (not today, but leaves room for batch APIs later).
             string keyword = SimpleJson.GetString(args, "keyword");
             if (!string.IsNullOrEmpty(keyword))
             {
@@ -216,10 +181,8 @@ namespace Dreamer.AgentBridge
 
             object value = SimpleJson.GetValue(args, "value");
 
-            // Route by the property's declared type on the shader so caller doesn't need
-            // to know which Set* method to hit. This is the main value of this command
-            // over generic set-property — MaterialPropertyBlock / MaterialProperty API
-            // picks the right setter based on shader metadata.
+            // Route by the shader's declared type so the caller doesn't need to pick the
+            // right Set* method — this is the main reason to use this command over generic set-property.
             int propIdx = mat.shader.FindPropertyIndex(property);
             if (propIdx < 0)
                 return CommandResult.Fail($"Shader '{mat.shader.name}' has no property index for '{property}' (likely an inherited/fallback-only property — this material can't set it).");
@@ -264,11 +227,7 @@ namespace Dreamer.AgentBridge
 
         // ── set-material-shader ──────────────────────────────────────────
 
-        /// <summary>
-        /// Reassign a material's shader. Unity preserves compatible property
-        /// values (same name + compatible type) and silently drops the rest.
-        /// Args: { assetPath?, guid?, shader: "Shader/Name" }
-        /// </summary>
+        /// <summary>Reassign a material's shader. Unity preserves compatible properties (same name + compatible type) and silently drops the rest. Args: { assetPath?, guid?, shader }</summary>
         public static CommandResult SetMaterialShader(Dictionary<string, object> args)
         {
             string assetPath = AssetOps.ResolveAssetPath(args);

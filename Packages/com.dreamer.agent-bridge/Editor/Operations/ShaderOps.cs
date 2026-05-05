@@ -7,28 +7,12 @@ using UnityEngine;
 
 namespace Dreamer.AgentBridge
 {
-    /// <summary>
-    /// Shader-specific queries. These are diagnostics — there is no
-    /// `create_shader` or `set_shader_code` command because agents write
-    /// .shader source files directly to disk via their own file tools
-    /// (same as .cs), then `refresh-assets` picks them up.
-    /// </summary>
+    /// <summary>Shader diagnostics. Agents write .shader source directly to disk and `refresh-assets` picks them up — no create_shader / set_shader_code commands.</summary>
     public static class ShaderOps
     {
         // ── shader-status ────────────────────────────────────────────────
 
-        /// <summary>
-        /// Report shader compile errors/warnings via ShaderUtil.GetShaderMessages.
-        /// Args:
-        ///   { assetPath?: "Assets/Shaders/Foo.shader", guid?: "..." }
-        ///     → single shader report
-        ///   {} or { scanProject: true }
-        ///     → scan every shader under Assets/; report any with messages.
-        ///
-        /// Result fields: `status` ("ok" | "warnings" | "errors"), `messages[]`
-        /// with per-message severity/text/platform/file/line. For project
-        /// scans, also `shadersWithErrors[]` / `shadersWithWarnings[]`.
-        /// </summary>
+        /// <summary>Report shader compile errors/warnings via ShaderUtil.GetShaderMessages. Single: { assetPath?, guid? }. Project scan: {} or { scanProject: true }.</summary>
         public static CommandResult ShaderStatus(Dictionary<string, object> args)
         {
             string assetPath = args.ContainsKey("assetPath") || args.ContainsKey("guid")
@@ -82,8 +66,7 @@ namespace Dreamer.AgentBridge
             foreach (var guid in guids)
             {
                 string path = AssetDatabase.GUIDToAssetPath(guid);
-                // Skip anything outside Assets/ (package shaders are usually fine;
-                // we care about user shaders).
+                // Skip anything outside Assets/ — package shaders are usually fine; report user shaders.
                 if (!path.StartsWith("Assets/", StringComparison.OrdinalIgnoreCase)) continue;
                 var shader = AssetDatabase.LoadAssetAtPath<Shader>(path);
                 if (shader == null) continue;
@@ -124,9 +107,8 @@ namespace Dreamer.AgentBridge
                 .ToString());
         }
 
-        // ShaderMessage is UnityEditor.ShaderMessage (NOT UnityEditor.Rendering) in
-        // Unity's public API — despite the severity enum living in
-        // UnityEditor.Rendering. The namespace mismatch is Unity's; we just match it.
+        // ShaderMessage lives in UnityEditor (not UnityEditor.Rendering, despite the severity enum
+        // being there) — Unity's namespace mismatch, we match it.
         static string BuildMessagesJson(UnityEditor.ShaderMessage[] msgs)
         {
             if (msgs == null || msgs.Length == 0) return "[]";
@@ -147,14 +129,7 @@ namespace Dreamer.AgentBridge
 
         // ── inspect-shader ───────────────────────────────────────────────
 
-        /// <summary>
-        /// Describe a shader's declared interface: properties (names, types,
-        /// display names, ranges), any errors/warnings, render queue,
-        /// subshader LOD. Use to discover valid property names before
-        /// calling set-material-property.
-        /// Args: { assetPath?: "Assets/Shaders/Foo.shader", guid?: "..." } OR
-        ///       { shader: "Universal Render Pipeline/Lit" } (by name)
-        /// </summary>
+        /// <summary>Describe a shader's declared interface (properties, ranges, render queue, LOD). Use to discover valid property names before set-material-property. Args: { assetPath?, guid? } or { shader }.</summary>
         public static CommandResult InspectShader(Dictionary<string, object> args)
         {
             Shader shader = null;
@@ -202,7 +177,6 @@ namespace Dreamer.AgentBridge
                 props.AddRaw(entry.ToString());
             }
 
-            // Include any existing compile messages for convenience.
             var msgs = ShaderUtil.GetShaderMessages(shader);
 
             var json = SimpleJson.Object()

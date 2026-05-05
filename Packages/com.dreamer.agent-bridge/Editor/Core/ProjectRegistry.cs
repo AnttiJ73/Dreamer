@@ -5,24 +5,10 @@ using UnityEngine;
 
 namespace Dreamer.AgentBridge
 {
-    /// <summary>
-    /// Read-only accessor for the shared projects registry written by the
-    /// daemon (see daemon/src/project-registry.js). Bridges look up their own
-    /// port here so multiple Unity editors on different projects can share a
-    /// single machine without port conflicts.
-    ///
-    /// File location:
-    ///   Windows: %APPDATA%/Dreamer/projects.json
-    ///   Unix:    $HOME/.dreamer/projects.json
-    ///
-    /// The bridge never writes this file — that's owned by the CLI/daemon.
-    /// If no entry exists for the current project, the bridge surfaces a hint
-    /// in the AgentBridge window telling the user to run `./bin/dreamer status`
-    /// from the project root.
-    /// </summary>
+    /// <summary>Read-only accessor for the shared projects registry written by the daemon (daemon/src/project-registry.js). The bridge never writes this file.</summary>
     public static class ProjectRegistry
     {
-        /// <summary>Resolve the registry file path for the current OS.</summary>
+        /// <summary>Registry file path for the current OS. Windows: %APPDATA%/Dreamer/projects.json. Unix: $HOME/.dreamer/projects.json.</summary>
         public static string GetRegistryPath()
         {
             // Test/dev override matches the Node side.
@@ -43,11 +29,7 @@ namespace Dreamer.AgentBridge
             return Path.Combine(home, ".dreamer", "projects.json");
         }
 
-        /// <summary>
-        /// Canonical form for registry keys — must match the Node normalizer
-        /// (replace backslashes with forward slashes, trim trailing slash,
-        /// lowercase on Windows).
-        /// </summary>
+        /// <summary>Canonical registry-key form — must match the Node normalizer (forward slashes, no trailing slash, lowercase on Windows).</summary>
         public static string NormalizeProjectPath(string path)
         {
             if (string.IsNullOrEmpty(path)) return null;
@@ -57,28 +39,19 @@ namespace Dreamer.AgentBridge
             return n;
         }
 
-        /// <summary>
-        /// Compute the Unity project root for the running editor. This is the
-        /// parent of <c>Application.dataPath</c>.
-        /// </summary>
+        /// <summary>Unity project root — parent of Application.dataPath.</summary>
         public static string GetCurrentProjectRoot()
         {
             return Path.GetDirectoryName(Application.dataPath);
         }
 
-        /// <summary>
-        /// Look up the port registered for the current project.
-        /// Returns -1 if the file is missing, malformed, or has no entry.
-        /// </summary>
+        /// <summary>Port registered for the current project, or -1.</summary>
         public static int GetPortForCurrentProject()
         {
             return GetPortForProject(GetCurrentProjectRoot());
         }
 
-        /// <summary>
-        /// Look up the port registered for any project path.
-        /// Returns -1 if not found.
-        /// </summary>
+        /// <summary>Port registered for any project path, or -1.</summary>
         public static int GetPortForProject(string projectPath)
         {
             var entry = GetEntryForProject(projectPath);
@@ -93,10 +66,7 @@ namespace Dreamer.AgentBridge
             return -1;
         }
 
-        /// <summary>
-        /// Retrieve the registry entry dictionary for a project, or null.
-        /// Exposed so callers can also read daemonPid / lastStartedAt.
-        /// </summary>
+        /// <summary>Registry entry dictionary for a project, or null. Exposed so callers can read daemonPid / lastStartedAt.</summary>
         public static Dictionary<string, object> GetEntryForProject(string projectPath)
         {
             string key = NormalizeProjectPath(projectPath);

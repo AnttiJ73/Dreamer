@@ -4,12 +4,7 @@ const path = require('path');
 const log = require('./log').create('unity-state');
 const MAX_CONSOLE_ENTRIES = 200;
 
-/**
- * Canonicalise a path for equality comparison across platforms.
- * - Converts backslashes to forward slashes.
- * - Lowercases on Windows (case-insensitive filesystem).
- * - Strips trailing slashes.
- */
+/** Canonicalise path for cross-platform equality (slashes, case on Windows, trim trailing). */
 function normalisePath(p) {
   if (!p || typeof p !== 'string') return null;
   let n = p.replace(/\\/g, '/').replace(/\/+$/, '');
@@ -17,13 +12,9 @@ function normalisePath(p) {
   return n;
 }
 
-/** The Unity project root this daemon belongs to — derived from its install location. */
 const DAEMON_PROJECT_ROOT = path.resolve(__dirname, '..', '..');
 
-/**
- * Tracks the current state of the Unity Editor as reported via heartbeats
- * and state updates.
- */
+/** Tracks Unity Editor state from heartbeats and state updates. */
 class UnityState {
   constructor() {
     this.connected = false;
@@ -32,26 +23,18 @@ class UnityState {
     this.compileErrors = [];
     this.playMode = false;
     this.lastCompileSuccess = null;
-    /** True when `lastCompileSuccess` was restored from the bridge's memory on
-     *  reconnect rather than witnessed by this daemon. Useful for the UI to
-     *  distinguish "saw it happen" from "Unity says it happened earlier". */
+    // True when lastCompileSuccess was restored from the bridge on reconnect
+    // rather than witnessed live — UI uses this to distinguish "saw it" from
+    // "Unity says it happened earlier".
     this.lastCompileSourceIsBridge = false;
-    /** True once Unity has reported full state at least once. Compilation-gated
-     *  commands must wait until this is true, otherwise a fresh daemon with an
-     *  empty state snapshot will dispatch them before the first state tick and
-     *  Unity will bounce them with "Type not found" if compile errors exist. */
+    // hasReceivedState gates compilation-sensitive dispatch: a fresh daemon
+    // with an empty snapshot would otherwise dispatch before the first state
+    // tick and Unity would bounce with "Type not found" if errors exist.
     this.hasReceivedState = false;
-    /** The project root of the Unity that's talking to us, as reported in heartbeats. */
     this.connectedProjectPath = null;
-    /** @type {Array<{type:string, message:string, stackTrace?:string, timestamp:string}>} */
     this.consoleEntries = [];
   }
 
-  /**
-   * Merge partial state reported by Unity.
-   * @param {object} state
-   * @returns {{ compilationJustSucceeded: boolean }}
-   */
   update(state) {
     const wasCompiling = this.compiling;
 
@@ -62,9 +45,6 @@ class UnityState {
       this.connectedProjectPath = state.projectPath;
     }
 
-    // Any non-heartbeat state update counts — at this point we know Unity
-    // has told us about compiling/compileErrors/playMode, so compilation-
-    // gated dispatch can proceed without the fresh-daemon race.
     if (state.compiling !== undefined || state.compileErrors !== undefined || state.playMode !== undefined) {
       this.hasReceivedState = true;
     }
@@ -72,17 +52,12 @@ class UnityState {
     this.connected = true;
     this.lastHeartbeat = Date.now();
 
-    // Accept the bridge's `lastCompileTime` as authoritative whenever it's
-    // NEWER than ours. The bridge records every compile-finished event via
-    // Unity's CompilationPipeline.compilationFinished callback, so it's the
-    // ground truth. Relying on our own `wasCompiling → !compiling` edge
-    // detection misses short compiles (<2s state-tick interval) — both ticks
-    // see compiling:false and the edge never registers, leaving our
-    // timestamp stale while Unity has actually re-compiled multiple times.
-    //
-    // This also covers the "restore after daemon restart" case that the
-    // previous guard was written for — if we have no timestamp yet, any
-    // bridge-reported success is monotonically newer than 0.
+    // Bridge's lastCompileTime is authoritative when newer — it hooks
+    // CompilationPipeline.compilationFinished so it sees every compile.
+    // Our own wasCompiling→!compiling edge detection misses short compiles
+    // (<2s state-tick interval), which would otherwise leave our timestamp
+    // stale across multiple actual recompiles. Also covers daemon-restart
+    // restoration via the monotonic-newer guard against a 0 timestamp.
     if (state.lastCompileTime && state.lastCompileSucceeded === true) {
       const bridgeMs = Date.parse(state.lastCompileTime);
       const ourMs = this.lastCompileSuccess ? Date.parse(this.lastCompileSuccess) : 0;
@@ -92,10 +67,8 @@ class UnityState {
       }
     }
 
-    // Secondary path: if the daemon DID observe the compiling → !compiling
-    // edge directly (long compiles), also stamp the success. The timestamp
-    // may be a hair later than the bridge's, but that's fine — we just take
-    // whichever is newer via the same monotonic gate.
+    // Secondary path: if we did observe the edge directly (long compiles),
+    // stamp the success too — same monotonic gate picks the winner.
     const compilationJustSucceeded =
       wasCompiling && !this.compiling && this.compileErrors.length === 0;
 
@@ -112,10 +85,6 @@ class UnityState {
     return { compilationJustSucceeded };
   }
 
-  /**
-   * Record a heartbeat from Unity. Optionally accepts the Unity-reported project path.
-   * @param {string} [projectPath]
-   */
   heartbeat(projectPath) {
     this.connected = true;
     this.lastHeartbeat = Date.now();
@@ -124,28 +93,16 @@ class UnityState {
     }
   }
 
-  /**
-   * Get the daemon's own project root.
-   * @returns {string}
-   */
   getDaemonProjectPath() {
     return DAEMON_PROJECT_ROOT;
   }
 
-  /**
-   * True iff Unity is connected AND the Unity project path matches the daemon's project root.
-   * Null if Unity hasn't reported a path yet.
-   * @returns {boolean|null}
-   */
+  /** true if connected AND project paths match. null if path not yet reported. */
   isProjectMatch() {
     if (!this.connectedProjectPath) return null;
     return normalisePath(this.connectedProjectPath) === normalisePath(DAEMON_PROJECT_ROOT);
   }
 
-  /**
-   * Check heartbeat freshness. Call periodically.
-   * @param {number} [timeoutMs=10000]
-   */
   checkConnection(timeoutMs = 10000) {
     if (!this.lastHeartbeat) {
       this.connected = false;
@@ -155,32 +112,33 @@ class UnityState {
     if (elapsed > timeoutMs) {
       this.connected = false;
     }
-    // If disconnected for >30s, reset compiling state — stale data is worse than unknown
-    if (elapsed > 30000 && this.compiling) {
-      this.compiling = false;
-      log.info('Resetting stale compiling state after prolonged disconnect');
+    // After 30s disconnected, zero cached state — stale flags (compiling/playMode/
+    // errors) all gate dispatch with misleading reasons after Unity comes back,
+    // and the first post-reconnect heartbeat will repopulate anyway.
+    if (elapsed > 30000) {
+      let cleared = false;
+      if (this.compiling)              { this.compiling = false;     cleared = true; }
+      if (this.playMode)               { this.playMode = false;      cleared = true; }
+      if (this.compileErrors.length)   { this.compileErrors = [];    cleared = true; }
+      if (cleared) {
+        log.info('Resetting stale editor state (compiling/playMode/errors) after prolonged disconnect');
+      }
     }
   }
 
-  /** @returns {boolean} */
   isReady() {
     return this.connected && !this.compiling;
   }
 
-  /** @returns {boolean} */
   isCompiling() {
     return this.compiling;
   }
 
-  /** @returns {string[]} */
   getCompileErrors() {
     return this.compileErrors;
   }
 
-  /**
-   * Append console entries (ring buffer, max 200).
-   * @param {Array<{type:string, message:string, stackTrace?:string, timestamp?:string}>} entries
-   */
+  /** Append to console ring buffer (capped at MAX_CONSOLE_ENTRIES). */
   addConsoleEntries(entries) {
     if (!Array.isArray(entries)) return;
     for (const entry of entries) {
@@ -191,24 +149,16 @@ class UnityState {
         timestamp: entry.timestamp || new Date().toISOString(),
       });
     }
-    // Trim to max
     if (this.consoleEntries.length > MAX_CONSOLE_ENTRIES) {
       this.consoleEntries = this.consoleEntries.slice(-MAX_CONSOLE_ENTRIES);
     }
   }
 
-  /**
-   * @param {number} [count=50]
-   * @returns {Array}
-   */
   getConsole(count = 50) {
     const n = Math.max(1, Math.min(count, this.consoleEntries.length));
     return this.consoleEntries.slice(-n);
   }
 
-  /**
-   * Serialisable snapshot.
-   */
   toJSON() {
     return {
       connected: this.connected,

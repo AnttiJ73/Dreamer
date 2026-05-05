@@ -39,6 +39,8 @@ namespace Dreamer.AgentBridge
             EditorGUILayout.Space(8);
             DrawConnectionSettings();
             EditorGUILayout.Space(8);
+            DrawAgentPolicy();
+            EditorGUILayout.Space(8);
             DrawStatus();
             EditorGUILayout.Space(8);
             DrawCompilationStatus();
@@ -47,7 +49,6 @@ namespace Dreamer.AgentBridge
 
             EditorGUILayout.EndScrollView();
 
-            // Auto-repaint while running
             if (AgentBridgeBootstrap.IsRunning)
                 Repaint();
         }
@@ -64,7 +65,6 @@ namespace Dreamer.AgentBridge
                 AgentBridgeBootstrap.IsEnabled = enabled;
             }
 
-            // Status indicator
             string status = AgentBridgeBootstrap.IsRunning ? "RUNNING" : "STOPPED";
             Color statusColor = AgentBridgeBootstrap.IsRunning ? new Color(0.2f, 0.8f, 0.2f) : Color.gray;
 
@@ -79,7 +79,6 @@ namespace Dreamer.AgentBridge
             EditorGUI.LabelField(rect, $"Status: {status}", style);
             GUI.color = prevColor;
 
-            // Project path (helps debug multi-project setups)
             string projectPath = System.IO.Path.GetDirectoryName(Application.dataPath);
             EditorGUILayout.LabelField("Project", projectPath, EditorStyles.miniLabel);
         }
@@ -115,6 +114,26 @@ namespace Dreamer.AgentBridge
                     Repaint();
                 }
                 EditorGUILayout.EndHorizontal();
+            }
+        }
+
+        void DrawAgentPolicy()
+        {
+            EditorGUILayout.LabelField("Agent Policy", EditorStyles.boldLabel);
+
+            using (new EditorGUI.IndentLevelScope())
+            {
+                EditorGUI.BeginChangeCheck();
+                bool allow = EditorGUILayout.Toggle(
+                    new GUIContent(
+                        "Allow play-mode toggle",
+                        "When ON, agents can call set-play-mode (and Edit/Play menu items) to enter, exit, or pause play mode. " +
+                        "When OFF, all such requests are refused with a clear error."),
+                    PlayModePolicy.IsAllowed);
+                if (EditorGUI.EndChangeCheck())
+                {
+                    PlayModePolicy.IsAllowed = allow;
+                }
             }
         }
 

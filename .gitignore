@@ -8,6 +8,7 @@ Obj/
 Build/
 Builds/
 Logs/
+DreamerScreenshots/
 *.csproj
 *.sln
 *.slnx
@@ -48,8 +49,13 @@ daemon/.dreamer-daemon.log
 daemon/.dreamer-queue.json
 daemon/node_modules/
 
-# Claude Code — ship the skill + settings hook, ignore local state (settings.local.json, etc.)
+# Scratch UI specs used during UGUI add-on testing
+.tmp_ui/
+
+# Claude Code — ship the skill + settings hook + agents, ignore local state (settings.local.json, etc.)
 .claude/*
 !.claude/settings.json
 !.claude/skills/
 !.claude/skills/**
+!.claude/agents/
+!.claude/agents/**

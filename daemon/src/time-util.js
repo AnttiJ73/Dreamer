@@ -1,18 +1,6 @@
 'use strict';
 
-/**
- * Time formatting helpers for status responses.
- *
- * Every timestamp the daemon surfaces is easier to read when paired with its
- * age and a human-readable delta, so callers don't have to do wall-clock math.
- */
-
-/**
- * Format an absolute timestamp (ms or ISO) with age/human fields relative to `now`.
- * @param {number|string|Date|null} at - timestamp in ms since epoch, ISO string, Date, or nullish
- * @param {number} [nowMs=Date.now()]
- * @returns {{ at: string|null, ageMs: number|null, ageSec: number|null, ageHuman: string|null }}
- */
+/** Format a timestamp (ms/ISO/Date) with age/human fields relative to `now`. */
 function withAge(at, nowMs = Date.now()) {
   if (at == null) return { at: null, ageMs: null, ageSec: null, ageHuman: null };
   let ms;
@@ -34,11 +22,7 @@ function withAge(at, nowMs = Date.now()) {
   };
 }
 
-/**
- * Render a duration in ms as a compact human-readable "X ago" string.
- * @param {number} ms
- * @returns {string}
- */
+/** Render duration as "X ago" (ms/s/m/h/d). */
 function humanizeAge(ms) {
   if (ms == null) return null;
   if (ms < 0) ms = 0;
@@ -56,11 +40,7 @@ function humanizeAge(ms) {
   return remH > 0 ? `${d}d ${remH}h ago` : `${d}d ago`;
 }
 
-/**
- * Render a duration in ms as "X long" (no "ago" suffix) — useful for time-in-state.
- * @param {number} ms
- * @returns {string}
- */
+/** Like humanizeAge but without the "ago" suffix — for time-in-state. */
 function humanizeDuration(ms) {
   if (ms == null) return null;
   const ago = humanizeAge(ms);

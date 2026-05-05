@@ -5,50 +5,35 @@ const log = require('./log').create('scheduler');
 
 const SCHEDULER_INTERVAL_MS = 200;
 const HEARTBEAT_TIMEOUT_MS = 10000;
-/**
- * How long a command may sit in `running` before the scheduler gives up on it.
- * Unity reports results back via /api/unity/result; if Unity domain-reloads or
- * crashes mid-command, the report never arrives and the command would block
- * the serialized dispatch queue indefinitely. 60s is a safe ceiling — longest
- * legitimate commands (folder-wide prefab scans) finish well under that in
- * practice. Override per-command by setting `requirements.maxRunningMs`.
- */
+// Stuck-running ceiling: Unity reports results via /api/unity/result, but a
+// domain-reload or crash mid-command means the report never arrives and the
+// serialized dispatch queue would block forever. 60s clears legit slow commands
+// (folder-wide prefab scans) — override per-command via requirements.maxRunningMs.
 const DEFAULT_RUNNING_TIMEOUT_MS = 60000;
 
-/**
- * Scheduler that evaluates queued/waiting commands and dispatches them to Unity
- * when their requirements are satisfied.
- */
+/** Evaluates queued/waiting commands and dispatches to Unity when ready. */
 class Scheduler {
-  /**
-   * @param {import('./queue')} queue
-   * @param {import('./unity-state')} unityState
-   */
   constructor(queue, unityState) {
     this.queue = queue;
     this.unityState = unityState;
     this._timer = null;
 
-    // ── Observability counters ──
-    // Updated every tick / dispatch so callers can verify the loop is live and
-    // making progress. Surfaced via getMetrics() → /api/status.
+    // Observability counters — surfaced via getMetrics() → /api/status so
+    // callers can detect a frozen loop or non-draining queue.
     this._startedAt = Date.now();
     this.lastTickAt = null;
     this.tickCount = 0;
     this.lastDispatchAt = null;
     this.lastDispatchId = null;
     this.lastDispatchKind = null;
-    /** Running counter of commands dispatched since daemon start. */
     this.totalDispatched = 0;
   }
 
-  /** Start the scheduling loop. */
   start() {
     if (this._timer) return;
     this._timer = setInterval(() => this.tick(), SCHEDULER_INTERVAL_MS);
   }
 
-  /** Stop the scheduling loop. */
   stop() {
     if (this._timer) {
       clearInterval(this._timer);
@@ -56,10 +41,7 @@ class Scheduler {
     }
   }
 
-  /**
-   * Run a single scheduling pass. Called on interval and also triggered
-   * by events (compilation finished, command completed, etc).
-   */
+  /** One scheduling pass — invoked on interval and on lifecycle events. */
   tick() {
     this.lastTickAt = Date.now();
     this.tickCount++;
@@ -68,26 +50,18 @@ class Scheduler {
 
     const unityConnected = this.unityState.connected;
 
-    // ── Stuck-running timeout sweep ─────────────────────────────────────
-    // Any command that's been `running` past its timeout is assumed lost
-    // (typically: Unity domain-reloaded or crashed mid-command, so the
-    // result report never came back). Mark it failed with a diagnostic so
-    // the serialized dispatch queue can proceed and the user sees why.
     this._sweepStuckRunning();
 
-    // Check if anything is currently dispatched or running — sequential execution
     const activeCommands = this.queue.list().filter(
       c => c.state === 'dispatched' || c.state === 'running'
     );
     const hasActive = activeCommands.length > 0;
 
-    // Gather candidates: queued or waiting commands
     const candidates = this.queue.list().filter(
       c => c.state === 'queued' || c.state === 'waiting'
     );
 
     for (const cmd of candidates) {
-      // ── Dependency check ──────────────────────────────────────────────
       if (cmd.dependsOn) {
         const dep = this.queue.get(cmd.dependsOn);
         if (!dep) {
@@ -104,7 +78,6 @@ class Scheduler {
         }
       }
 
-      // ── Unity connectivity ────────────────────────────────────────────
       if (!unityConnected) {
         // Distinguish "bridge has never connected this daemon session" from
         // "bridge was connected and then went away". Different user remedies:
@@ -118,19 +91,12 @@ class Scheduler {
         continue;
       }
 
-      // ── Global compilation gate ───────────────────────────────────────
-      // Unity's CommandDispatcher rejects any non-compile-safe kind with
-      // "Cannot execute this command while Unity is compiling". Hold such
-      // commands in `waiting` until compilation finishes instead of letting
-      // them fail terminally. The fresh-daemon-race gate (Waiting for
-      // initial Unity state) applies to the same set — without the first
-      // state report, we don't know whether Unity is compiling.
+      // Global compile gate: non-compile-safe kinds wait for Unity to be idle
+      // and to have reported state at least once. Unity rejects them mid-compile
+      // with "Cannot execute this command while Unity is compiling" — holding
+      // them in waiting beats letting them fail terminally.
       if (!isCompileSafe(cmd.kind)) {
         if (!this.unityState.hasReceivedState) {
-          // Connected (heartbeats arriving) but no state payload yet. Since
-          // every heartbeat from an up-to-date bridge now carries compiling
-          // state, this path only fires briefly on first connect or when an
-          // old bridge version is loaded.
           this._tryTransition(cmd.id, 'waiting', {
             waitingReason: 'Waiting for initial Unity state — bridge is connected but hasn\'t reported compile status yet. If this persists, the bridge assembly may be older than the daemon (reimport the package via Unity > Package Manager).'
           });
@@ -142,7 +108,6 @@ class Scheduler {
         }
       }
 
-      // ── Compile-errors gate (only for kinds with requirements.compilation) ─
       const reqs = cmd.requirements;
       if (reqs) {
         if (reqs.compilation) {
@@ -157,13 +122,9 @@ class Scheduler {
         }
       }
 
-      // ── Play Mode scene-edit gate ─────────────────────────────────────
-      // Scene mutations made during Play Mode look successful but revert
-      // silently when Play Mode exits (Unity's design — only EditMode
-      // edits persist). Holding such commands in `waiting` rather than
-      // letting them run-and-vanish matches the "no silent data loss"
-      // principle. Override with `options.allowPlayMode: true` on submit
-      // for the rare legitimate runtime-scene-mutation case.
+      // Play Mode scene-edit gate: only EditMode scene mutations persist —
+      // Play Mode edits look successful and silently revert on exit. Override
+      // with options.allowPlayMode for intentional runtime mutation.
       if (this.unityState.playMode
           && mutatesScene(cmd.kind, cmd.args)
           && !cmd.allowPlayMode) {
@@ -173,32 +134,19 @@ class Scheduler {
         continue;
       }
 
-      // ── Sequential dispatch gate ──────────────────────────────────────
-      if (hasActive) {
-        // Can't dispatch yet — something else is still active
-        if (cmd.state !== 'waiting') {
-          // Leave as queued (don't transition to waiting — it's just queued behind another)
-        }
-        continue;
-      }
+      // Sequential dispatch — leave as queued (not waiting; it's just behind another).
+      if (hasActive) continue;
 
-      // ── All clear — dispatch ──────────────────────────────────────────
       this._tryTransition(cmd.id, 'dispatched', { waitingReason: null });
       this.lastDispatchAt = Date.now();
       this.lastDispatchId = cmd.id;
       this.lastDispatchKind = cmd.kind;
       this.totalDispatched++;
       log.info(`Dispatched ${cmd.kind} (${cmd.id})${cmd.humanLabel ? ` — ${cmd.humanLabel}` : ''}`);
-      // Only dispatch one per tick
       return;
     }
   }
 
-  /**
-   * Timeout `running` commands that Unity hasn't reported back on. Runs on
-   * every tick; in practice the check is O(running commands), which is
-   * capped at 1 by the serialized dispatch invariant.
-   */
   _sweepStuckRunning() {
     const now = Date.now();
     const running = this.queue.list().filter(c => c.state === 'running');
@@ -218,11 +166,6 @@ class Scheduler {
     }
   }
 
-  /**
-   * Expose scheduler liveness + progress metrics for /api/status.
-   * Callers can detect a stuck loop (lastTickAt ages without tick count advancing)
-   * or a queue that's not draining (lastDispatchAt stale while candidates exist).
-   */
   getMetrics() {
     return {
       startedAt: this._startedAt,
@@ -236,24 +179,15 @@ class Scheduler {
     };
   }
 
-  /**
-   * Attempt a state transition, logging and swallowing errors.
-   * @param {string} id
-   * @param {string} newState
-   * @param {object} [extra]
-   */
   _tryTransition(id, newState, extra = {}) {
     try {
       const cmd = this.queue.get(id);
       if (!cmd) return;
-      if (cmd.state === newState && cmd.waitingReason === (extra.waitingReason || null)) {
-        return; // No change needed
-      }
+      if (cmd.state === newState && cmd.waitingReason === (extra.waitingReason || null)) return;
       const check = validateTransition(cmd.state, newState);
-      if (!check.valid) return; // Can't transition, skip silently
+      if (!check.valid) return;
       this.queue.update(id, { state: newState, ...extra });
     } catch (err) {
-      // Non-fatal — log and continue
       log.error(`Transition error for ${id}: ${err.message}`);
     }
   }

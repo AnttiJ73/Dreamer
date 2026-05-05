@@ -2,28 +2,12 @@
 
 const { withAge, humanizeDuration } = require('../time-util');
 
-/** States that are still "in flight" — surfaced as queue.active for diagnosis. */
+/** States still in-flight — surfaced as queue.active for diagnosis. */
 const NON_TERMINAL_STATES = new Set(['queued', 'waiting', 'dispatched', 'running']);
 const MAX_ACTIVE_REPORTED = 25;
 
-/**
- * Build handlers for status / informational routes.
- * @param {import('../queue')} queue
- * @param {import('../unity-state')} unityState
- * @param {import('../asset-watcher')} [assetWatcher]
- * @param {import('../scheduler')} [scheduler]
- * @returns {object}
- */
 function createStatusHandlers(queue, unityState, assetWatcher, scheduler) {
   return {
-    /**
-     * GET /api/status — Overall daemon + Unity status.
-     *
-     * Every timestamp comes with `{ at, ageMs, ageSec, ageHuman }` so the caller
-     * can see "3m ago" without subtracting from a wall clock. `queue.active`
-     * lists non-terminal commands with their time-in-state — the primary signal
-     * for "is Dreamer actually making progress on the queue".
-     */
     async status() {
       const now = Date.now();
       const nowIso = new Date(now).toISOString();
@@ -31,19 +15,16 @@ function createStatusHandlers(queue, unityState, assetWatcher, scheduler) {
       const assetsJson = assetWatcher ? assetWatcher.toJSON() : null;
       const schedulerMetrics = scheduler ? scheduler.getMetrics() : null;
 
-      // Annotate Unity timestamps with age.
       const unityAnnotated = {
         ...unityJson,
         lastHeartbeatAge: withAge(unityJson.lastHeartbeat, now),
         lastCompileSuccessAge: withAge(unityJson.lastCompileSuccess, now),
       };
 
-      // Annotate asset-watcher timestamp with age.
       const assetsAnnotated = assetsJson
         ? { ...assetsJson, lastChangeAge: withAge(assetsJson.lastChange, now) }
         : null;
 
-      // Annotate scheduler metrics with ages.
       const schedulerAnnotated = schedulerMetrics
         ? {
             ...schedulerMetrics,
@@ -53,8 +34,7 @@ function createStatusHandlers(queue, unityState, assetWatcher, scheduler) {
           }
         : null;
 
-      // Per-command "active" view — the primary diagnostic for queue health.
-      // Sorted by time-in-state descending so the most-stuck commands surface first.
+      // Sort active by time-in-state desc — most-stuck commands surface first.
       const allCommands = queue.list();
       const activeSource = allCommands
         .filter((c) => NON_TERMINAL_STATES.has(c.state))
@@ -109,29 +89,18 @@ function createStatusHandlers(queue, unityState, assetWatcher, scheduler) {
     },
 
     /**
-     * GET /api/compile-status — Compilation-specific status.
-     *
-     * Raw Unity state is ambiguous on its own: `errors: []` can mean "last compile
-     * passed cleanly", "no compile has been observed this daemon session", OR "errors
-     * were cleared at the start of a compile cycle". This handler synthesizes a single
-     * `status` enum and a `ready` boolean so callers don't have to AND fields together
-     * and get it wrong.
-     *
-     * `status` values (in priority order):
-     *   disconnected — Unity bridge not connected.
-     *   unknown      — Connected but no state report received yet.
-     *   compiling    — Compile cycle in progress.
-     *   errors       — Compile finished with errors.
-     *   stale        — A watched asset changed AFTER the last observed clean compile;
-     *                  "errors: []" reflects the pre-edit state and must not be trusted.
-     *   idle         — Clean + connected, but no compile cycle has been observed this
-     *                  daemon session (e.g. fresh daemon with no script changes yet).
-     *                  `ready` is still true, but callers that just wrote a script
-     *                  should trigger a compile (refresh-assets + focus-unity) before
-     *                  relying on the empty errors array.
-     *   ok           — Last observed compile was clean; no edits since.
-     *
-     * `ready` is the gate used by the scheduler for compile-sensitive commands.
+     * GET /api/compile-status — synthesizes a `status` enum + `ready` bool from
+     * raw Unity state. Raw `errors: []` is ambiguous (clean / never-seen / cleared
+     * at cycle start); the enum disambiguates, in priority order:
+     *   disconnected  no bridge
+     *   unknown       connected, no state yet
+     *   compiling     in progress
+     *   errors        finished with errors
+     *   stale         asset changed AFTER last clean compile — `errors: []` is pre-edit
+     *   idle          clean + connected but no compile observed this daemon session
+     *                 (fresh daemon, no script changes); ready=true but a fresh write
+     *                 still wants refresh-assets + focus-unity before trusting it
+     *   ok            last observed compile clean, no edits since
      */
     async compileStatus() {
       const now = Date.now();
@@ -142,17 +111,20 @@ function createStatusHandlers(queue, unityState, assetWatcher, scheduler) {
       const hasReceivedState = unityState.hasReceivedState;
       const hasEverCompiled = lastSuccess !== null;
 
-      // Cross-check: have watched assets changed since the last observed clean compile?
-      // Only meaningful when both timestamps exist. Note: the asset watcher watches
-      // Assets/ only, not Packages/ — Dreamer package development edits won't trip this.
+      // dirty-flag gate is load-bearing: a no-op write (identical content / already
+      // imported) triggers fs.watch but no compile, so lastAssetChange > lastSuccess
+      // would stick forever. refresh_assets calls markClean() on Unity confirmation.
+      // Asset watcher covers Assets/ only — Packages/ (Dreamer dev) won't trip this.
+      const watcherDirty = assetWatcher ? assetWatcher.isDirty() : false;
       const lastAssetChange = assetWatcher ? assetWatcher.lastChange : null;
       const lastChangedFile = assetWatcher ? assetWatcher.lastChangedFile : null;
       const lastSuccessMs = lastSuccess ? Date.parse(lastSuccess) : 0;
       const assetsDirtySinceCompile =
-        lastAssetChange != null && lastSuccessMs > 0 && lastAssetChange > lastSuccessMs;
+        watcherDirty &&
+        lastAssetChange != null &&
+        lastSuccessMs > 0 &&
+        lastAssetChange > lastSuccessMs;
 
-      // Pre-compute ages so summary strings can show "X ago" next to raw timestamps.
-      // Readers scan "2m 14s ago" far faster than subtracting an ISO string from `now`.
       const lastSuccessAge = withAge(lastSuccess, now);
       const lastAssetChangeAge = withAge(lastAssetChange, now);
       const fmtAgo = (ageHuman) => (ageHuman ? ` (${ageHuman})` : '');
@@ -200,24 +172,16 @@ function createStatusHandlers(queue, unityState, assetWatcher, scheduler) {
       } else {
         status = 'ok';
         ready = true;
-        // Note: since the bridge's compile timestamp is authoritative (see
-        // unity-state.js), `lastCompileSourceIsBridge` flips on most heartbeats
-        // and no longer cleanly indicates "restored after daemon restart." The
-        // raw flag is still in the body for debugging, but we no longer branch
-        // the summary on it — the timestamp + age is all the caller needs.
         summary = `Last observed clean compile: ${lastSuccess}${fmtAgo(lastSuccessAge.ageHuman)}.`;
       }
 
       return {
         status: 200,
         body: {
-          // ── Synthesized signals (prefer these) ──
           status,
           ready,
           summary,
-          // ── Current time for easy client-side comparison ──
           now: new Date(now).toISOString(),
-          // ── Raw fields (for inspection / backward compat) ──
           compiling,
           errors,
           lastSuccess,
@@ -234,17 +198,8 @@ function createStatusHandlers(queue, unityState, assetWatcher, scheduler) {
     },
 
     /**
-     * GET /api/activity — Recent commands across the queue, newest first.
-     *
-     * Designed for multi-agent visibility: when several Claude sessions drive
-     * the same project, each agent can check what the others just did before
-     * drawing conclusions about compile errors or scene state. Combined with
-     * the --label flag on command submit (e.g. --label "agent-A:player-setup"),
-     * activity becomes a legible audit trail with minimal boilerplate.
-     *
-     * Query: ?limit=N (default 20) — cap of returned entries
-     *        ?since=MS (optional) — only commands newer than MS-ago
-     *        ?state=X (optional) — filter by state
+     * GET /api/activity — recent commands newest-first, for multi-agent audit.
+     * Query: ?limit=N (default 20), ?since=MS, ?state=X.
      */
     async activity(query) {
       const now = Date.now();
@@ -262,7 +217,7 @@ function createStatusHandlers(queue, unityState, assetWatcher, scheduler) {
         });
       }
 
-      // Sort newest createdAt first — queue.list()'s default sort is priority/oldest.
+      // Override queue.list()'s default priority/oldest sort — newest first here.
       all.sort((a, b) => Date.parse(b.createdAt || 0) - Date.parse(a.createdAt || 0));
 
       const entries = all.slice(0, limit).map((c) => {
@@ -302,10 +257,6 @@ function createStatusHandlers(queue, unityState, assetWatcher, scheduler) {
       };
     },
 
-    /**
-     * GET /api/console — Recent console entries.
-     * Query: ?count=N
-     */
     async console(query) {
       const count = parseInt(query.count, 10) || 50;
       return {

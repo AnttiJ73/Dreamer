@@ -1,0 +1,18 @@
+{
+  "name": "Dreamer.AgentBridge.Sprite2D.Editor",
+  "rootNamespace": "Dreamer.AgentBridge.Sprite2D",
+  "references": [
+    "Dreamer.AgentBridge.Editor",
+    "Unity.2D.Sprite.Editor"
+  ],
+  "includePlatforms": ["Editor"],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": true,
+  "defineConstraints": [],
+  "versionDefines": [],
+  "noEngineReferences": false,
+  "version": "0.1.0"
+}

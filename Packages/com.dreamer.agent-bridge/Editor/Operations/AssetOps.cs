@@ -3,7 +3,9 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using UnityEditor;
+using UnityEditor.SceneManagement;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 
 namespace Dreamer.AgentBridge
 {
@@ -11,17 +13,13 @@ namespace Dreamer.AgentBridge
     {
         const int MaxResults = 100;
 
-        /// <summary>
-        /// Find assets by type/name/path.
-        /// Args: { type?: "prefab"|"script"|"scene"|"material"|"texture"|"all", name?: "pattern", path?: "Assets/folder" }
-        /// </summary>
+        /// <summary>Find assets by type/name/path. Args: { type?: "prefab"|"script"|"scene"|"material"|"texture"|"all", name?: "pattern", path?: "Assets/folder" }</summary>
         public static CommandResult FindAssets(Dictionary<string, object> args)
         {
             string typeFilter = SimpleJson.GetString(args, "type", "all");
             string nameFilter = SimpleJson.GetString(args, "name");
             string pathFilter = SimpleJson.GetString(args, "path");
 
-            // Build AssetDatabase search filter
             string filter = BuildFilter(typeFilter, nameFilter);
 
             string[] searchFolders = null;
@@ -48,7 +46,7 @@ namespace Dreamer.AgentBridge
                 string assetPath = AssetDatabase.GUIDToAssetPath(guid);
                 if (string.IsNullOrEmpty(assetPath)) continue;
 
-                // Additional name filtering (FindAssets only does prefix matching)
+                // FindAssets only does prefix matching — apply substring match here.
                 if (!string.IsNullOrEmpty(nameFilter))
                 {
                     string assetName = Path.GetFileNameWithoutExtension(assetPath);
@@ -85,16 +83,14 @@ namespace Dreamer.AgentBridge
             return CommandResult.Ok(json);
         }
 
-        /// <summary>
-        /// Inspect a specific asset or scene object in detail.
-        /// Args: { assetPath?: "path", guid?: "guid", sceneObjectPath?: "MyObject/Child" }
-        /// </summary>
+        /// <summary>Inspect an asset or scene object. Args: { assetPath?, guid?, sceneObjectPath? }</summary>
         public static CommandResult InspectAsset(Dictionary<string, object> args)
         {
-            // Scene object inspection
+            var opts = ParseInspectionOptions(args);
+
             string sceneObjectPath = SimpleJson.GetString(args, "sceneObjectPath");
             if (!string.IsNullOrEmpty(sceneObjectPath))
-                return InspectSceneObject(sceneObjectPath);
+                return InspectSceneObject(sceneObjectPath, opts);
 
             string assetPath = ResolveAssetPath(args);
             if (assetPath == null)
@@ -113,10 +109,12 @@ namespace Dreamer.AgentBridge
                 .Put("type", typeName)
                 .Put("name", Path.GetFileNameWithoutExtension(assetPath));
 
-            // Type-specific details
             if (assetType == typeof(GameObject) || assetPath.EndsWith(".prefab", StringComparison.OrdinalIgnoreCase))
             {
-                InspectPrefab(assetPath, result);
+                string node = BuildPrefabNode(assetPath, opts);
+                if (node != null)
+                    return CommandResult.Ok(MergeJsonObjects(result.ToString(), node));
+                return CommandResult.Ok(result.ToString());
             }
             else if (assetType == typeof(MonoScript) || assetPath.EndsWith(".cs", StringComparison.OrdinalIgnoreCase))
             {
@@ -128,7 +126,6 @@ namespace Dreamer.AgentBridge
             }
             else
             {
-                // Generic asset info
                 string fullPath = Path.GetFullPath(assetPath);
                 if (File.Exists(fullPath))
                 {
@@ -141,42 +138,121 @@ namespace Dreamer.AgentBridge
             return CommandResult.Ok(result.ToString());
         }
 
-        /// <summary>
-        /// Save all assets and refresh the database.
-        /// </summary>
-        public static CommandResult SaveAssets(Dictionary<string, object> args)
+        // Bulk inspect — single round-trip. Order preserved; per-item failures become {path,error}.
+        public static CommandResult InspectAssets(Dictionary<string, object> args)
         {
-            AssetDatabase.SaveAssets();
-            AssetDatabase.Refresh();
-            return CommandResult.Ok(SimpleJson.Object().Put("saved", true).ToString());
+            if (!args.TryGetValue("paths", out object pathsObj) || !(pathsObj is List<object> rawList) || rawList.Count == 0)
+                return CommandResult.Fail("'paths' is required and must be a non-empty array of asset paths.");
+
+            var perItemArgs = new Dictionary<string, object>(args);
+            perItemArgs.Remove("paths");
+
+            var items = SimpleJson.Array();
+            int succeeded = 0, failed = 0;
+            foreach (var raw in rawList)
+            {
+                string p = raw as string;
+                if (string.IsNullOrEmpty(p))
+                {
+                    failed++;
+                    items.AddRaw(SimpleJson.Object()
+                        .PutNull("path")
+                        .Put("error", "non-string entry in paths[]")
+                        .ToString());
+                    continue;
+                }
+                perItemArgs["assetPath"] = p;
+                perItemArgs.Remove("guid");
+                perItemArgs.Remove("sceneObjectPath");
+
+                var sub = InspectAsset(perItemArgs);
+                if (sub.success)
+                {
+                    succeeded++;
+                    items.AddRaw(sub.resultJson);
+                }
+                else
+                {
+                    failed++;
+                    items.AddRaw(SimpleJson.Object()
+                        .Put("path", p)
+                        .Put("error", sub.error ?? "unknown")
+                        .ToString());
+                }
+            }
+
+            var json = SimpleJson.Object()
+                .Put("count", rawList.Count)
+                .Put("succeeded", succeeded)
+                .Put("failed", failed)
+                .PutRaw("items", items.ToString())
+                .ToString();
+            return CommandResult.Ok(json);
         }
 
-        /// <summary>
-        /// Force Unity to scan the disk for changed/new/deleted assets.
-        /// This is essential when files are written externally (by an agent, CLI, etc.)
-        /// because Unity on Windows does not reliably detect changes without focus.
-        ///
-        /// Auto-heal: if the caller passes a `changedFiles` array (forward-slash
-        /// "Assets/..." paths), every .cs file that Unity imports as something
-        /// other than MonoScript (i.e. got classified as the default/unknown
-        /// importer because of an ill-timed write outside the Editor) is
-        /// force-reimported. This fixes the common "script exists on disk but
-        /// doesn't appear in Assembly-CSharp and can't be assigned to prefabs"
-        /// bug caused by unfocused-Editor imports.
-        ///
-        /// Result JSON:
-        ///   { refreshed: true, checked: N, reimported: [...], misclassified: [...] }
-        /// where `misclassified` lists files that are STILL not MonoScript after
-        /// the force-reimport — those need human intervention (bad namespace,
-        /// syntax preventing initial parse, etc.).
-        /// </summary>
+        static InspectionOptions ParseInspectionOptions(Dictionary<string, object> args)
+        {
+            return new InspectionOptions
+            {
+                Depth = SimpleJson.GetInt(args, "depth", -1),
+                IncludeTransforms = SimpleJson.GetBool(args, "includeTransforms", false),
+                IncludeFields = SimpleJson.GetBool(args, "includeFields", false),
+            };
+        }
+
+        /// <summary>Persist editor state — both AssetDatabase.SaveAssets() and SaveOpenScenes(). Without the scene save, scene-object mutations (set-property/add-component/create-gameobject) stay in-memory only and git diff shows no changes. Args: { skipAssets?, skipScenes? }</summary>
+        public static CommandResult SaveAssets(Dictionary<string, object> args)
+        {
+            bool skipAssets = SimpleJson.GetBool(args, "skipAssets", false);
+            bool skipScenes = SimpleJson.GetBool(args, "skipScenes", false);
+
+            int dirtyScenes = 0;
+            var savedScenePaths = new List<string>();
+
+            if (!skipScenes)
+            {
+                // Snapshot dirty count before save — SaveOpenScenes clears the dirty bit.
+                int sceneCount = SceneManager.sceneCount;
+                for (int i = 0; i < sceneCount; i++)
+                {
+                    var s = SceneManager.GetSceneAt(i);
+                    if (s.IsValid() && s.isDirty)
+                    {
+                        dirtyScenes++;
+                        if (!string.IsNullOrEmpty(s.path)) savedScenePaths.Add(s.path);
+                    }
+                }
+                if (dirtyScenes > 0)
+                {
+                    EditorSceneManager.SaveOpenScenes();
+                }
+            }
+
+            if (!skipAssets)
+            {
+                AssetDatabase.SaveAssets();
+                AssetDatabase.Refresh();
+            }
+
+            var json = SimpleJson.Object()
+                .Put("saved", true)
+                .Put("savedScenes", dirtyScenes)
+                .Put("savedAssets", !skipAssets);
+            if (savedScenePaths.Count > 0)
+            {
+                var arr = SimpleJson.Array();
+                foreach (var p in savedScenePaths) arr.Add(p);
+                json.PutRaw("scenePaths", arr.ToString());
+            }
+            return CommandResult.Ok(json.ToString());
+        }
+
+        /// <summary>Force Unity to rescan disk. Essential because Unity on Windows doesn't reliably detect external changes without focus. Auto-heals .cs files misclassified as unknown by force-reimporting them when the caller passes `changedFiles[]`.</summary>
         public static CommandResult RefreshAssets(Dictionary<string, object> args)
         {
             AssetDatabase.Refresh(ImportAssetOptions.Default);
 
-            // Auto-heal phase. Only runs when the daemon-side watcher gave us a
-            // concrete list of changed files; a bare refresh_assets call with
-            // no arg list skips this entirely (fast path, unchanged behavior).
+            // Auto-heal only runs with a concrete changedFiles list; bare refresh_assets is the fast path.
             var reimported = new List<string>();
             var misclassified = new List<string>();
             int checkedCount = 0;
@@ -215,15 +291,7 @@ namespace Dreamer.AgentBridge
             return CommandResult.Ok(resultJson.ToString());
         }
 
-        /// <summary>
-        /// Explicit rescue command. Force-reimports all .cs files under the given
-        /// path (single file or folder). Unlike RefreshAssets, this runs
-        /// force-reimport on every .cs regardless of current classification —
-        /// useful when the watcher missed the original write and the file is
-        /// stuck as unknown.
-        ///
-        /// Args: { path: "Assets/Foo.cs" | "Assets/Scripts", recursive?: true }
-        /// </summary>
+        /// <summary>Force-reimport every .cs under path regardless of current classification. Use when the watcher missed the original write and the file is stuck as unknown. Args: { path, recursive? }</summary>
         public static CommandResult ReimportScripts(Dictionary<string, object> args)
         {
             string target = SimpleJson.GetString(args, "path");
@@ -232,7 +300,6 @@ namespace Dreamer.AgentBridge
 
             bool recursive = !args.ContainsKey("recursive") || SimpleJson.GetBool(args, "recursive", true);
 
-            // Normalize to forward slashes so we can compare with AssetDatabase paths.
             target = target.Replace('\\', '/').TrimEnd('/');
 
             var reimported = new List<string>();
@@ -252,11 +319,11 @@ namespace Dreamer.AgentBridge
                 var files = System.IO.Directory.GetFiles(full, "*.cs", opt);
                 foreach (var f in files)
                 {
-                    // Convert absolute path back to "Assets/..." form.
+                    // Both Assets/ and Packages/ are valid AssetDatabase roots; Packages/
+                    // matters for editing add-on package code via this rescue command.
                     string rel = f.Replace('\\', '/');
-                    int idx = rel.IndexOf("/Assets/", StringComparison.OrdinalIgnoreCase);
-                    if (idx < 0 && !rel.StartsWith("Assets/", StringComparison.OrdinalIgnoreCase)) continue;
-                    string assetPath = idx >= 0 ? rel.Substring(idx + 1) : rel;
+                    string assetPath = ToAssetDatabasePath(rel);
+                    if (assetPath == null) continue;
                     ForceReimport(assetPath, reimported, healed, misclassified);
                 }
             }
@@ -265,8 +332,7 @@ namespace Dreamer.AgentBridge
                 return CommandResult.Fail($"Path not found: {target}");
             }
 
-            // Kick a compile — force-reimport alone doesn't always trigger one if Unity's
-            // compilation pipeline thinks nothing relevant changed.
+            // Force-reimport alone doesn't always trigger compilation if Unity thinks nothing changed.
             UnityEditor.Compilation.CompilationPipeline.RequestScriptCompilation();
 
             return CommandResult.Ok(SimpleJson.Object()
@@ -281,19 +347,32 @@ namespace Dreamer.AgentBridge
                 .ToString());
         }
 
+        // Returns substring at "Assets/" or "Packages/" — both are AssetDatabase roots.
+        // Picks rightmost match in case the project lives under a path containing those names.
+        static string ToAssetDatabasePath(string forwardSlashPath)
+        {
+            if (string.IsNullOrEmpty(forwardSlashPath)) return null;
+
+            if (forwardSlashPath.StartsWith("Assets/", StringComparison.OrdinalIgnoreCase)
+                || forwardSlashPath.StartsWith("Packages/", StringComparison.OrdinalIgnoreCase))
+                return forwardSlashPath;
+
+            int aIdx = forwardSlashPath.IndexOf("/Assets/", StringComparison.OrdinalIgnoreCase);
+            int pIdx = forwardSlashPath.IndexOf("/Packages/", StringComparison.OrdinalIgnoreCase);
+            int idx = Math.Max(aIdx, pIdx);
+            if (idx < 0) return null;
+
+            return forwardSlashPath.Substring(idx + 1);
+        }
+
         enum HealOutcome { AlreadyMonoScript, Reimported, StillMisclassified }
 
-        /// <summary>
-        /// Check whether <paramref name="assetPath"/> is classified as MonoScript.
-        /// If not, force-reimport and check again. Returns which outcome landed.
-        /// </summary>
         static HealOutcome HealScriptClassification(string assetPath)
         {
             var typeBefore = AssetDatabase.GetMainAssetTypeAtPath(assetPath);
             if (typeBefore == typeof(MonoScript)) return HealOutcome.AlreadyMonoScript;
 
-            // Force a full re-import. ForceUpdate says "pretend the hash changed";
-            // ForceSynchronousImport says "don't defer, do it now on this thread."
+            // ForceUpdate = pretend hash changed; ForceSynchronousImport = no defer, this thread.
             AssetDatabase.ImportAsset(assetPath,
                 ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
 
@@ -303,10 +382,6 @@ namespace Dreamer.AgentBridge
                 : HealOutcome.StillMisclassified;
         }
 
-        /// <summary>
-        /// Force-reimport a .cs file unconditionally (for the rescue command path).
-        /// Reports which bucket it lands in.
-        /// </summary>
         static void ForceReimport(string assetPath, List<string> reimported, List<string> healed, List<string> misclassified)
         {
             var typeBefore = AssetDatabase.GetMainAssetTypeAtPath(assetPath);
@@ -321,10 +396,7 @@ namespace Dreamer.AgentBridge
             else if (typeAfter != typeof(MonoScript)) misclassified.Add(assetPath);
         }
 
-        /// <summary>
-        /// Create a ScriptableObject asset instance.
-        /// Args: { typeName: "Game.MyDataSO", name: "EnemyData", path?: "Assets/Data" }
-        /// </summary>
+        /// <summary>Create a ScriptableObject asset. Args: { typeName, name, path? }</summary>
         public static CommandResult CreateScriptableObject(Dictionary<string, object> args)
         {
             string typeName = SimpleJson.GetString(args, "typeName");
@@ -344,7 +416,6 @@ namespace Dreamer.AgentBridge
             if (!typeof(ScriptableObject).IsAssignableFrom(soType))
                 return CommandResult.Fail($"Type '{typeName}' does not derive from ScriptableObject.");
 
-            // Ensure directory exists
             string fullDir = Path.GetFullPath(folder);
             if (!Directory.Exists(fullDir))
             {
@@ -376,94 +447,30 @@ namespace Dreamer.AgentBridge
 
         // ── Scene object inspection ──
 
-        static CommandResult InspectSceneObject(string objectPath)
+        static CommandResult InspectSceneObject(string objectPath, InspectionOptions opts)
         {
             var go = PropertyOps.FindSceneObject(objectPath, out string findError);
             if (go == null)
                 return CommandResult.Fail(findError ?? $"Scene object not found at path: {objectPath}");
 
-            var result = SimpleJson.Object()
-                .Put("name", go.name)
-                .Put("path", GetHierarchyPath(go))
-                .Put("instanceId", go.GetInstanceID())
-                .Put("active", go.activeSelf)
-                .Put("tag", go.tag)
-                .Put("layer", go.layer)
-                .Put("isStatic", go.isStatic);
+            string nodeJson = Inspection.BuildGameObjectInfo(go, opts);
 
-            // Is it a prefab instance?
+            var extras = SimpleJson.Object()
+                .Put("path", GetHierarchyPath(go));
             var prefabAsset = PrefabUtility.GetCorrespondingObjectFromSource(go);
             if (prefabAsset != null)
-            {
-                string prefabPath = AssetDatabase.GetAssetPath(prefabAsset);
-                result.Put("prefabSource", prefabPath);
-            }
+                extras.Put("prefabSource", AssetDatabase.GetAssetPath(prefabAsset));
+            return CommandResult.Ok(MergeJsonObjects(nodeJson, extras.ToString()));
+        }
 
-            // Components with serialized fields
-            var comps = SimpleJson.Array();
-            foreach (var comp in go.GetComponents<Component>())
-            {
-                if (comp == null) continue;
-                var compObj = SimpleJson.Object()
-                    .Put("type", comp.GetType().FullName)
-                    .Put("name", comp.GetType().Name);
-
-                // List serialized fields
-                var fields = SimpleJson.Array();
-                var so = new SerializedObject(comp);
-                var prop = so.GetIterator();
-                if (prop.NextVisible(true))
-                {
-                    do
-                    {
-                        // Skip internal Unity fields
-                        if (prop.name == "m_Script" || prop.name == "m_ObjectHideFlags") continue;
-                        var fieldObj = SimpleJson.Object()
-                            .Put("name", prop.name)
-                            .Put("type", prop.propertyType.ToString());
-                        // Show value for simple types
-                        switch (prop.propertyType)
-                        {
-                            case SerializedPropertyType.Integer: fieldObj.Put("value", prop.intValue); break;
-                            case SerializedPropertyType.Float: fieldObj.Put("value", prop.floatValue); break;
-                            case SerializedPropertyType.Boolean: fieldObj.Put("value", prop.boolValue); break;
-                            case SerializedPropertyType.String: fieldObj.Put("value", prop.stringValue); break;
-                            case SerializedPropertyType.Enum: fieldObj.Put("value", prop.enumNames[prop.enumValueIndex]); break;
-                            case SerializedPropertyType.ObjectReference:
-                                fieldObj.Put("value", prop.objectReferenceValue != null ? prop.objectReferenceValue.name : "null");
-                                break;
-                        }
-                        fields.AddRaw(fieldObj.ToString());
-                    } while (prop.NextVisible(false));
-                }
-                compObj.PutRaw("fields", fields.ToString());
-                comps.AddRaw(compObj.ToString());
-            }
-            result.PutRaw("components", comps.ToString());
-
-            // Children
-            var children = SimpleJson.Array();
-            for (int i = 0; i < go.transform.childCount; i++)
-            {
-                var child = go.transform.GetChild(i).gameObject;
-                var childComps = SimpleJson.Array();
-                foreach (var c in child.GetComponents<Component>())
-                {
-                    if (c == null) continue;
-                    childComps.AddRaw(SimpleJson.Object()
-                        .Put("type", c.GetType().Name)
-                        .ToString());
-                }
-                children.AddRaw(SimpleJson.Object()
-                    .Put("name", child.name)
-                    .Put("active", child.activeSelf)
-                    .Put("childCount", child.transform.childCount)
-                    .PutRaw("components", childComps.ToString())
-                    .ToString());
-            }
-            result.PutRaw("children", children.ToString());
-
-            return CommandResult.Ok(result.ToString());
+        // Splice two `{...}` JSON objects into one. Inputs must both be objects.
+        static string MergeJsonObjects(string a, string b)
+        {
+            if (string.IsNullOrEmpty(b) || b == "{}") return a;
+            if (string.IsNullOrEmpty(a) || a == "{}") return b;
+            string aInner = a.Substring(1, a.Length - 2);
+            string bInner = b.Substring(1, b.Length - 2);
+            return "{" + aInner + "," + bInner + "}";
         }
 
         static string GetHierarchyPath(GameObject go)
@@ -523,41 +530,11 @@ namespace Dreamer.AgentBridge
             return string.Join(" ", parts);
         }
 
-        static void InspectPrefab(string assetPath, JsonBuilder result)
+        static string BuildPrefabNode(string assetPath, InspectionOptions opts)
         {
             var prefab = AssetDatabase.LoadAssetAtPath<GameObject>(assetPath);
-            if (prefab == null) return;
-
-            // Root components
-            var rootComps = SimpleJson.Array();
-            foreach (var comp in prefab.GetComponents<Component>())
-            {
-                if (comp == null) continue;
-                rootComps.AddRaw(SimpleJson.Object()
-                    .Put("type", comp.GetType().FullName)
-                    .Put("name", comp.GetType().Name)
-                    .ToString());
-            }
-            result.PutRaw("components", rootComps.ToString());
-
-            // Children (1 level)
-            var children = SimpleJson.Array();
-            for (int i = 0; i < prefab.transform.childCount; i++)
-            {
-                var child = prefab.transform.GetChild(i);
-                var childComps = SimpleJson.Array();
-                foreach (var comp in child.GetComponents<Component>())
-                {
-                    if (comp == null) continue;
-                    childComps.Add(comp.GetType().Name);
-                }
-                children.AddRaw(SimpleJson.Object()
-                    .Put("name", child.name)
-                    .PutRaw("components", childComps.ToString())
-                    .Put("childCount", child.childCount)
-                    .ToString());
-            }
-            result.PutRaw("children", children.ToString());
+            if (prefab == null) return null;
+            return Inspection.BuildGameObjectInfo(prefab, opts);
         }
 
         static void InspectScript(string assetPath, JsonBuilder result)
@@ -595,7 +572,6 @@ namespace Dreamer.AgentBridge
 
         static void InspectScene(string assetPath, JsonBuilder result)
         {
-            // We can only list scene info from the asset database, not load it
             result.Put("isScene", true);
 
             string fullPath = Path.GetFullPath(assetPath);
@@ -606,7 +582,6 @@ namespace Dreamer.AgentBridge
                 result.Put("lastModified", info.LastWriteTimeUtc.ToString("o"));
             }
 
-            // Check if this scene is currently loaded
             var activeScene = UnityEngine.SceneManagement.SceneManager.GetActiveScene();
             result.Put("isActiveScene", activeScene.path == assetPath);
         }

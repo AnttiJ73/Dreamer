@@ -1,0 +1,22 @@
+{
+  "name": "Dreamer.AgentBridge.UGUI.Editor",
+  "rootNamespace": "Dreamer.AgentBridge.UGUI",
+  "references": [
+    "Dreamer.AgentBridge.Editor",
+    "Dreamer.AgentBridge.UGUI",
+    "Unity.TextMeshPro"
+  ],
+  "includePlatforms": ["Editor"],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": true,
+  "defineConstraints": [],
+  "versionDefines": [
+    { "name": "com.unity.ugui",         "expression": "2.0.0", "define": "DREAMER_HAS_TMP" },
+    { "name": "com.unity.textmeshpro",  "expression": "1.0.0", "define": "DREAMER_HAS_TMP" }
+  ],
+  "noEngineReferences": false,
+  "version": "0.1.0"
+}

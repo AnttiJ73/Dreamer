@@ -4,36 +4,44 @@ const { createCommand, isKnownKind } = require('../command');
 const schemas = require('../schemas');
 const { validate } = require('../validate');
 
-// Commands resolved daemon-side from cached Unity state (never dispatched to Unity)
+// Commands resolved daemon-side from cached Unity state — never dispatched to Unity.
 const DAEMON_SIDE_KINDS = new Set(['compile_status', 'console']);
 
-/**
- * Build handlers for /api/commands routes.
- * @param {import('../queue')} queue
- * @param {import('../scheduler')} scheduler
- * @param {import('../unity-state')} unityState
- * @returns {object} Route handler map
- */
 function createCommandHandlers(queue, scheduler, unityState, assetWatcher) {
   return {
-    /**
-     * POST /api/commands — Submit a new command.
-     * Body: { kind, args, options? }
-     */
+    /** POST /api/commands — body: { kind, args, options? }. */
     async submit(body) {
       if (!body || !body.kind) {
         return { status: 400, body: { error: 'Missing required field: kind' } };
       }
 
       if (!isKnownKind(body.kind)) {
+        // Most common cause: kind added to command.js but daemon still running
+        // with stale in-memory definitions. Hint is verbose by design — debugging
+        // without it took hours.
+        const { search } = require('../search');
+        const suggestions = search(body.kind, { limit: 5 }).results
+          .map(r => `${r.cliVerb} (${r.summary.slice(0, 80).trim()})`);
         return {
           status: 400,
-          body: { error: `Unknown command kind: '${body.kind}'` },
+          body: {
+            error: `Unknown command kind: '${body.kind}'`,
+            source: 'daemon',
+            suggestions: suggestions.length > 0 ? suggestions : undefined,
+            hint:
+              "Rejected by the daemon (kind not in KIND_DEFS). " +
+              (suggestions.length > 0
+                ? "Did you mean one of the kinds listed in `suggestions`? Run `./bin/dreamer help <kind>` for full schema. "
+                : "Run `./bin/dreamer search <keyword>` to find related commands. ") +
+              "If you just added this kind to daemon/src/command.js, restart the daemon: " +
+              "kill the PID in daemon/.dreamer-daemon.pid and re-run any `./bin/dreamer` command. " +
+              "If the kind is from an add-on, that add-on must register the same kind in its " +
+              "Registration.cs AND core daemon must list it in KIND_DEFS.",
+          },
         };
       }
 
-      // Schema validation (opt-in — only kinds with a schema file are checked).
-      // Migrating incrementally means no-schema kinds still flow through as before.
+      // Opt-in schema validation — kinds without a schema flow through unvalidated (incremental migration).
       const schema = schemas.get(body.kind);
       if (schema) {
         const result = validate(schema, body.args || {});
@@ -42,6 +50,8 @@ function createCommandHandlers(queue, scheduler, unityState, assetWatcher) {
             status: 400,
             body: {
               error: `Invalid args for '${body.kind}'`,
+              source: 'daemon',
+              hint: 'Rejected by the daemon schema validator. See `details` for per-arg errors and `schema` for the expected shape.',
               details: result.errors,
               kind: body.kind,
               schema: schema.args || {},
@@ -50,15 +60,13 @@ function createCommandHandlers(queue, scheduler, unityState, assetWatcher) {
         }
       }
 
-      // Daemon-side instant commands — resolve from cached Unity state
       if (DAEMON_SIDE_KINDS.has(body.kind)) {
         return resolveDaemonSide(body.kind, body.args || {}, unityState);
       }
 
-      // Auto-enrich refresh_assets with the list of .cs files the watcher saw
-      // change since the last refresh. The bridge uses this list to heal files
-      // that Unity misclassified as DefaultImporter (unknown asset type) when
-      // they were written while the Editor was unfocused. See AssetOps.cs.
+      // Hand the watcher's changed-files list to refresh_assets so the bridge
+      // can heal .cs files Unity misclassified as DefaultImporter (when written
+      // while the Editor was unfocused). See AssetOps.cs.
       const args = body.args || {};
       if (body.kind === 'refresh_assets' && assetWatcher && !args.changedFiles) {
         const changed = assetWatcher.getChangedFiles();
@@ -68,7 +76,6 @@ function createCommandHandlers(queue, scheduler, unityState, assetWatcher) {
       try {
         const cmd = createCommand(body.kind, args, body.options || {});
         queue.add(cmd);
-        // Kick the scheduler immediately so it can evaluate the new command
         scheduler.tick();
         return { status: 201, body: cmd };
       } catch (err) {
@@ -76,10 +83,7 @@ function createCommandHandlers(queue, scheduler, unityState, assetWatcher) {
       }
     },
 
-    /**
-     * GET /api/commands — List commands with optional filters.
-     * Query: ?state=X&originTaskId=X&limit=N
-     */
+    /** GET /api/commands — query: ?state=X&originTaskId=X&limit=N. */
     async list(query) {
       const filters = {};
       if (query.state) filters.state = query.state;
@@ -90,9 +94,6 @@ function createCommandHandlers(queue, scheduler, unityState, assetWatcher) {
       return { status: 200, body: { commands, count: commands.length } };
     },
 
-    /**
-     * GET /api/commands/:id — Get a specific command.
-     */
     async get(id) {
       const cmd = queue.get(id);
       if (!cmd) {
@@ -101,9 +102,6 @@ function createCommandHandlers(queue, scheduler, unityState, assetWatcher) {
       return { status: 200, body: cmd };
     },
 
-    /**
-     * DELETE /api/commands/:id — Cancel a command.
-     */
     async cancel(id) {
       try {
         const cmd = queue.cancel(id);
@@ -118,9 +116,6 @@ function createCommandHandlers(queue, scheduler, unityState, assetWatcher) {
   };
 }
 
-/**
- * Resolve a daemon-side command instantly from cached Unity state.
- */
 function resolveDaemonSide(kind, args, unityState) {
   const now = new Date().toISOString();
   if (kind === 'compile_status') {

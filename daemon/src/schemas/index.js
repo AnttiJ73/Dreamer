@@ -21,9 +21,12 @@ const fs = require('fs');
 const path = require('path');
 
 const SCHEMAS = {};
+const { conventions } = require('./_common');
 
 for (const filename of fs.readdirSync(__dirname)) {
   if (filename === 'index.js') continue;
+  // Files prefixed with '_' are shared modules (e.g. _common.js), not schemas.
+  if (filename.startsWith('_')) continue;
   if (!filename.endsWith('.js')) continue;
   try {
     const schema = require(path.join(__dirname, filename));
@@ -53,4 +56,6 @@ module.exports = {
   has(kind) {
     return kind in SCHEMAS;
   },
+  /** The cross-cutting conventions block (rendered by `help conventions`). */
+  conventions,
 };

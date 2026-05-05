@@ -10,10 +10,7 @@ namespace Dreamer.AgentBridge
 {
     public static class ComponentOps
     {
-        /// <summary>
-        /// Add a component to a prefab or scene object.
-        /// Args: { assetPath?: "path", guid?: "guid", sceneObjectPath?: "/MyObject", typeName: "FullTypeName" }
-        /// </summary>
+        /// <summary>Add a component to a prefab or scene object. Args: { assetPath?, guid?, sceneObjectPath?, typeName }</summary>
         public static CommandResult AddComponent(Dictionary<string, object> args)
         {
             string typeName = SimpleJson.GetString(args, "typeName");
@@ -27,7 +24,6 @@ namespace Dreamer.AgentBridge
             if (!typeof(Component).IsAssignableFrom(componentType))
                 return CommandResult.Fail($"Type '{typeName}' is not a Component.");
 
-            // Scene object path takes priority
             string sceneObjectPath = SimpleJson.GetString(args, "sceneObjectPath");
             if (!string.IsNullOrEmpty(sceneObjectPath))
             {
@@ -50,7 +46,6 @@ namespace Dreamer.AgentBridge
                 return CommandResult.Ok(json);
             }
 
-            // Fall through to prefab logic
             string assetPath = AssetOps.ResolveAssetPath(args);
             if (assetPath == null)
                 return CommandResult.Fail("Target not found. Provide 'assetPath', 'guid', or 'sceneObjectPath'.");
@@ -58,14 +53,12 @@ namespace Dreamer.AgentBridge
             if (!assetPath.EndsWith(".prefab", StringComparison.OrdinalIgnoreCase))
                 return CommandResult.Fail($"Asset is not a prefab: {assetPath}");
 
-            // Edit prefab contents
             var prefabRoot = PrefabUtility.LoadPrefabContents(assetPath);
             if (prefabRoot == null)
                 return CommandResult.Fail($"Failed to load prefab contents: {assetPath}");
 
             try
             {
-                // Optional childPath — target a child within the prefab
                 string childPath = SimpleJson.GetString(args, "childPath");
                 GameObject target = prefabRoot;
                 if (!string.IsNullOrEmpty(childPath))
@@ -102,10 +95,7 @@ namespace Dreamer.AgentBridge
             return CommandResult.Ok(prefabJson);
         }
 
-        /// <summary>
-        /// Remove a component from a prefab or scene object.
-        /// Args: { assetPath?: "path", guid?: "guid", sceneObjectPath?: "/MyObject", typeName: "FullTypeName" }
-        /// </summary>
+        /// <summary>Remove a component from a prefab or scene object. Args: { assetPath?, guid?, sceneObjectPath?, typeName }</summary>
         public static CommandResult RemoveComponent(Dictionary<string, object> args)
         {
             string typeName = SimpleJson.GetString(args, "typeName");
@@ -116,11 +106,9 @@ namespace Dreamer.AgentBridge
             if (componentType == null)
                 return CommandResult.Fail($"Type not found: {typeName}");
 
-            // Don't allow removing Transform
             if (componentType == typeof(Transform) || componentType == typeof(RectTransform))
                 return CommandResult.Fail("Cannot remove Transform component.");
 
-            // Scene object path takes priority
             string sceneObjectPath = SimpleJson.GetString(args, "sceneObjectPath");
             if (!string.IsNullOrEmpty(sceneObjectPath))
             {
@@ -144,7 +132,6 @@ namespace Dreamer.AgentBridge
                 return CommandResult.Ok(json);
             }
 
-            // Fall through to prefab logic
             string assetPath = AssetOps.ResolveAssetPath(args);
             if (assetPath == null)
                 return CommandResult.Fail("Target not found. Provide 'assetPath', 'guid', or 'sceneObjectPath'.");
@@ -158,7 +145,6 @@ namespace Dreamer.AgentBridge
 
             try
             {
-                // Optional childPath — target a child within the prefab
                 string childPath = SimpleJson.GetString(args, "childPath");
                 GameObject target = prefabRoot;
                 if (!string.IsNullOrEmpty(childPath))
@@ -196,26 +182,12 @@ namespace Dreamer.AgentBridge
             return CommandResult.Ok(prefabJson);
         }
 
-        /// <summary>
-        /// Remove "Missing (Mono Script)" components left behind after a script is deleted.
-        /// These orphans are invisible to GetComponent&lt;T&gt; and cannot be targeted by remove_component —
-        /// they can only be scrubbed via GameObjectUtility.RemoveMonoBehavioursWithMissingScript.
-        /// Operates on a single prefab, a single scene object, or every prefab under a folder.
-        ///
-        /// Args:
-        ///   Prefab:       { assetPath?: "path", guid?: "guid" }
-        ///   Scene object: { sceneObjectPath: "/Path" }
-        ///   Folder scan:  { path: "Assets/Prefabs" }
-        ///   Modifiers:    { recursive?: true (default), dryRun?: false }
-        ///
-        /// Dry-run uses GetMonoBehavioursWithMissingScriptCount and does not mutate anything.
-        /// </summary>
+        /// <summary>Scrub "Missing (Mono Script)" component orphans left after a script is deleted. These are invisible to GetComponent&lt;T&gt; and only removable via GameObjectUtility.RemoveMonoBehavioursWithMissingScript. Targets: prefab, scene object, or folder.</summary>
         public static CommandResult RemoveMissingScripts(Dictionary<string, object> args)
         {
             bool recursive = !args.ContainsKey("recursive") || SimpleJson.GetBool(args, "recursive", true);
             bool dryRun = SimpleJson.GetBool(args, "dryRun", false);
 
-            // ── Scene object target ──
             string sceneObjectPath = SimpleJson.GetString(args, "sceneObjectPath");
             if (!string.IsNullOrEmpty(sceneObjectPath))
             {
@@ -237,7 +209,6 @@ namespace Dreamer.AgentBridge
                     .ToString());
             }
 
-            // ── Prefab target (assetPath or guid) ──
             if (!string.IsNullOrEmpty(SimpleJson.GetString(args, "assetPath"))
                 || !string.IsNullOrEmpty(SimpleJson.GetString(args, "guid")))
             {
@@ -250,7 +221,6 @@ namespace Dreamer.AgentBridge
                 return ScrubPrefab(assetPath, recursive, dryRun);
             }
 
-            // ── Folder target ──
             string folder = SimpleJson.GetString(args, "path");
             if (!string.IsNullOrEmpty(folder))
                 return ScrubFolder(folder, recursive, dryRun);
@@ -288,7 +258,6 @@ namespace Dreamer.AgentBridge
 
         static CommandResult ScrubFolder(string folder, bool recursive, bool dryRun)
         {
-            // Normalize folder; AssetDatabase.FindAssets needs an existing asset folder.
             if (!AssetDatabase.IsValidFolder(folder))
                 return CommandResult.Fail($"Not a valid asset folder: {folder}");
 
@@ -350,7 +319,6 @@ namespace Dreamer.AgentBridge
 
             if (recursive)
             {
-                // Snapshot child count; removal never mutates children, but index-based iteration is safer.
                 int childCount = go.transform.childCount;
                 for (int i = 0; i < childCount; i++)
                     total += WalkAndScrub(go.transform.GetChild(i).gameObject, true, dryRun, affected);
@@ -378,18 +346,14 @@ namespace Dreamer.AgentBridge
             public int Count;
         }
 
-        /// <summary>
-        /// Resolve a type by name across all loaded assemblies.
-        /// </summary>
+        /// <summary>Resolve a type by name across all loaded assemblies.</summary>
         public static Type ResolveType(string typeName)
         {
             if (string.IsNullOrEmpty(typeName)) return null;
 
-            // Try direct Type.GetType first
             Type t = Type.GetType(typeName);
             if (t != null) return t;
 
-            // Search all assemblies
             foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
             {
                 try
@@ -398,10 +362,7 @@ namespace Dreamer.AgentBridge
                         type => type.FullName == typeName || type.Name == typeName);
                     if (t != null) return t;
                 }
-                catch (ReflectionTypeLoadException)
-                {
-                    // Some assemblies may fail to enumerate types — skip
-                }
+                catch (ReflectionTypeLoadException) { }
             }
 
             return null;

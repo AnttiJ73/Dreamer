@@ -4,14 +4,7 @@ using UnityEngine;
 
 namespace Dreamer.AgentBridge
 {
-    /// <summary>
-    /// Entry point for the Agent Bridge. Starts after every domain reload
-    /// via [InitializeOnLoad].
-    ///
-    /// Communication runs on a background thread (BackgroundBridge) so it
-    /// works even when Unity is unfocused on Windows. Command execution
-    /// runs on the main thread via EditorApplication.update.
-    /// </summary>
+    /// <summary>Agent Bridge entry point. Communication runs on a background thread so it works when Unity is unfocused on Windows; command execution runs on the main thread.</summary>
     [InitializeOnLoad]
     public static class AgentBridgeBootstrap
     {
@@ -36,8 +29,6 @@ namespace Dreamer.AgentBridge
 
         public static bool IsRunning => _running;
 
-        // ── Static constructor (runs after every domain reload) ──
-
         static AgentBridgeBootstrap()
         {
             EditorApplication.delayCall += OnDelayedInit;
@@ -50,9 +41,9 @@ namespace Dreamer.AgentBridge
         {
             if (IsEnabled)
                 Start();
-        }
 
-        // ── Lifecycle ──
+            PlayModePolicy.PromptIfUnconfigured();
+        }
 
         public static void Start()
         {
@@ -63,10 +54,8 @@ namespace Dreamer.AgentBridge
             ConsoleCapture.Initialize();
             CommandDispatcher.Initialize();
 
-            // Start background bridge (heartbeat + polling on thread pool)
             BackgroundBridge.Start(DaemonClient.BaseUrl);
 
-            // Main thread update for command execution and state snapshots
             EditorApplication.update += OnUpdate;
             EditorApplication.quitting += OnQuit;
 
@@ -78,10 +67,8 @@ namespace Dreamer.AgentBridge
             }
             else
             {
-                // Bridge still starts so it can connect if a daemon happens to be on
-                // the fallback port, but warn loudly: without a registry entry the
-                // project relies on EditorPrefs/default 18710, which conflicts with
-                // any other Unity editor also defaulting to 18710.
+                // Without a registry entry we fall back to EditorPrefs/18710, which
+                // collides with any other Unity editor defaulting to the same port.
                 string projectRoot = ProjectRegistry.GetCurrentProjectRoot();
                 DreamerLog.Warn(
                     $"Started on fallback port {DaemonClient.Port} for {projectRoot} — this project is NOT registered. " +
@@ -105,8 +92,6 @@ namespace Dreamer.AgentBridge
             DreamerLog.Info("Stopped.");
         }
 
-        // ── Menu items ──
-
         [MenuItem("Tools/Dreamer/Toggle Bridge")]
         static void ToggleMenu()
         {
@@ -121,13 +106,11 @@ namespace Dreamer.AgentBridge
             return true;
         }
 
-        // ── Update loop (main thread only) ──
-
         static void OnUpdate()
         {
             if (!_running) return;
 
-            // Process commands received by BackgroundBridge (must run on main thread)
+            // Process commands on the main thread (BackgroundBridge enqueues from background).
             int processed = 0;
             while (processed < 5 && BackgroundBridge.TryDequeueCommand(out var cmd))
             {
@@ -135,7 +118,6 @@ namespace Dreamer.AgentBridge
                 processed++;
             }
 
-            // Periodically build and push a state snapshot for the background bridge to send
             double now = EditorApplication.timeSinceStartup;
             if (now - _lastStateSnapshot >= StateSnapshotIntervalSec)
             {
@@ -143,10 +125,8 @@ namespace Dreamer.AgentBridge
                 PushStateSnapshot();
             }
 
-            // Periodically re-check the registered port so `./bin/dreamer registry
-            // reassign` takes effect on a running editor without needing a full
-            // Unity restart. DaemonClient.Port itself handles mtime-based cache
-            // invalidation; we just poke it and forward any change to the bridge.
+            // Re-check the registered port so `dreamer registry reassign` takes effect
+            // on a running editor without a full Unity restart.
             if (now - _lastPortRecheck >= PortRecheckIntervalSec)
             {
                 _lastPortRecheck = now;

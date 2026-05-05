@@ -1,35 +1,9 @@
 'use strict';
 
-/**
- * Multi-project registry: maps Unity project paths to daemon ports.
- *
- * File location:
- *   Windows: %APPDATA%/Dreamer/projects.json
- *   Unix:    ~/.dreamer/projects.json
- *
- * Shape (v1):
- *   {
- *     "version": 1,
- *     "projects": {
- *       "<normalizedPath>": {
- *         "projectPath": "<display path>",
- *         "port": 18710,
- *         "daemonRoot": "<path/to/daemon/>",
- *         "daemonPid": 12345,
- *         "createdAt": ISO,
- *         "lastStartedAt": ISO
- *       },
- *       ...
- *     }
- *   }
- *
- * The registry is the single source of truth for port-per-project routing.
- * Both the daemon (on startup) and every CLI invocation reads this file;
- * the Unity bridge reads a parallel C# implementation (Editor/Core/ProjectRegistry.cs).
- *
- * Port allocation: starts at 18710, picks the first port not used by any
- * other registered project AND actually free on the loopback interface.
- */
+// Multi-project registry — single source of truth for port-per-project routing.
+// File: %APPDATA%/Dreamer/projects.json (Windows) or ~/.dreamer/projects.json (Unix).
+// Daemon, CLI, and Unity bridge (Editor/Core/ProjectRegistry.cs) all read it.
+// Port allocation walks [18710, 18810) for a free port not claimed elsewhere.
 
 const fs = require('fs');
 const path = require('path');
@@ -38,9 +12,7 @@ const { isPortFree } = require('./config');
 
 const REGISTRY_VERSION = 1;
 const DEFAULT_PORT_BASE = 18710;
-const PORT_RANGE = 100; // search [base, base + PORT_RANGE)
-
-// ── File location ────────────────────────────────────────────────────────────
+const PORT_RANGE = 100;
 
 function getRegistryDir() {
   if (process.platform === 'win32') {
@@ -51,17 +23,11 @@ function getRegistryDir() {
 }
 
 function getRegistryPath() {
-  // Allow test/dev override.
   if (process.env.DREAMER_REGISTRY_PATH) return process.env.DREAMER_REGISTRY_PATH;
   return path.join(getRegistryDir(), 'projects.json');
 }
 
-// ── Path normalization ───────────────────────────────────────────────────────
-
-/**
- * Canonical key for registry entries. Case-insensitive on Windows; always
- * forward-slash separated; no trailing slash.
- */
+/** Canonical registry key. Case-insensitive on Windows; forward-slash; no trailing slash. */
 function normalizeProjectPath(p) {
   if (!p || typeof p !== 'string') return null;
   let n = p.replace(/\\/g, '/').replace(/\/+$/, '');
@@ -69,10 +35,7 @@ function normalizeProjectPath(p) {
   return n;
 }
 
-/**
- * Walk up from `start` looking for a Unity project root (presence of
- * `ProjectSettings/ProjectVersion.txt`). Returns null if nothing matches.
- */
+/** Walk up from `start` to a Unity project root (ProjectSettings/ProjectVersion.txt). */
 function resolveProjectRoot(start) {
   let cur = path.resolve(start);
   while (true) {
@@ -86,8 +49,6 @@ function resolveProjectRoot(start) {
     cur = parent;
   }
 }
-
-// ── Load / save ──────────────────────────────────────────────────────────────
 
 function emptyRegistry() {
   return { version: REGISTRY_VERSION, projects: {} };
@@ -120,8 +81,6 @@ function save(reg) {
   fs.renameSync(tmp, p);
 }
 
-// ── Lookup ───────────────────────────────────────────────────────────────────
-
 function findEntry(reg, projectPath) {
   const key = normalizeProjectPath(projectPath);
   if (!key || !reg || !reg.projects) return null;
@@ -129,16 +88,12 @@ function findEntry(reg, projectPath) {
   return entry || null;
 }
 
-/**
- * Sync, read-only port lookup. Returns null if the project isn't registered.
- */
+/** Sync, read-only port lookup. Returns null if the project isn't registered. */
 function getPortForProject(projectPath) {
   const reg = load();
   const entry = findEntry(reg, projectPath);
   return entry ? entry.port : null;
 }
-
-// ── Allocation ───────────────────────────────────────────────────────────────
 
 function portsInUse(reg) {
   const used = new Set();
@@ -149,11 +104,6 @@ function portsInUse(reg) {
   return used;
 }
 
-/**
- * Pick the first port not claimed by another registered project AND actually
- * free on the loopback interface (no stray daemon / unrelated process holding
- * it). Returns null if the whole range is exhausted.
- */
 async function allocatePort(reg, preferredPort) {
   const used = portsInUse(reg);
 
@@ -170,18 +120,7 @@ async function allocatePort(reg, preferredPort) {
   return null;
 }
 
-// ── Entry lifecycle ──────────────────────────────────────────────────────────
-
-/**
- * Get the registered entry for `projectPath`, creating one (with an allocated
- * port) if none exists. Persists to disk on allocation.
- *
- * @param {string} projectPath - the Unity project root
- * @param {object} [opts]
- * @param {string} [opts.daemonRoot] - path to the daemon/ folder serving this project
- * @param {number} [opts.preferredPort] - port hint (e.g. from migration of old config)
- * @returns {Promise<{port:number, projectPath:string, daemonRoot?:string, ...}>}
- */
+/** Get-or-create a registry entry for `projectPath`. Allocates a port + persists. */
 async function ensureEntry(projectPath, opts = {}) {
   if (!projectPath) throw new Error('ensureEntry: projectPath is required');
   const key = normalizeProjectPath(projectPath);
@@ -189,7 +128,6 @@ async function ensureEntry(projectPath, opts = {}) {
   const reg = load();
   const existing = reg.projects[key];
   if (existing && Number.isInteger(existing.port)) {
-    // Keep metadata fresh.
     let changed = false;
     if (opts.daemonRoot && existing.daemonRoot !== opts.daemonRoot) {
       existing.daemonRoot = opts.daemonRoot;
@@ -218,24 +156,20 @@ async function ensureEntry(projectPath, opts = {}) {
   return entry;
 }
 
-/**
- * Patch fields on an existing entry (e.g. daemonPid, lastStartedAt). No-op if
- * the entry doesn't exist. Port is never changed by this function.
- */
+/** Patch fields on an existing entry. No-op if absent. Port is never patched. */
 function updateEntry(projectPath, patch) {
   const key = normalizeProjectPath(projectPath);
   const reg = load();
   const entry = reg.projects[key];
   if (!entry) return null;
   for (const k of Object.keys(patch || {})) {
-    if (k === 'port') continue; // never overwrite port this way
+    if (k === 'port') continue;
     entry[k] = patch[k];
   }
   save(reg);
   return entry;
 }
 
-/** Remove an entry (used by admin commands, not auto-cleanup). */
 function removeEntry(projectPath) {
   const key = normalizeProjectPath(projectPath);
   const reg = load();
@@ -245,7 +179,6 @@ function removeEntry(projectPath) {
   return true;
 }
 
-/** All registered projects (array of entries). */
 function listEntries() {
   const reg = load();
   return Object.values(reg.projects || {});
