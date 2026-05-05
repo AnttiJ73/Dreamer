@@ -1924,6 +1924,53 @@ async function run(argv) {
         break;
       }
 
+      case 'generate-texture': {
+        // Pure Node — no daemon round-trip. Loads spec, renders, writes PNG.
+        // The agent reads the resulting PNG to verify and iterates on the spec.
+        const fs = require('fs');
+        const pathMod = require('path');
+        const { renderSpec } = require('./texture/render');
+
+        if (!flags.out) fail('Usage: dreamer generate-texture --spec FILE.json --out Assets/Textures/foo.png  (or --inline-spec \'{"size":[64,64],"layers":[...]}\')');
+        let spec;
+        if (flags.spec) {
+          if (!fs.existsSync(flags.spec)) fail(`Spec file not found: ${flags.spec}`);
+          try { spec = JSON.parse(fs.readFileSync(flags.spec, 'utf8')); }
+          catch (e) { fail(`Failed to parse spec ${flags.spec}: ${e.message}`); }
+        } else if (flags['inline-spec']) {
+          try { spec = JSON.parse(flags['inline-spec']); }
+          catch (e) { fail(`Failed to parse --inline-spec JSON: ${e.message}`); }
+        } else {
+          fail('Provide --spec FILE.json or --inline-spec JSONSTRING');
+        }
+
+        const t0 = Date.now();
+        let result;
+        try { result = renderSpec(spec); }
+        catch (e) { fail(`Render failed: ${e.message}`); }
+
+        const outPath = String(flags.out);
+        fs.mkdirSync(pathMod.dirname(outPath), { recursive: true });
+        fs.writeFileSync(outPath, result.png);
+        const renderMs = Date.now() - t0;
+
+        const out = {
+          generated: true,
+          path: outPath.replace(/\\/g, '/'),
+          width: result.width,
+          height: result.height,
+          byteCount: result.png.length,
+          layers: (spec.layers || []).length,
+          renderMs,
+        };
+        console.log(JSON.stringify(out, null, 2));
+
+        if (flags.refresh === true || flags.refresh === 'true') {
+          await submitCommand('refresh_assets', {}, flags);
+        }
+        break;
+      }
+
       case 'preview-sprite': {
         const target = flags.asset || positional[1];
         if (!target) fail('Usage: dreamer preview-sprite --asset Assets/Sheet.png [--sub-sprite NAME] [--outline-thickness 2] [--save-to PATH]');

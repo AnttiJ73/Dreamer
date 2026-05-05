@@ -9,6 +9,29 @@ tags, breaking changes bump the minor version (0.x.0), fixes bump patch.
 
 ## [Unreleased]
 
+### Added — `generate-texture` (Phase 2): procedural PNG rendering, no Unity round-trip
+
+New CLI verb that renders a layered JSON spec straight to a PNG on disk. Pure Node — no daemon round-trip, no Unity round-trip, runs while Unity is unfocused or compiling. Output lands wherever you point `--out`, typically under `Assets/Textures/...` so a subsequent `refresh-assets` (or `--refresh` flag) imports it.
+
+```bash
+./bin/dreamer generate-texture --inline-spec '{"size":[128,128],"background":"#00000000","layers":[{"type":"shape","shape":"circle","center":[64,64],"radius":50,"fill":"#FF8800","stroke":{"color":"#000000","width":4}}]}' --out Assets/Textures/orb.png
+./bin/dreamer generate-texture --spec Assets/_DreamerTextures/specs/sunset.json --out Assets/Textures/sunset.png --refresh
+```
+
+**Layer types**:
+- `solid` — full-buffer fill with a color.
+- `gradient` — `linear` or `radial`, multi-stop, with offset interpolation.
+- `shape` — `circle`, `rect` (rotated, optional corner radius), `polygon` (regular n-gon), `star` (configurable inner/outer radius + point count), `plus`, `line` (capsule with thickness). Anti-aliased fills via SDF + smoothstep over a 1-pixel band. Optional outline with `width`, `color`, and `position: centered|outside|inside`.
+- `noise` — `white`, `value` (lattice with bilinear interp + smoothstep), `perlin` (gradient noise), `voronoi` (cellular F1, with `euclidean`/`manhattan`/`chebyshev` metrics). All deterministic from `seed`, with optional `octaves` + `persistence` for fractal stacking. Tinted via `color` + `lo`/`hi` value remap.
+
+**Blend modes** per layer: `normal` (alpha-over), `add`, `multiply`. Per-layer `alpha` multiplier.
+
+**Color formats** accepted everywhere: `#RGB`, `#RGBA`, `#RRGGBB`, `#RRGGBBAA`, `{ r, g, b, a }` with 0..1 floats, or `[r, g, b, a]` with 0..255 ints.
+
+**No deps** — built-in `zlib` for PNG encoding, hand-rolled CRC table, hand-rolled deflate-friendly raster. ~5–30ms for a 256×256 with several layers (the four samples in `daemon/scripts/texture-smoke.js` all complete under 30ms).
+
+**Phase 2 of the user-requested feature set.** Phases 3–5 (hand-drawn outline jitter, more blend modes, sheet builder + animation tiles, regenerate-from-saved-spec iteration loop) are queued as separate commits — the renderer is structured to absorb them without rewrites.
+
 ### Added — `setup-particle-material` + `capture-particle --auto-material`
 
 New command in the `dreamer-fx` add-on that closes the "particles invisible / magenta" gap on freshly-created particle prefabs. `setup-particle-material --asset Path.prefab` walks every `ParticleSystemRenderer` in the prefab subtree and assigns a placeholder material (created at `Assets/Materials/{prefabName}_Particle.mat` with a particle-friendly Unlit shader, white tint, additive blend) when a renderer has none. Existing materials are preserved unless `--force` is passed.
