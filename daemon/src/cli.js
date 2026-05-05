@@ -1898,6 +1898,11 @@ async function run(argv) {
         if (flags.transparent === true || flags.transparent === 'true') cpArgs.transparent = true;
         if (flags.seed !== undefined) cpArgs.seed = parseInt(flags.seed, 10);
         if (flags['individual-frames'] === true || flags['individual-frames'] === 'true') cpArgs.individualFrames = true;
+        if (flags['no-gif'] === true || flags['no-gif'] === 'true') cpArgs.gif = false;
+        else if (flags.gif === false || flags.gif === 'false') cpArgs.gif = false;
+        else if (flags.gif === true || flags.gif === 'true') cpArgs.gif = true;
+        if (flags['gif-delay-ms'] !== undefined) cpArgs.gifDelayMs = parseInt(flags['gif-delay-ms'], 10);
+        if (flags['gif-loop'] !== undefined) cpArgs.gifLoop = parseInt(flags['gif-loop'], 10);
         await submitCommand('capture_particle', cpArgs, flags);
         break;
       }

@@ -181,6 +181,9 @@ namespace Dreamer.AgentBridge.FX
                 string stem = Path.GetFileNameWithoutExtension(assetPath);
                 long ticks = DateTime.UtcNow.Ticks;
                 bool individualFrames = SimpleJson.GetBool(args, "individualFrames", false);
+                bool emitGif = SimpleJson.GetBool(args, "gif", true);
+                int gifDelayMs = SimpleJson.GetInt(args, "gifDelayMs", 0);
+                int gifLoop = SimpleJson.GetInt(args, "gifLoop", 0);
 
                 var rendered = new Texture2D[frameTimes.Count];
                 var framesJson = SimpleJson.Array();
@@ -281,7 +284,21 @@ namespace Dreamer.AgentBridge.FX
                     string gridPath = Path.Combine(DefaultDir, $"particle-{stem}-{assetGuid.Substring(0, 8)}-{ticks}-grid.png").Replace('\\', '/');
                     File.WriteAllBytes(gridPath, gridPng);
 
-                    return CommandResult.Ok(SimpleJson.Object()
+                    // Optional GIF — animation preview, default ON. Quantizes to 256 colors.
+                    string gifPath = null;
+                    long gifBytes = 0;
+                    if (emitGif && n >= 2)
+                    {
+                        int delay = gifDelayMs > 0
+                            ? gifDelayMs
+                            : Mathf.Max(40, Mathf.RoundToInt((duration / Mathf.Max(1, n - 1)) * 1000f));
+                        byte[] gifData = GifEncoder.Encode(rendered, delay, gifLoop);
+                        gifPath = Path.Combine(DefaultDir, $"particle-{stem}-{assetGuid.Substring(0, 8)}-{ticks}.gif").Replace('\\', '/');
+                        File.WriteAllBytes(gifPath, gifData);
+                        gifBytes = gifData.Length;
+                    }
+
+                    var resultJson = SimpleJson.Object()
                         .Put("captured", true)
                         .Put("path", gridPath)
                         .Put("assetPath", assetPath)
@@ -299,9 +316,15 @@ namespace Dreamer.AgentBridge.FX
                         .PutRaw("bounds", BoundsJson(bounds).ToString())
                         .PutRaw("frames", framesJson.ToString())
                         .Put("byteCount", gridPng.Length)
-                        .Put("individualByteCount", individualBytes)
-                        .Put("hint", "Open `path` with the Read tool — it's a single grid image with all frames laid out left-to-right, top-to-bottom. Each cell has a timestamp label. Use `--individual-frames` to also save per-frame PNGs.")
-                        .ToString());
+                        .Put("individualByteCount", individualBytes);
+                    if (gifPath != null)
+                    {
+                        resultJson.Put("gifPath", gifPath).Put("gifByteCount", gifBytes);
+                    }
+                    resultJson.Put("hint", gifPath != null
+                        ? "`path` is the static grid PNG (good for diff comparison). `gifPath` is an animated GIF that loops the same frames — open it in any image viewer to see the effect play. Use `--individual-frames` to also save per-frame PNGs; `--no-gif` to skip GIF generation."
+                        : "`path` is a single grid image with all frames laid out left-to-right, top-to-bottom. Each cell has a timestamp label. GIF generation skipped (frames < 2 or --no-gif passed). Use `--individual-frames` to also save per-frame PNGs.");
+                    return CommandResult.Ok(resultJson.ToString());
                 }
                 finally
                 {

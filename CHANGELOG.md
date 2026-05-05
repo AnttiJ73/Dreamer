@@ -9,6 +9,27 @@ tags, breaking changes bump the minor version (0.x.0), fixes bump patch.
 
 ## [Unreleased]
 
+### Added — `capture-particle` emits an animated GIF alongside the grid PNG
+
+`capture-particle` now writes an animated GIF in addition to the static grid composite, so you can actually watch the effect play instead of only diffing still frames. Defaults: GIF on whenever `frames >= 2`, frame delay derived from `duration / (frames - 1)` so the loop spans the same simulated time as the capture, infinite loop, single global 256-color palette via median-cut quantization. Result includes `gifPath` and `gifByteCount`.
+
+```bash
+./bin/dreamer capture-particle --asset Assets/FX/Explosion.prefab --frames 10 --wait
+# Writes: particle-…-grid.png  +  particle-….gif
+./bin/dreamer capture-particle --asset Assets/FX/Boring.prefab --no-gif --wait    # opt out
+./bin/dreamer capture-particle --asset Assets/FX/Slow.prefab --gif-delay-ms 200 --wait
+```
+
+- New flags: `--gif | --no-gif`, `--gif-delay-ms <int>`, `--gif-loop <count>` (0 = infinite).
+- New result fields: `gifPath`, `gifByteCount` (only set when GIF was emitted).
+- Self-contained GIF89a encoder lives in the `dreamer-fx` add-on (`Encoders/GifEncoder.cs`) — no external dependencies. Median-cut quantization to a single global 256-color palette + LZW compression with the standard sub-block format.
+
+### Fixed — Animated GIF from `capture-particle` was truncated to 1/8 of each frame's pixels
+
+Symptom: the GIF wrote successfully, but most image viewers either rendered junk or refused to open it; `gif-inspect.js` showed each frame decoded to 32768 pixels instead of 262144 (8× short). Root cause: classic GIF LZW off-by-one in the encoder's `codeSize` bump check — the encoder increased the code width one iteration too early because the decoder's dictionary trails the encoder's by one entry (decoder's first-code branch adds nothing to the table). Encoder wrote a 10-bit code while the decoder was still reading 9 bits, mis-aligning the bitstream and tripping the End code (257) prematurely.
+
+Fix in [GifEncoder.cs](Packages/com.dreamer.agent-bridge.fx/Editor/Encoders/GifEncoder.cs): change the bump trigger from `nextCode >= (1 << codeSize)` to `nextCode > (1 << codeSize)`, matching giflib's ordering and the JS reference decoder used by `daemon/scripts/gif-inspect.js`. Verified by round-tripping six payloads (zeros, alternating, counting 0..255 — exactly the dictionary-fill stress case — repeated counting, 262144 zeros, 262144 pseudo-noise) through a JS port of the encoder back through the decoder; all six match byte-for-byte after the fix and fail before it.
+
 ### Added — `capture-particle` command + `dreamer-fx` add-on (visual VFX iteration)
 
 Closes the visual-feedback gap for particle iteration: an LLM editing `ParticleSystem` properties can now SEE how the effect looks at each timestamp instead of guessing. `capture-particle --asset FX.prefab` spawns the prefab into a sandboxed `PreviewRenderUtility` scene, runs `ParticleSystem.Simulate(t, fixedTimeStep=true, restart=true)` at N evenly-spaced timestamps (or explicit `--times "[0, 0.05, 0.5, 1.0]"`), and composes all frames into **one grid PNG** with timestamp labels above each cell. The user's active scene is untouched.

@@ -59,6 +59,21 @@ module.exports = {
       cli: '--individual-frames',
       description: 'Also save each frame as a separate PNG alongside the grid composite. Default: false (grid-only). Use this when you want to compare the same timestamp across two captures via image-diff tools that need separate files.',
     },
+    gif: {
+      type: 'boolean',
+      cli: '--gif | --no-gif',
+      description: 'Emit an animated GIF alongside the grid PNG (default: true when frames >= 2). The GIF loops indefinitely at a frame rate derived from `duration`. Quantized to 256 colors via median-cut. Pass `--no-gif` to skip.',
+    },
+    gifDelayMs: {
+      type: 'integer',
+      cli: '--gif-delay-ms',
+      description: 'Per-frame delay in milliseconds for the GIF. Default: `duration * 1000 / (frames - 1)` so the GIF spans the same simulated time as the capture. Min effective delay is 20ms (50 fps cap from the GIF format).',
+    },
+    gifLoop: {
+      type: 'integer',
+      cli: '--gif-loop',
+      description: 'GIF loop count. Default 0 = infinite. Set to N for a finite loop count.',
+    },
   },
   constraints: [commonArgs.targetAtLeastOne(['asset', 'guid'])],
   result: {
@@ -88,6 +103,8 @@ module.exports = {
       },
       byteCount: { type: 'integer', description: 'Size of the grid PNG in bytes.' },
       individualByteCount: { type: 'integer', description: 'Sum of per-frame PNGs (only > 0 when --individual-frames passed).' },
+      gifPath: { type: 'string', description: 'Path to the animated GIF (only present when --gif is on AND frames >= 2).' },
+      gifByteCount: { type: 'integer' },
     },
   },
   examples: [
