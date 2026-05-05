@@ -52,6 +52,16 @@ Unity side activates automatically when the package is loaded (InitializeOnLoad)
 - **Protocol**: JSON over HTTP. Daemon is server, Unity is polling client, CLI is request client
 - **Port**: 18710 default, configurable via `DREAMER_PORT` env var or EditorPrefs
 
+## Branch policy
+
+**Commit to `main` directly.** Don't create long-lived feature branches.
+
+Every commit on `main` is a release: downstream projects install Dreamer with `.dreamer-source.json` recording `ref: 'main'` (the default), and `./bin/dreamer update` + `./bin/dreamer addon install <name>` clone from that ref. So a stale `main` means stale downstream installs — and a feature branch that holds 50+ commits while `main` stagnates breaks the install path entirely (kinds and add-on packages that exist on the feature branch won't be found by `addon install`).
+
+Past incident (May 2026): `feature/ugui-addon` accumulated 59 commits — all three add-on packages, the search tool, sprite validation — while `main` was last touched in April. A user installing Dreamer in another project saw `dreamer addon install ugui` fail and Claude correctly concluded "no UGUI tools exist." Fixed by merging the branch and adopting this policy.
+
+Branches are still fine for genuinely speculative or incomplete work that shouldn't ship yet — but merge as soon as the work is usable, and never let one outlive a single sprint of changes.
+
 ## Changelog
 
 When you commit a user-visible Dreamer change, append a bullet to `CHANGELOG.md` under `## [Unreleased]` in the same commit. User-visible = new commands, new flags, behavior changes, observable bug fixes. Refactors, comment-trims, and internal renames stay out (git log covers those).
