@@ -9,6 +9,35 @@ tags, breaking changes bump the minor version (0.x.0), fixes bump patch.
 
 ## [Unreleased]
 
+### Added — `generate-sheet` + `regenerate-texture` + hand-drawn outline jitter (Phases 3-5)
+
+Three companion features to `generate-texture` that complete the texture authoring loop:
+
+**`generate-sheet`** — composes a sprite-sheet from N tile renders. Two modes:
+- **Animation**: provide a `base` tile spec + `interpolate: { "layers[0].radius": [5, 25] }` and the builder generates `frames` tiles by linearly interpolating values across frames. Numbers and hex colors interpolate channel-wise; arrays element-wise. Property paths use `lodash`-style: `layers[0].radius`, `layers[2].center[0]`, `background`. Typos throw at render time.
+- **Explicit**: provide `tiles: [tileSpec, tileSpec, ...]` for a hand-built grid (different shape per tile — useful for icon strips).
+
+```bash
+./bin/dreamer generate-sheet --inline-spec '{"tileSize":[64,64],"cols":2,"rows":2,"frames":4,"background":"#00000000","base":{"layers":[{"type":"shape","shape":"circle","center":[32,32],"radius":5,"fill":"#FFEE00","stroke":{"color":"#222","width":2}}]},"interpolate":{"layers[0].radius":[5,25],"layers[0].fill":["#FFEE00","#FF2200"]}}' --out Assets/Textures/puff.png
+```
+
+Result includes per-tile metadata (`{ index, col, row, x, y, w, h }`) so a follow-up `slice-sprite --grid` knows the exact pixel positions.
+
+**`regenerate-texture`** — the iteration loop verb. Reads a spec file whose `out` field points at the texture path, re-renders, auto-runs `refresh-assets` so Unity reimports immediately. Workflow: edit `Assets/_DreamerTextures/specs/foo.json`, run `./bin/dreamer regenerate-texture --spec foo.json`, Read the resulting PNG, repeat. No need to re-pass `--out` or `--refresh` on every cycle.
+
+**Hand-drawn outline jitter** on shapes:
+- `stroke.jitter: { amount, scale, kind?, seed?, octaves? }` — wobbles JUST the outline around a clean fill (like a shaky pen line over a printed shape).
+- `displace: { amount, scale, kind?, seed?, octaves? }` on a shape layer — wobbles the whole SDF, so fill AND outline drift together (like a freehand drawing where everything boils a little).
+
+Both are noise-displaced SDF distances, so they compose with anti-aliasing and outline width naturally. Default kind is `value` noise; `perlin` and other kinds in the noise module work too. Use `octaves` > 1 for more organic variation.
+
+```jsonc
+{ "stroke": { "color": "#221100", "width": 3, "jitter": { "amount": 1.5, "scale": 0.18, "seed": 7 } } }
+{ "displace": { "amount": 4, "scale": 0.12, "octaves": 2, "seed": 5 } }
+```
+
+Verified visually via `daemon/scripts/sheet-smoke.js`: a 2×2 animated puff (radius+color+alpha keyed across 4 frames), an explicit-tile icon strip (circle, star, plus, hexagon), a circle with shaky outline, a yellow square with whole-shape wobble, and a 4-frame growing-star animation that combines stroke jitter + whole-shape displace + size interpolation. All under 15 ms each.
+
 ### Added — `generate-texture` (Phase 2): procedural PNG rendering, no Unity round-trip
 
 New CLI verb that renders a layered JSON spec straight to a PNG on disk. Pure Node — no daemon round-trip, no Unity round-trip, runs while Unity is unfocused or compiling. Output lands wherever you point `--out`, typically under `Assets/Textures/...` so a subsequent `refresh-assets` (or `--refresh` flag) imports it.

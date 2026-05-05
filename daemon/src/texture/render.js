@@ -129,11 +129,37 @@ function renderShape(raster, layer, blend, alphaMul) {
   const strokePos = layer.stroke?.position || 'centered';
   const aa = layer.antialias !== false;
 
+  // Whole-shape displacement: wobbles fill AND stroke together via a noise offset
+  // applied to the SDF. Use this for "scribbled" or "boiling" shapes.
+  const dispSpec = layer.displace;
+  const dispNoise = dispSpec ? makeNoise({
+    kind: dispSpec.kind || 'value',
+    scale: dispSpec.scale != null ? dispSpec.scale : 0.1,
+    seed:  dispSpec.seed  != null ? dispSpec.seed  : 1,
+    octaves: dispSpec.octaves || 1,
+    persistence: dispSpec.persistence || 0.5,
+  }) : null;
+  const dispAmt = dispSpec ? (dispSpec.amount != null ? dispSpec.amount : 1.5) : 0;
+
+  // Stroke-only jitter: the fill stays clean, but the outline wobbles around the
+  // boundary like a hand-drawn pen line. `amount` is in pixels (peak ± offset).
+  const jitterSpec = layer.stroke?.jitter;
+  const jitterNoise = jitterSpec ? makeNoise({
+    kind: jitterSpec.kind || 'value',
+    scale: jitterSpec.scale != null ? jitterSpec.scale : 0.15,
+    seed:  jitterSpec.seed  != null ? jitterSpec.seed  : 7,
+    octaves: jitterSpec.octaves || 2,
+    persistence: jitterSpec.persistence || 0.5,
+  }) : null;
+  const jitterAmt = jitterSpec ? (jitterSpec.amount != null ? jitterSpec.amount : 1.5) : 0;
+
   // Whole-canvas iteration for MVP. A bbox-clipped pass is a TODO once we add
   // sheet-builder hot loops where 90% of the canvas is empty.
   for (let y = 0; y < raster.height; y++) {
     for (let x = 0; x < raster.width; x++) {
-      const d = sdf(x + 0.5, y + 0.5);
+      const fx = x + 0.5, fy = y + 0.5;
+      let d = sdf(fx, fy);
+      if (dispNoise) d += (dispNoise(fx, fy) - 0.5) * 2 * dispAmt;
 
       // Fill coverage. The fill ends at d=0 (or pulled back to make room for an
       // outside stroke that should NOT overlap the fill, but for centered/inside
@@ -149,11 +175,14 @@ function renderShape(raster, layer, blend, alphaMul) {
       }
 
       // Stroke as a band relative to d=0. Position controls which side the band lives on.
+      // Apply per-stroke jitter on top of any whole-shape displacement.
       if (strokeRGBA && strokeW > 0) {
+        let strokeD = d;
+        if (jitterNoise) strokeD += (jitterNoise(fx, fy) - 0.5) * 2 * jitterAmt;
         let bandSdf;
-        if (strokePos === 'outside')      bandSdf = Math.max(-d, d - strokeW);            // band [0, +w]
-        else if (strokePos === 'inside')  bandSdf = Math.max(d, -(d + strokeW));          // band [-w, 0]
-        else                              bandSdf = Math.abs(d) - strokeW / 2;            // band [-w/2, +w/2]
+        if (strokePos === 'outside')      bandSdf = Math.max(-strokeD, strokeD - strokeW); // band [0, +w]
+        else if (strokePos === 'inside')  bandSdf = Math.max(strokeD, -(strokeD + strokeW)); // band [-w, 0]
+        else                              bandSdf = Math.abs(strokeD) - strokeW / 2;       // band [-w/2, +w/2]
         let cov;
         if (aa) cov = 1 - smoothstep(-0.5, 0.5, bandSdf);
         else    cov = bandSdf <= 0 ? 1 : 0;

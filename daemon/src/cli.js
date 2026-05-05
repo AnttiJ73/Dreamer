@@ -1924,14 +1924,71 @@ async function run(argv) {
         break;
       }
 
-      case 'generate-texture': {
+      case 'generate-texture':
+      case 'regenerate-texture': {
         // Pure Node — no daemon round-trip. Loads spec, renders, writes PNG.
-        // The agent reads the resulting PNG to verify and iterates on the spec.
+        // regenerate-texture is a thin alias: requires --spec (no inline form),
+        // and the spec's `out` field is used as the output path so re-running
+        // is just `dreamer regenerate-texture --spec foo.json`.
         const fs = require('fs');
         const pathMod = require('path');
         const { renderSpec } = require('./texture/render');
 
-        if (!flags.out) fail('Usage: dreamer generate-texture --spec FILE.json --out Assets/Textures/foo.png  (or --inline-spec \'{"size":[64,64],"layers":[...]}\')');
+        const isRegen = positional[0] === 'regenerate-texture';
+        let spec;
+        if (flags.spec) {
+          if (!fs.existsSync(flags.spec)) fail(`Spec file not found: ${flags.spec}`);
+          try { spec = JSON.parse(fs.readFileSync(flags.spec, 'utf8')); }
+          catch (e) { fail(`Failed to parse spec ${flags.spec}: ${e.message}`); }
+        } else if (!isRegen && flags['inline-spec']) {
+          try { spec = JSON.parse(flags['inline-spec']); }
+          catch (e) { fail(`Failed to parse --inline-spec JSON: ${e.message}`); }
+        } else {
+          fail(isRegen
+            ? 'Usage: dreamer regenerate-texture --spec FILE.json   (spec must contain an `out` field)'
+            : 'Usage: dreamer generate-texture --spec FILE.json --out Assets/Textures/foo.png  (or --inline-spec \'{"size":[64,64],"layers":[...]}\')');
+        }
+
+        const outPath = String(flags.out || spec.out || '');
+        if (!outPath) fail(isRegen
+          ? `Spec ${flags.spec} has no \`out\` field — add it or pass --out PATH.`
+          : 'Provide --out PATH (or include "out" in the spec).');
+
+        const t0 = Date.now();
+        let result;
+        try { result = renderSpec(spec); }
+        catch (e) { fail(`Render failed: ${e.message}`); }
+
+        fs.mkdirSync(pathMod.dirname(outPath), { recursive: true });
+        fs.writeFileSync(outPath, result.png);
+        const renderMs = Date.now() - t0;
+
+        const out = {
+          generated: true,
+          regenerated: isRegen,
+          specPath: flags.spec || null,
+          path: outPath.replace(/\\/g, '/'),
+          width: result.width,
+          height: result.height,
+          byteCount: result.png.length,
+          layers: (spec.layers || []).length,
+          renderMs,
+        };
+        console.log(JSON.stringify(out, null, 2));
+
+        if (flags.refresh === true || flags.refresh === 'true' || isRegen) {
+          await submitCommand('refresh_assets', {}, flags);
+        }
+        break;
+      }
+
+      case 'generate-sheet': {
+        // Same model as generate-texture — pure Node. Composes a tile grid.
+        const fs = require('fs');
+        const pathMod = require('path');
+        const { generateSheet } = require('./texture/sheet');
+
+        if (!flags.out) fail('Usage: dreamer generate-sheet --spec FILE.json --out Assets/Textures/sheet.png');
         let spec;
         if (flags.spec) {
           if (!fs.existsSync(flags.spec)) fail(`Spec file not found: ${flags.spec}`);
@@ -1940,14 +1997,12 @@ async function run(argv) {
         } else if (flags['inline-spec']) {
           try { spec = JSON.parse(flags['inline-spec']); }
           catch (e) { fail(`Failed to parse --inline-spec JSON: ${e.message}`); }
-        } else {
-          fail('Provide --spec FILE.json or --inline-spec JSONSTRING');
-        }
+        } else fail('Provide --spec FILE.json or --inline-spec JSONSTRING');
 
         const t0 = Date.now();
         let result;
-        try { result = renderSpec(spec); }
-        catch (e) { fail(`Render failed: ${e.message}`); }
+        try { result = generateSheet(spec); }
+        catch (e) { fail(`Sheet render failed: ${e.message}`); }
 
         const outPath = String(flags.out);
         fs.mkdirSync(pathMod.dirname(outPath), { recursive: true });
@@ -1959,8 +2014,13 @@ async function run(argv) {
           path: outPath.replace(/\\/g, '/'),
           width: result.width,
           height: result.height,
+          cols: result.cols,
+          rows: result.rows,
+          tileWidth: result.tileWidth,
+          tileHeight: result.tileHeight,
+          tileCount: result.tileCount,
+          tiles: result.tiles,
           byteCount: result.png.length,
-          layers: (spec.layers || []).length,
           renderMs,
         };
         console.log(JSON.stringify(out, null, 2));
