@@ -9,6 +9,19 @@ tags, breaking changes bump the minor version (0.x.0), fixes bump patch.
 
 ## [Unreleased]
 
+### Fixed — Bridge timed out connecting to daemon on Windows (IPv4/IPv6 mismatch)
+
+Symptom: Unity Editor logged `[Dreamer] Background bridge error: The operation has timed out.` repeatedly. `./bin/dreamer status` reported the bridge as disconnected even though Unity was open and focused. Commands queued indefinitely with `waitingReason: "unity_disconnected"`. `netstat -an | findstr <port>` showed `0.0.0.0:<port> LISTENING` plus several `[::1]:NNNN -> [::1]:<port> SYN_SENT` lines that never advanced.
+
+Root cause: the daemon called `server.listen(port, '0.0.0.0', …)` — IPv4 only — while the Unity bridge built its base URL as `http://localhost:{port}`. On Windows, `localhost` resolves to `[::1]` (IPv6) first for many configurations. The bridge's heartbeat opened an IPv6 socket that hung in `SYN_SENT` until UnityWebRequest's timeout elapsed.
+
+Two complementary fixes (belt-and-braces — either alone resolves it):
+
+- **Daemon**: bind dual-stack — `server.listen(port, '::', …)` instead of `'0.0.0.0'`. Node accepts both stacks on `'::'`. `isLocalhost()` already whitelists `127.0.0.1`, `::1`, and `::ffff:127.0.0.1`, so the auth check is unchanged.
+- **Bridge**: hardcode `BaseUrl = "http://127.0.0.1:{Port}"` instead of `localhost`. Removes the resolver dependency entirely so connections are deterministic across host configurations.
+
+Reported by @AnttiJ73 from a downstream project (Endless Depths) — patches were applied locally there first; this brings them upstream so `./bin/dreamer update` picks them up.
+
 ### Changed — `dreamer search` now indexes per-kind topic keywords + a 4× larger synonym map
 
 The synonym map grew from 17 word-groups (~50 entries) to ~70 word-groups (~250 entries) — covers create / delete / inspect / find / move / save / play / compile / wire / animate / atlas / ui / physics families with symmetric cross-links. New per-kind `KIND_KEYWORDS` map attaches topic tags directly to the right kinds so a query lands name-tier:

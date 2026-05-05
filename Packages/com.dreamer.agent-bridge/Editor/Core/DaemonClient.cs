@@ -116,7 +116,11 @@ namespace Dreamer.AgentBridge
             _cachedRegistryPort = null;
         }
 
-        public static string BaseUrl => $"http://localhost:{Port}";
+        // Hardcode IPv4 loopback. On Windows, `localhost` resolves to ::1 first; if the
+        // daemon is bound IPv4-only the connection hangs in SYN_SENT until UnityWebRequest
+        // times out. The daemon now listens dual-stack as a defence-in-depth, but this
+        // keeps connections deterministic across resolver configurations.
+        public static string BaseUrl => $"http://127.0.0.1:{Port}";
 
         public static bool IsRequestInFlight => _inFlight.Count > 0;
 

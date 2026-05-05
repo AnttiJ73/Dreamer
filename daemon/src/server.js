@@ -214,8 +214,12 @@ process.on('SIGINT', shutdown);
     log.error(`Server error: ${err.message}`);
   });
 
-  server.listen(port, '0.0.0.0', () => {
-    log.info(`Listening on 0.0.0.0:${port}`);
+  // Dual-stack (IPv4 + IPv6). On Windows, `localhost` resolves to ::1 first for many
+  // configurations — binding IPv4-only ('0.0.0.0') leaves IPv6 clients stuck in SYN_SENT
+  // until they time out. Node's '::' listens on both stacks. isLocalhost() already accepts
+  // 127.0.0.1, ::1, and ::ffff:127.0.0.1.
+  server.listen(port, '::', () => {
+    log.info(`Listening on [::]:${port} (dual-stack)`);
 
     try {
       projectRegistry.updateEntry(DAEMON_PROJECT_ROOT, {
