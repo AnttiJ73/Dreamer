@@ -4,7 +4,12 @@ const { validateTransition, isCompileSafe, mutatesScene } = require('./command')
 const log = require('./log').create('scheduler');
 
 const SCHEDULER_INTERVAL_MS = 200;
-const HEARTBEAT_TIMEOUT_MS = 10000;
+// 10s was too tight: with 3+ CLI clients contending for the daemon, plus
+// Windows occasionally throttling Unity's background threads when the editor
+// loses focus, transient blips (1-2 missed heartbeats) caused false disconnects
+// even though the bridge was still sending. 25s = ~8 missed heartbeats at the
+// 3s send interval before we conclude Unity is gone.
+const HEARTBEAT_TIMEOUT_MS = 25000;
 // Stuck-running ceiling: Unity reports results via /api/unity/result, but a
 // domain-reload or crash mid-command means the report never arrives and the
 // serialized dispatch queue would block forever. 60s clears legit slow commands

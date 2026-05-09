@@ -699,18 +699,27 @@ function search(query, opts = {}) {
 
   let hint;
   if (results.length === 0) {
-    hint = 'No matches even with broad search. Run `./bin/dreamer help` for the full kind list.';
-  } else if (broadAdded > 0) {
-    hint = `Precise pass found ${results.length - broadAdded}; broad pass (extended fuzzy + trigram) added ${broadAdded}. Drill down via \`./bin/dreamer help <kind>\`. Top match: ${results[0].cliVerb}.`;
+    hint = 'No matches. Run `./bin/dreamer help` for the full kind list.';
   } else {
     hint = `Drill down via \`./bin/dreamer help <kind>\`. Top match: ${results[0].cliVerb}.`;
   }
 
+  // Strip internal ranking fields (score, matchedOn, pass) — they don't change
+  // what Claude does now or later. Keep only what informs tool selection or use.
+  const publicResults = results.map(r => {
+    const out = { kind: r.kind, cliVerb: r.cliVerb, summary: r.summary };
+    if (r.firstExample) out.firstExample = r.firstExample;
+    return out;
+  });
+
   return {
     query,
     count: results.length,
-    pass: broadAdded > 0 ? 'precise+broad' : 'precise',
-    results,
+    // Quick-scan list up front (single line): agents that read only the first
+    // ~20 lines see every match name before the verbose summaries push them
+    // out of view.
+    kinds: publicResults.map(r => r.kind).join(', '),
+    results: publicResults,
     hint,
   };
 }

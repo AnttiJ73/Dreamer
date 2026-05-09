@@ -85,7 +85,23 @@ function createUnityHandlers(queue, unityState, scheduler, assetWatcher) {
         if (body.success) {
           let result = body.result || body.resultJson || null;
           if (typeof result === 'string') {
-            try { result = JSON.parse(result); } catch (_) { /* keep as string */ }
+            try { result = JSON.parse(result); }
+            catch (_) {
+              // Unity's SimpleJson emits `Infinity` / `-Infinity` / `NaN`
+              // for non-finite floats. JSON doesn't support those literals,
+              // so a vector with an infinite component (sometimes seen on
+              // material defaults like `_CameraFadeParams: (0, Infinity, 0, 0)`)
+              // breaks plain JSON.parse. Sanitise to JSON-legal numbers and
+              // try again; if it still fails, keep as raw string.
+              const sanitised = result
+                .replace(/(?<=[:,[\s])-?Infinity\b/g, '1e999')
+                .replace(/(?<=[:,[\s])NaN\b/g, 'null');
+              try {
+                const parsed = JSON.parse(sanitised);
+                // 1e999 → JSON-parses as `Infinity` in JS; we keep that.
+                result = parsed;
+              } catch (_) { /* keep as string */ }
+            }
           }
           queue.update(body.id, {
             state: 'succeeded',

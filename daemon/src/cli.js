@@ -136,6 +136,46 @@ const DEFAULT_FOCUS_STALL_MS = 5000;
 
 const TERMINAL_STATES = new Set(['succeeded', 'failed', 'blocked', 'cancelled']);
 
+// Errors a Node-side inspector can return to mean "I'm not sure I got this
+// right, please use the Unity path instead". Handled by `tryNodeFirst`.
+const NODE_FALLBACK_ERRORS = new Set([
+  'PREFAB_VARIANT_NOT_SUPPORTED',
+  'SCENE_HAS_PREFAB_INSTANCES',
+]);
+
+// Try a Node-side implementation first; on any failure (parse error, missing
+// asset, fallback signal), fall through to the daemon→Unity path. `nodeImpl`
+// is a synchronous function returning either the result body or { error }.
+// Honors `--unity` to bypass the Node path entirely (regression / debugging).
+async function tryNodeFirst(kind, daemonArgs, flags, nodeImpl) {
+  if (flags.unity === true || flags.unity === 'true') {
+    await submitCommand(kind, daemonArgs, flags);
+    return;
+  }
+  let nodeResult;
+  try { nodeResult = nodeImpl(); }
+  catch (e) {
+    if (process.env.DREAMER_DEBUG_NODE_INSPECT) {
+      process.stderr.write(`[node-fallback] ${kind}: threw ${e.message}\n`);
+    }
+    nodeResult = { error: 'NODE_THREW: ' + e.message };
+  }
+  if (nodeResult && !nodeResult.error) {
+    if (flags.verbose === true || flags.verbose === 'true') {
+      out({ ...nodeResult, _via: 'node' });
+    } else {
+      out(nodeResult);
+    }
+    return;
+  }
+  // Fall back to Unity. If the error wasn't a known fallback signal AND the
+  // user didn't pass --quiet-fallback, log a one-liner so misuse is visible.
+  if (process.env.DREAMER_DEBUG_NODE_INSPECT) {
+    process.stderr.write(`[node-fallback] ${kind}: ${nodeResult ? nodeResult.error : 'no result'} → unity\n`);
+  }
+  await submitCommand(kind, daemonArgs, flags);
+}
+
 /** True for errors that signal "Unity hasn't imported recent .cs" rather than user typo. */
 function isStaleAssetError(errorMsg) {
   if (!errorMsg || typeof errorMsg !== 'string') return false;
@@ -208,7 +248,12 @@ async function submitCommand(kind, args, flags = {}) {
 
   const cmd = resp.data;
 
-  if (flags.wait) {
+  // --wait is the default; --no-wait opts into fire-and-forget mode (rare —
+  // mostly for commands that intentionally outlive the CLI process). The old
+  // --wait flag is still accepted for compatibility but is a no-op now.
+  const shouldWait = flags['no-wait'] !== true;
+
+  if (shouldWait) {
     // In smart mode, Unity's main thread fully halts when unfocused (not
     // slow — stopped). If we don't hit terminal within the stall window,
     // focus once to unstick it.
@@ -283,7 +328,30 @@ async function submitCommand(kind, args, flags = {}) {
             process.exit(1);
           }
         }
-        out(current);
+        // Strip the queue/scheduler envelope (id, state, timestamps, etc.)
+        // and print only the result body — what changes Claude's next action.
+        // Pass --verbose to see the full envelope for debugging.
+        if (flags.verbose) {
+          out(current);
+        } else if (current.state === 'failed') {
+          const body = { error: current.error || 'Command failed', kind: current.kind };
+          if (current.result && (typeof current.result === 'string' || Object.keys(current.result).length)) body.result = current.result;
+          process.stderr.write(JSON.stringify(body, null, 2) + '\n');
+          process.exit(1);
+        } else {
+          // result may be a string when Unity-side JSON couldn't be parsed by
+          // the daemon (e.g. `Infinity` literals in material color values
+          // aren't valid JSON). Print it raw in that case so we don't
+          // double-encode it as a quoted string.
+          if (typeof current.result === 'string') {
+            process.stdout.write(current.result + '\n');
+            process.exit(0);
+          }
+          const body = current.result && Object.keys(current.result).length
+            ? current.result
+            : { ok: true };
+          out(body);
+        }
         return;
       }
 
@@ -453,9 +521,13 @@ async function run(argv) {
         'log tail [--n N] | log path',
         'help <kind>    (render arg schema for a command kind, if documented)',
         'search <query>    (default discovery: fuzzy + substring across verb names, summaries, args, examples; e.g. `dreamer search "copy prefab"`, `dreamer search ppu`)',
+        'batch [--file ops.json]    (run N commands in one CLI process — kills (N-1) Node-startup hits. Reads JSON array of {kind, args, options?} from --file or stdin. Stops at first failure unless --stop-on-error=false.)',
       ],
       flags: [
-        '--wait', '--wait-timeout MS', '--origin-task-id ID', '--label TEXT',
+        '--no-wait        fire-and-forget; default is to wait for the command to finish.',
+        '--verbose        print the full queue envelope (id, state, timestamps, …); default prints just the result body.',
+        '--unity          force a query command to use the Unity bridge instead of the Node-side reader (regression / debugging). Most read-only commands (find-assets, inspect, inspect-material, inspect-build-scenes, inspect-project-settings, inspect-player-settings, inspect-animation-clip, inspect-animator-controller, inspect-animator-override-controller, inspect-avatar-mask, inspect-shader, inspect-many) now run pure-Node by default — they read .prefab/.unity/.asset YAML directly so they work even when Unity is unfocused or closed.',
+        '--wait-timeout MS', '--origin-task-id ID', '--label TEXT',
         '--priority N', '--depends-on CMD_ID',
         '--scene-object PATH  (for set-property / save-as-prefab: target a scene object instead of an asset)',
         '--focus          force Unity focus upfront (overrides policy)',
@@ -472,29 +544,43 @@ async function run(argv) {
   try {
     switch (command) {
       // ── Asset / editor commands ───────────────────────────────────────
-      case 'find-assets':
-        await submitCommand('find_assets', {
+      case 'find-assets': {
+        const fa = {
           type: flags.type || null,
           name: flags.name || null,
           path: flags.path || null,
-        }, flags);
+        };
+        await tryNodeFirst('find_assets', fa, flags, () => {
+          const { findAssets } = require('./unity-yaml/find-assets');
+          return findAssets(fa);
+        });
         break;
+      }
 
       case 'inspect': {
         const inspectArgs = {};
         if (flags.depth !== undefined) inspectArgs.depth = parseInt(flags.depth, 10);
         if (flags['include-transforms']) inspectArgs.includeTransforms = true;
         if (flags['include-fields']) inspectArgs.includeFields = true;
+
         if (flags['scene-object']) {
+          // Scene-object reads need Unity (active-scene runtime state — no YAML alt).
           inspectArgs.sceneObjectPath = flags['scene-object'];
           await submitCommand('inspect_asset', inspectArgs, flags);
-        } else {
-          const target = positional[1];
-          if (!target) fail('Usage: dreamer inspect <path-or-guid> [--depth N] [--include-transforms] [--include-fields] OR dreamer inspect --scene-object NAME');
-          const isGuid = /^[0-9a-f]{32}$/i.test(target);
-          Object.assign(inspectArgs, isGuid ? { guid: target } : { assetPath: target });
-          await submitCommand('inspect_asset', inspectArgs, flags);
+          break;
         }
+
+        const target = positional[1];
+        if (!target) fail('Usage: dreamer inspect <path-or-guid> [--depth N] [--include-transforms] [--include-fields] OR dreamer inspect --scene-object NAME');
+        const isGuid = /^[0-9a-f]{32}$/i.test(target);
+        Object.assign(inspectArgs, isGuid ? { guid: target } : { assetPath: target });
+
+        await tryNodeFirst('inspect_asset', inspectArgs, flags, () => {
+          // includeFields requires SerializedProperty enumeration — Unity-only.
+          if (inspectArgs.includeFields) return { error: 'INCLUDE_FIELDS_REQUIRES_UNITY' };
+          const { inspectAsset } = require('./unity-yaml/inspect');
+          return inspectAsset(inspectArgs);
+        });
         break;
       }
 
@@ -507,7 +593,11 @@ async function run(argv) {
         if (flags.depth !== undefined) imArgs.depth = parseInt(flags.depth, 10);
         if (flags['include-transforms']) imArgs.includeTransforms = true;
         if (flags['include-fields']) imArgs.includeFields = true;
-        await submitCommand('inspect_assets', imArgs, flags);
+        await tryNodeFirst('inspect_assets', imArgs, flags, () => {
+          if (imArgs.includeFields) return { error: 'INCLUDE_FIELDS_REQUIRES_UNITY' };
+          const { inspectAssets } = require('./unity-yaml/inspect');
+          return inspectAssets(imArgs);
+        });
         break;
       }
 
@@ -664,7 +754,10 @@ async function run(argv) {
         if (!flags.asset) fail('--asset PATH_OR_GUID is required for inspect-animation-clip');
         const isGuidIAC = /^[0-9a-f]{32}$/i.test(flags.asset);
         const iacArgs = isGuidIAC ? { guid: flags.asset } : { assetPath: flags.asset };
-        await submitCommand('inspect_animation_clip', iacArgs, flags);
+        await tryNodeFirst('inspect_animation_clip', iacArgs, flags, () => {
+          const { inspectAnimationClipCommand } = require('./unity-yaml/inspect');
+          return inspectAnimationClipCommand(iacArgs);
+        });
         break;
       }
 
@@ -821,7 +914,10 @@ async function run(argv) {
         const iacArgs = {};
         const isGuidIAC = /^[0-9a-f]{32}$/i.test(flags.asset);
         Object.assign(iacArgs, isGuidIAC ? { guid: flags.asset } : { assetPath: flags.asset });
-        await submitCommand('inspect_animator_controller', iacArgs, flags);
+        await tryNodeFirst('inspect_animator_controller', iacArgs, flags, () => {
+          const { inspectAnimatorControllerCommand } = require('./unity-yaml/inspect');
+          return inspectAnimatorControllerCommand(iacArgs);
+        });
         break;
       }
 
@@ -1002,7 +1098,10 @@ async function run(argv) {
         const a = {};
         const isGuid = /^[0-9a-f]{32}$/i.test(flags.asset);
         Object.assign(a, isGuid ? { guid: flags.asset } : { assetPath: flags.asset });
-        await submitCommand('inspect_avatar_mask', a, flags);
+        await tryNodeFirst('inspect_avatar_mask', a, flags, () => {
+          const { inspectAvatarMaskCommand } = require('./unity-yaml/inspect');
+          return inspectAvatarMaskCommand(a);
+        });
         break;
       }
 
@@ -1037,7 +1136,10 @@ async function run(argv) {
         const a = {};
         const isGuid = /^[0-9a-f]{32}$/i.test(flags.asset);
         Object.assign(a, isGuid ? { guid: flags.asset } : { assetPath: flags.asset });
-        await submitCommand('inspect_animator_override_controller', a, flags);
+        await tryNodeFirst('inspect_animator_override_controller', a, flags, () => {
+          const { inspectAnimatorOverrideControllerCommand } = require('./unity-yaml/inspect');
+          return inspectAnimatorOverrideControllerCommand(a);
+        });
         break;
       }
 
@@ -1200,7 +1302,48 @@ async function run(argv) {
         if (flags.depth !== undefined) ihArgs.depth = parseInt(flags.depth, 10);
         if (flags['include-transforms']) ihArgs.includeTransforms = true;
         if (flags['include-fields']) ihArgs.includeFields = true;
-        await submitCommand('inspect_hierarchy', ihArgs, flags);
+
+        // Node-side eligible only when:
+        //   • --asset PREFAB (prefab on disk)
+        //   • --scene PATH where PATH ends in .unity (scene file on disk)
+        // Bare scene name OR --scene with currently-active-edit semantics
+        // requires Unity. --include-fields needs SerializedProperty.
+        const sceneIsAssetPath = typeof ihArgs.scene === 'string'
+          && (ihArgs.scene.endsWith('.unity') || /^[0-9a-f]{32}$/i.test(ihArgs.scene));
+        const isPrefabAsset = !!(ihArgs.assetPath || ihArgs.guid);
+        const eligible = !ihArgs.includeFields && (isPrefabAsset || sceneIsAssetPath);
+
+        if (eligible) {
+          // Translate to inspect_asset shape: pass scene path / prefab path.
+          const targetArgs = isPrefabAsset
+            ? { assetPath: ihArgs.assetPath, guid: ihArgs.guid }
+            : (/^[0-9a-f]{32}$/i.test(ihArgs.scene)
+                ? { guid: ihArgs.scene }
+                : { assetPath: ihArgs.scene });
+          if (ihArgs.depth !== undefined) targetArgs.depth = ihArgs.depth;
+          if (ihArgs.includeTransforms) targetArgs.includeTransforms = true;
+          await tryNodeFirst('inspect_hierarchy', ihArgs, flags, () => {
+            const { inspectAsset } = require('./unity-yaml/inspect');
+            const r = inspectAsset(targetArgs);
+            if (r && r.error) return r;
+            // Unity-side inspect_hierarchy wraps the node in an envelope:
+            // { assetPath, guid, source: 'prefab' | 'scene', root: {...node} }.
+            // Match that so callers see the same shape via either path.
+            const isScene = (r.path || '').endsWith('.unity');
+            const envelope = {
+              assetPath: r.path,
+              guid: r.guid,
+              source: isScene ? 'scene' : 'prefab',
+            };
+            // Strip the path/guid/type/name from the inner body since they
+            // live on the envelope. Keep everything else.
+            const { path: _p, guid: _g, type: _t, ...rest } = r;
+            envelope.root = rest;
+            return envelope;
+          });
+        } else {
+          await submitCommand('inspect_hierarchy', ihArgs, flags);
+        }
         break;
       }
 
@@ -1239,9 +1382,15 @@ async function run(argv) {
       case 'inspect-material': {
         if (!flags.asset) fail('--asset PATH_OR_GUID is required for inspect-material');
         const isGuid = /^[0-9a-f]{32}$/i.test(flags.asset);
-        await submitCommand('inspect_material',
-          isGuid ? { guid: flags.asset } : { assetPath: flags.asset },
-          flags);
+        const dArgs = isGuid ? { guid: flags.asset } : { assetPath: flags.asset };
+        // inspect-material stays on Unity. The Unity-side handler walks the
+        // SHADER's declared properties (via ShaderUtil) — declaration order,
+        // displayName from the [Header] / shader UI, and Range bounds. Node
+        // can only see what's serialized in the .mat YAML (alphabetical, no
+        // shader metadata, missing properties the material hasn't overridden).
+        // The asymmetry is meaningful enough that mixing the two paths
+        // would confuse callers.
+        await submitCommand('inspect_material', dArgs, flags);
         break;
       }
 
@@ -1301,7 +1450,16 @@ async function run(argv) {
         } else {
           fail('--shader "Shader/Name" or --asset PATH_OR_GUID is required for inspect-shader');
         }
-        await submitCommand('inspect_shader', insArgs, flags);
+        // Node side handles asset-path/guid form. --shader (lookup by name) is
+        // Unity-only since it requires Shader.Find at runtime.
+        if (insArgs.shader) {
+          await submitCommand('inspect_shader', insArgs, flags);
+        } else {
+          await tryNodeFirst('inspect_shader', insArgs, flags, () => {
+            const { inspectShaderCommand } = require('./unity-yaml/inspect');
+            return inspectShaderCommand(insArgs);
+          });
+        }
         break;
       }
 
@@ -1366,6 +1524,15 @@ async function run(argv) {
       }
 
       // ── Query commands (no submission, direct daemon query) ────────────
+      case 'prewarm': {
+        // SessionStart-friendly: ensures the daemon is running, prints
+        // nothing on stdout. Skips the Unity-bridge handshake — the goal is
+        // just to absorb the daemon spin-up cost before the first real
+        // command. ~80ms cold, near-zero warm.
+        try { await ensureDaemon(); } catch (_) { /* swallow — best-effort */ }
+        process.exit(0);
+      }
+
       case 'status': {
         await ensureDaemon();
         if (flags.id) {
@@ -1660,7 +1827,10 @@ async function run(argv) {
       case 'inspect-project-settings': {
         const args = {};
         if (flags.file) args.file = flags.file;
-        await submitCommand('inspect_project_settings', args, flags);
+        await tryNodeFirst('inspect_project_settings', args, flags, () => {
+          const ps = require('./unity-yaml/inspect-project-settings');
+          return ps.inspectProjectSettings(args);
+        });
         break;
       }
 
@@ -1761,14 +1931,33 @@ async function run(argv) {
         const args = { file: String(flags.file) };
         if (flags.property) args.propertyPath = String(flags.property);
         if (flags.depth !== undefined) args.depth = parseInt(flags.depth, 10);
-        await submitCommand('inspect_project_setting', args, flags);
+        // Node-side handles single-key lookup. PropertyPath/depth navigation
+        // beyond the top-level field is harder to mimic; fall back to Unity
+        // when those flags are present.
+        if (args.propertyPath || args.depth !== undefined) {
+          await submitCommand('inspect_project_setting', args, flags);
+        } else {
+          await tryNodeFirst('inspect_project_setting', args, flags, () => {
+            const ps = require('./unity-yaml/inspect-project-settings');
+            return ps.inspectProjectSetting(args);
+          });
+        }
         break;
       }
 
       case 'inspect-player-settings': {
         const args = {};
         if (flags.target) args.target = String(flags.target);
-        await submitCommand('inspect_player_settings', args, flags);
+        // Per-platform PlayerSettings.GetApplicationIdentifier is Unity-only;
+        // when --target is passed the caller expects platform-resolved data.
+        if (args.target) {
+          await submitCommand('inspect_player_settings', args, flags);
+        } else {
+          await tryNodeFirst('inspect_player_settings', args, flags, () => {
+            const ps = require('./unity-yaml/inspect-project-settings');
+            return ps.inspectPlayerSettings();
+          });
+        }
         break;
       }
 
@@ -1817,7 +2006,10 @@ async function run(argv) {
       }
 
       case 'inspect-build-scenes': {
-        await submitCommand('inspect_build_scenes', {}, flags);
+        await tryNodeFirst('inspect_build_scenes', {}, flags, () => {
+          const ps = require('./unity-yaml/inspect-project-settings');
+          return ps.inspectBuildScenes();
+        });
         break;
       }
 
@@ -1974,6 +2166,10 @@ async function run(argv) {
           layers: (spec.layers || []).length,
           renderMs,
         };
+        if (result.warnings && result.warnings.length) {
+          out.warnings = result.warnings;
+          out.edgeAlpha = result.edgeAlpha;
+        }
         console.log(JSON.stringify(out, null, 2));
 
         if (flags.refresh === true || flags.refresh === 'true' || isRegen) {
@@ -2688,6 +2884,100 @@ For sprite-sheet authoring — slicing, composite-island merging, non-destructiv
         if (!query) fail('Usage: dreamer search <query>  (e.g. `dreamer search "duplicate prefab"`, `dreamer search ppu`).');
         const { search } = require('./search');
         out(search(query, { limit: parseInt(flags.limit, 10) || 8 }));
+        break;
+      }
+
+      case 'batch': {
+        // Submit N commands in one CLI process — kills (N-1) × ~100ms of
+        // Node startup that you'd pay invoking the CLI N times. Reads a JSON
+        // array of {kind, args, options?} from --file or stdin. Commands run
+        // sequentially; each waits for the previous to reach a terminal state.
+        const fsMod = require('fs');
+        let raw;
+        if (flags.file) {
+          if (!fsMod.existsSync(flags.file)) fail(`Batch file not found: ${flags.file}`);
+          raw = fsMod.readFileSync(flags.file, 'utf8');
+        } else {
+          if (process.stdin.isTTY) {
+            fail('Usage: dreamer batch --file ops.json   OR   cat ops.json | dreamer batch\n' +
+                 'Each item: {"kind": "set_particle_property", "args": {...}, "options": {...}}');
+          }
+          raw = await new Promise((resolve, reject) => {
+            const chunks = [];
+            process.stdin.on('data', c => chunks.push(c));
+            process.stdin.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+            process.stdin.on('error', reject);
+          });
+        }
+        let ops;
+        try { ops = JSON.parse(raw); }
+        catch (e) { fail(`Batch input is not valid JSON: ${e.message}`); }
+        if (!Array.isArray(ops)) fail('Batch input must be a JSON array of {kind, args, options?} objects.');
+        if (ops.length === 0) { out({ results: [], count: 0 }); break; }
+
+        await ensureDaemon();
+
+        const results = [];
+        let firstFailureIdx = -1;
+        for (let i = 0; i < ops.length; i++) {
+          const op = ops[i];
+          if (!op || typeof op !== 'object' || !op.kind) {
+            results.push({ index: i, ok: false, error: 'each batch item needs a `kind` field' });
+            if (firstFailureIdx < 0) firstFailureIdx = i;
+            if (flags['stop-on-error'] !== false) break;
+            continue;
+          }
+
+          const submitResp = await httpRequest('POST', '/api/commands', {
+            kind: op.kind,
+            args: op.args || {},
+            options: op.options || {},
+          });
+          if (submitResp.status >= 400) {
+            results.push({ index: i, kind: op.kind, ok: false, error: (submitResp.data && submitResp.data.error) || `HTTP ${submitResp.status}` });
+            if (firstFailureIdx < 0) firstFailureIdx = i;
+            if (flags['stop-on-error'] !== false) break;
+            continue;
+          }
+
+          // Some kinds resolve inline (no queue id). Treat the POST response
+          // itself as the final state in that case.
+          const cmdId = submitResp.data && submitResp.data.id;
+          let final = null;
+          let pollError = null;
+          if (!cmdId) {
+            final = submitResp.data;
+          } else {
+            const timeout = parseInt(flags['wait-timeout'], 10) || 120000;
+            const deadline = Date.now() + timeout;
+            while (Date.now() < deadline) {
+              await sleep(500);
+              const check = await httpRequest('GET', `/api/commands/${cmdId}`);
+              if (check.status !== 200) {
+                pollError = `Failed to poll: ${check.data.error || check.status}`;
+                break;
+              }
+              if (TERMINAL_STATES.has(check.data.state)) { final = check.data; break; }
+            }
+            if (!final && !pollError) pollError = `Timeout after ${timeout}ms`;
+          }
+          if (!final) {
+            results.push({ index: i, kind: op.kind, ok: false, error: pollError || 'Unknown failure' });
+            if (firstFailureIdx < 0) firstFailureIdx = i;
+            if (flags['stop-on-error'] !== false) break;
+            continue;
+          }
+          if (final.state === 'failed') {
+            results.push({ index: i, kind: op.kind, ok: false, error: final.error || 'Command failed', result: final.result || null });
+            if (firstFailureIdx < 0) firstFailureIdx = i;
+            if (flags['stop-on-error'] !== false) break;
+            continue;
+          }
+          results.push({ index: i, kind: op.kind, ok: true, result: final.result || null });
+        }
+
+        const ok = firstFailureIdx < 0;
+        out({ ok, count: results.length, total: ops.length, results }, ok ? 0 : 1);
         break;
       }
 

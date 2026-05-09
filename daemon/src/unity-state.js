@@ -86,10 +86,14 @@ class UnityState {
   }
 
   heartbeat(projectPath) {
+    const wasConnected = this.connected;
     this.connected = true;
     this.lastHeartbeat = Date.now();
     if (projectPath && typeof projectPath === 'string') {
       this.connectedProjectPath = projectPath;
+    }
+    if (!wasConnected) {
+      log.info('Unity bridge reconnected.');
     }
   }
 
@@ -103,19 +107,29 @@ class UnityState {
     return normalisePath(this.connectedProjectPath) === normalisePath(DAEMON_PROJECT_ROOT);
   }
 
-  checkConnection(timeoutMs = 10000) {
+  checkConnection(timeoutMs = 25000) {
     if (!this.lastHeartbeat) {
       this.connected = false;
       return;
     }
     const elapsed = Date.now() - this.lastHeartbeat;
+    const wasConnected = this.connected;
     if (elapsed > timeoutMs) {
       this.connected = false;
     }
-    // After 30s disconnected, zero cached state — stale flags (compiling/playMode/
+    // Log the connect→disconnect transition with the elapsed time so we can
+    // tell "Unity actually quit" from "transient blip past the timeout" in
+    // post-mortem (especially under multi-client contention or unfocused
+    // Editor on Windows).
+    if (wasConnected && !this.connected) {
+      log.warn(`Unity bridge marked disconnected after ${(elapsed / 1000).toFixed(1)}s without heartbeat (timeout ${timeoutMs / 1000}s). lastHeartbeat=${new Date(this.lastHeartbeat).toISOString()}`);
+    }
+    // After 60s disconnected, zero cached state — stale flags (compiling/playMode/
     // errors) all gate dispatch with misleading reasons after Unity comes back,
-    // and the first post-reconnect heartbeat will repopulate anyway.
-    if (elapsed > 30000) {
+    // and the first post-reconnect heartbeat will repopulate anyway. Was 30s
+    // but that was too aggressive when transient blips trip the connection
+    // timeout above.
+    if (elapsed > 60000) {
       let cleared = false;
       if (this.compiling)              { this.compiling = false;     cleared = true; }
       if (this.playMode)               { this.playMode = false;      cleared = true; }

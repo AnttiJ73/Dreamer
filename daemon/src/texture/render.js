@@ -48,12 +48,46 @@ function renderSpec(spec) {
     renderLayer(raster, layer);
   }
 
+  const edge = scanEdgeAlpha(raster);
+  const warnings = [];
+  if (edge.maxAlpha > 8) {
+    warnings.push(
+      `Edge content detected: max border alpha = ${edge.maxAlpha}/255 on ${edge.worstEdge} edge. ` +
+      `Texture has visible content within 1px of the boundary, which causes hard square clipping ` +
+      `when sampled at any rotation/scale (very common with particles). ` +
+      `Fix: keep all gradient/shape content within ${(Math.min(w, h) / 2 - 4) | 0}px of center for a ${w}x${h} texture, ` +
+      `e.g. radial gradient \`from: [${(w/2)|0}, ${(h/2)|0}], to: [${(w/2 + (Math.min(w,h)/2 - 4)) | 0}, ${(h/2)|0}]\`.`
+    );
+  }
+
   return {
     width: w,
     height: h,
     rgba: Buffer.from(raster.data.buffer, raster.data.byteOffset, raster.data.byteLength),
     png: encodePNG(raster.data, w, h),
+    edgeAlpha: edge,
+    warnings,
   };
+}
+
+function scanEdgeAlpha(raster) {
+  const { width: w, height: h, data } = raster;
+  let maxAlpha = 0;
+  let worstEdge = 'none';
+  const edges = { top: 0, bottom: 0, left: 0, right: 0 };
+  const sample = (x, y) => data[(y * w + x) * 4 + 3];
+  for (let x = 0; x < w; x++) {
+    edges.top = Math.max(edges.top, sample(x, 0));
+    edges.bottom = Math.max(edges.bottom, sample(x, h - 1));
+  }
+  for (let y = 0; y < h; y++) {
+    edges.left = Math.max(edges.left, sample(0, y));
+    edges.right = Math.max(edges.right, sample(w - 1, y));
+  }
+  for (const k of Object.keys(edges)) {
+    if (edges[k] > maxAlpha) { maxAlpha = edges[k]; worstEdge = k; }
+  }
+  return { maxAlpha, worstEdge, edges };
 }
 
 function renderLayer(raster, layer) {

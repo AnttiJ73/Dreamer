@@ -6,6 +6,10 @@
           {
             "type": "command",
             "command": "./bin/dreamer update --check 2>/dev/null || true"
+          },
+          {
+            "type": "command",
+            "command": "./bin/dreamer prewarm 2>/dev/null || true"
           }
         ]
       }

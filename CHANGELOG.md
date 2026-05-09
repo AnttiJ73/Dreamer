@@ -9,6 +9,84 @@ tags, breaking changes bump the minor version (0.x.0), fixes bump patch.
 
 ## [Unreleased]
 
+### Changed — Unity-disconnect timeout 10s → 25s; stale-state-clear 30s → 60s
+
+When 3+ CLI clients hammer the same daemon (multi-agent workflow) AND Unity is unfocused on Windows (main thread throttled), transient blips can push more than 3 heartbeat windows past the deadline even though the bridge is still alive. The old 10s disconnect timeout flagged Unity as gone after ~3 missed heartbeats; the bridge would reconnect on the next successful POST but commands queued in the gap saw "unity_disconnected" reasons.
+
+New defaults:
+- **Disconnect timeout: 25s** (~8 missed heartbeats at the bridge's 3s send interval). Tolerates short stalls under multi-client contention without hiding actual Unity quits.
+- **Stale-state clear: 60s** (was 30s). Same rationale — the cached compile/play-mode/error state cleared too eagerly.
+
+The daemon now also logs the connect/disconnect transition with the actual elapsed time, so the post-mortem can tell "real disconnect" from "transient blip just past the threshold."
+
+### Fixed — `Infinity` literals in Unity-side material data no longer break the daemon parser
+
+Unity's SimpleJson serializer emits `Infinity` / `-Infinity` / `NaN` literally for non-finite floats, but those tokens aren't valid JSON. Materials with vector defaults that include `Infinity` (e.g. `_CameraFadeParams: (0, Infinity, 0, 0)` on Particles/Standard Unlit) caused the daemon's `JSON.parse` to fail silently, leaving the result as an unparsed string and producing double-encoded CLI output. Daemon now retries the parse with `Infinity` → `1e999` and `NaN` → `null` when the first attempt fails — round-trips back to JS Infinity / null, so values aren't lost. CLI output also handles the residual string-result case rather than re-stringifying.
+
+### Added — `daemon/test/parity-diff.js` — Node vs Unity output equality regression
+
+Runs each Node-migrated read command twice (once Node-path, once `--unity` Unity-path) and asserts the JSON outputs match modulo a documented ignore list (instanceId, lastModified sub-second, ProjectSettings file ordering). Catches structural divergence the unit/CLI tests can't because they don't exercise both paths. 14/14 pass.
+
+Driving this surfaced and fixed a batch of real shape mismatches: `inspect-hierarchy` now wraps prefab/scene results in the `{assetPath, guid, source, root}` envelope Unity emits; `inspect-project-settings` includes built-in tags + `physics3D` / `physics2D` / `files`; `inspect-player-settings` returns enum strings (`"FullScreenWindow"` instead of `1`, `"NET_Standard_2_0"` instead of `6`) matching Unity's API; `inspect-material` now stays on the Unity path entirely (the shader-property metadata it returns requires `ShaderUtil` which has no YAML equivalent); PackageCache assets are walked + re-pathed to their logical `Packages/com.foo/...` form so `find-assets` counts match Unity.
+
+### Added — Node-side asset readers (Lever 3): inspect_asset / find_assets / inspect_material / inspect_animation_clip / inspect_animator_controller / inspect_avatar_mask / inspect_animator_override_controller / inspect_shader / inspect_build_scenes / inspect_project_settings / inspect_player_settings now run pure-Node by default
+
+A subset of read-only commands now read Unity asset YAML directly from disk in the CLI process, skipping the daemon→Unity round-trip entirely. They work with **Unity unfocused, compiling, or even closed**. Local tests show ~115-150ms end-to-end (the floor is Node startup), vs 100ms-2s+ when going through Unity, *and* they no longer block on Unity's main-thread availability.
+
+**What's covered:**
+- `find-assets` — built from a `.meta` scan of `Assets/` + `Packages/`. Type filter (`prefab`, `material`, `texture`, etc.) maps to the resolved importer/extension type. Path + name filters work. Folder-not-found errors surface the same way as the Unity path.
+- `inspect` (asset target) — `.prefab` walks GameObject/Transform docs and resolves component types via class IDs + script-GUID lookups. Built-in MonoBehaviours (CanvasScaler, GraphicRaycaster, Image, …) resolve via a lazy `Library/PackageCache` index extension.
+- `inspect-material` — shader ref + textures + floats + colors + ints, all from the `.mat` YAML.
+- `inspect-animation-clip` — float/object/position/rotation/euler/scale curves, sample rate, length.
+- `inspect-animator-controller` — layers, parameters, state/transition/state-machine counts.
+- `inspect-avatar-mask`, `inspect-animator-override-controller`, `inspect-shader`, `inspect-build-scenes`, `inspect-project-settings`, `inspect-player-settings` — all read directly from their YAML.
+- `inspect-many` — same prefab/scene logic in bulk.
+
+**Fallback design.** Each command tries Node-side first. On any error (parse failure, prefab variant detected, scene-with-prefab-instances detected, or `includeFields=true` which still needs Unity's SerializedProperty enumeration), it transparently falls back to the daemon→Unity path. Pass `--unity` to force the Unity path for regression / debugging. Set `DREAMER_DEBUG_NODE_INSPECT=1` to log fallback reasons to stderr.
+
+**Output shape.** Identical to the Unity-side handlers in every covered case, with two documented differences: `instanceId` is the YAML fileID (a stable per-asset identifier — Unity-side returns `GameObject.GetInstanceID()` which is a runtime-only number). `enabled` is conservative (true unless the YAML explicitly has `m_Enabled: 0` on a class with that field).
+
+**`inspect-hierarchy`** also runs Node-side when given a `--asset PREFAB` or `--scene PATH-TO-UNITY-FILE`. The bare `--scene NAME` form still requires Unity (resolving a scene NAME to a loaded scene is a runtime concept — there's no on-disk index of "scenes Unity has currently open").
+
+**What's NOT covered (Unity path still required):** scene-object reads (`--scene-object` form — runtime state, no YAML alternative), `read_property` (still uses Unity's SerializedProperty resolver), `sample_animation_curve` (Hermite spline math TBD), `inspect_hierarchy --scene NAME` (resolves Unity-loaded scenes by name), `inspect-shader --shader NAME` (Shader.Find lookup), prefab variants (detection-only — falls back), `--include-fields` (SerializedProperty enumeration).
+
+Implementation lives in `daemon/src/unity-yaml/` with these modules:
+- `parse.js` — Unity-flavored YAML parser (multi-doc, flow-map line-wrap, plain-scalar fold, YAML 1.1 string escapes).
+- `asset-index.js` — GUID ↔ path ↔ type index built from `.meta` scan of `Assets/` + `Packages/`. Lazy-extends to `Library/PackageCache` on first script-resolver miss.
+- `script-resolver.js` — script GUID → class name (incl. namespace), via a small C# scanner that strips strings/comments and finds the most-likely class declaration.
+- `class-ids.js` — Unity persistent class IDs → type name.
+- `inspect.js` + `inspect-typed.js` — the actual inspectors.
+- `inspect-project-settings.js` — Build / project / player / single-key settings.
+
+Regression tests in `daemon/test/`:
+- `yaml-sweep.js` — parses every YAML asset under `Assets/`, `Packages/`, `ProjectSettings/` (64/65 in this repo, 1 binary skipped).
+- `node-inspect-sweep.js` — runs every Node-side inspector against real project assets (38/40 here; 2 are scenes-with-prefab-instances and correctly return the fallback signal).
+
+### Changed — CLI is now `--wait`-by-default, output stripped to the result body
+
+The CLI used to default to fire-and-forget: every command had to be passed `--wait` to actually finish before the CLI returned, and forgetting it produced a half-baked queue envelope. New defaults:
+
+- **`--wait` is now the default.** Pass `--no-wait` for the rare async case (commands that intentionally outlive the CLI process). Existing `--wait` flags are accepted as no-ops, so old scripts and schema examples keep working.
+- **CLI output is the `result` body**, not the queue envelope. The 14-field `{id, kind, args, state, requirements, dependsOn, priority, allowPlayMode, createdAt, updatedAt, dispatchedAt, completedAt, result, error, attemptCount, originTaskId, humanLabel}` envelope was queue/scheduler internals — none of it changed what an agent did next. Pass `--verbose` to recover the full envelope for debugging.
+
+### Added — `dreamer batch` for one-shot multi-command runs
+
+`./bin/dreamer batch --file ops.json` (or stdin) accepts a JSON array of `{kind, args, options?}` items and runs them sequentially in one CLI process. Each command pays the daemon HTTP round-trip but only ONE command pays Node startup (~80-150ms on Windows). For chains of property edits this saves (N-1) × Node startup — a 10-op tuning batch goes from ~1.5s of Node spin-up to ~150ms. Stops at the first failure unless `--stop-on-error=false`. Returns `{ok, count, total, results: [{index, kind, ok, result|error}, ...]}`.
+
+### Added — `dreamer prewarm` + SessionStart hook
+
+`prewarm` ensures the daemon is running and exits silently. The project's `.claude/settings.json` SessionStart hook now calls it alongside `update --check`, so the daemon is already listening when Claude submits its first command. Cold daemon start cost is paid before the agent ever waits on it. ~135ms total (cold daemon start + Node startup); near-zero if the daemon is already up.
+
+### Changed — `dreamer search` output stripped to actionable fields
+
+The search response no longer includes `score`, `matchedOn`, or `pass` (per-result *or* top-level). These were internal ranking signals that didn't change which tool an agent picked or how it called the tool. Each result is now just `{kind, cliVerb, summary, firstExample}` — roughly half the byte count.
+
+A top-level `kinds: "name1, name2, ..."` comma-separated string is now emitted *before* `results`, so an agent that only reads the first ~20 lines of the JSON sees every match name before the verbose summaries push them out of view. This was the original failure mode: long descriptions on the top match caused later (often more relevant) matches to be missed.
+
+### Added — `generate-texture` edge-clipping detector
+
+`generate-texture` and `regenerate-texture` now scan the 1-pixel border of every rendered PNG and emit `result.warnings[]` + `result.edgeAlpha` when alpha > 8/255 anywhere on the boundary. This catches the most common particle-texture mistake: a radial gradient with `to: [W, H]` (corner), which leaves the *edges* sitting at offset ≈ 0.71 — partially opaque — so the texture shows hard square clipping under rotation or scaling. The warning quotes the exact safe-radius for the texture size and a corrected `from`/`to` example. `generate_texture` schema pitfalls now spell out the rule (`to` distance ≤ `min(W,H)/2 - 4`).
+
 ### Added — `generate-sheet` + `regenerate-texture` + hand-drawn outline jitter (Phases 3-5)
 
 Three companion features to `generate-texture` that complete the texture authoring loop:

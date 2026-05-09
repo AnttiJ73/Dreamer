@@ -67,6 +67,7 @@ module.exports = {
     'Color shorthands: `#RGB`, `#RGBA`, `#RRGGBB`, `#RRGGBBAA`. Or `{r,g,b,a}` with 0..1 floats. Or `[r,g,b,a]` with 0..255 ints.',
     'Output is RGBA8 PNG. Pass `set-import-property` afterward to set Sprite import settings if you want a Sprite (texture-type 8, alpha-is-transparency, etc.) — generate-texture only writes the PNG.',
     'Pure Node — runs without Unity. Means you can iterate on textures while Unity is unfocused or compiling.',
+    'EDGE CLIPPING: any non-zero alpha within 1px of the texture boundary causes hard square clipping when the texture is rotated/scaled (very common when used as a particle texture). The renderer scans the border and emits `result.warnings[]` + `result.edgeAlpha` if it detects content there. RULE: keep all gradient `to` points and shape extents within `min(W,H)/2 - 4` pixels of center — for a 64x64 texture that means a max effective radius of 28 from (32,32). For radial gradients use `from: [W/2,H/2], to: [W/2 + R, H/2]` (R is your max radius), NOT `to: [W,H]` (the corner — that lets the gradient extend beyond the half-edge).',
   ],
   seeAlso: [
     './bin/dreamer help refresh_assets       — call after generate-texture to import the PNG into Unity.',
