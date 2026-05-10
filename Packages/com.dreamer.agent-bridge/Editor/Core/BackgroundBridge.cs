@@ -37,6 +37,12 @@ namespace Dreamer.AgentBridge
             _baseUrl = baseUrl;
             _consecutiveErrors = 0;
 
+            // Tell Windows not to EcoQoS-throttle this process. Without this, Win11 22H2+
+            // suspends our heartbeat/poll Timers when the editor is unfocused, even though
+            // they live on the .NET ThreadPool — the daemon then drops the connection
+            // although nothing has actually crashed. Idempotent across domain reloads.
+            WindowsProcessQoS.DisableEcoQoSForCurrentProcess();
+
             try { _projectPath = System.IO.Path.GetDirectoryName(Application.dataPath); }
             catch { _projectPath = null; }
 

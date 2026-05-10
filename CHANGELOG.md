@@ -9,6 +9,16 @@ tags, breaking changes bump the minor version (0.x.0), fixes bump patch.
 
 ## [Unreleased]
 
+### Fixed — Bridge + daemon now opt out of Windows EcoQoS power throttling
+
+Win11 22H2+ aggressively throttles unfocused processes — the .NET ThreadPool timers that drive the bridge's heartbeat/poll/state ticks stall under load even though they live off the Unity main thread, and the daemon's Node event loop slips behind under multi-instance contention. End result: the daemon flags Unity as disconnected after ~25s without heartbeat, even though nothing has actually crashed (one such event is in the daemon log: `2026-05-09T15:02:02 disconnected after 25.2s without heartbeat`).
+
+Both processes now call `SetProcessInformation(ProcessPowerThrottling)` with `EXECUTION_SPEED` opt-out:
+- **Bridge:** `Packages/com.dreamer.agent-bridge/Editor/Core/WindowsProcessQoS.cs`, invoked from `BackgroundBridge.Start`. Idempotent across domain reloads.
+- **Daemon:** `daemon/src/windows-qos.js` shells out to a tiny PowerShell helper at `server.listen` time (Node has no direct kernel32 binding and the daemon stays at zero npm dependencies). Fire-and-forget — daemon is functional whether the call succeeds or not.
+
+Generic across Unity versions (kernel32 only) and across Windows versions (no-ops cleanly on pre-1709 Windows). On macOS / Linux: silent no-op, no behavior change. Watch for `windows-qos: Disabled Windows EcoQoS for daemon process …` in `daemon/.dreamer-daemon.log` to confirm the daemon-side opt-out succeeded.
+
 ### Changed — Unity-disconnect timeout 10s → 25s; stale-state-clear 30s → 60s
 
 When 3+ CLI clients hammer the same daemon (multi-agent workflow) AND Unity is unfocused on Windows (main thread throttled), transient blips can push more than 3 heartbeat windows past the deadline even though the bridge is still alive. The old 10s disconnect timeout flagged Unity as gone after ~3 missed heartbeats; the bridge would reconnect on the next successful POST but commands queued in the gap saw "unity_disconnected" reasons.

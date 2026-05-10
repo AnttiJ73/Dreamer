@@ -15,6 +15,7 @@ const log = require('./log').create('server');
 const createCommandHandlers = require('./handlers/commands');
 const createUnityHandlers = require('./handlers/unity');
 const createStatusHandlers = require('./handlers/status');
+const { disableEcoQoSForSelf } = require('./windows-qos');
 
 const DAEMON_DIR = path.resolve(__dirname, '..');
 const DAEMON_PROJECT_ROOT = path.resolve(DAEMON_DIR, '..');
@@ -220,6 +221,10 @@ process.on('SIGINT', shutdown);
   // 127.0.0.1, ::1, and ::ffff:127.0.0.1.
   server.listen(port, '::', () => {
     log.info(`Listening on [::]:${port} (dual-stack)`);
+
+    // Opt out of Win11 EcoQoS so heartbeats don't slip past the daemon's
+    // 25s timeout when this Node process is unfocused under contention.
+    disableEcoQoSForSelf();
 
     try {
       projectRegistry.updateEntry(DAEMON_PROJECT_ROOT, {
