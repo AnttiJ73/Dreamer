@@ -316,6 +316,12 @@ async function submitCommand(kind, args, flags = {}) {
           const ADDON_HINT = {
             ugui: { kinds: /^(create_ui_tree|inspect_ui_tree|set_rect_transform)$/, addonId: 'ugui', pkg: 'com.dreamer.agent-bridge.ugui' },
             sprite2d: { kinds: /^(preview_sprite|slice_sprite|extend_sprite|validate_sprite)$/, addonId: 'sprite-2d', pkg: 'com.dreamer.agent-bridge.sprite-2d' },
+            animation: {
+              kinds: /^(create_animation_clip|set_animation_curve|inspect_animation_clip|sample_animation_curve|delete_animation_curve|set_sprite_curve|delete_sprite_curve|set_animation_events|create_animator_controller|add_animator_parameter|add_animator_state|add_animator_transition|set_animator_default_state|inspect_animator_controller|remove_animator_parameter|remove_animator_state|remove_animator_transition|update_animator_state|update_animator_transition|add_animator_layer|remove_animator_layer|set_animator_layer|add_animator_blend_tree|create_avatar_mask|set_avatar_mask|inspect_avatar_mask|create_animator_override_controller|set_animator_override_clip|inspect_animator_override_controller)$/,
+              addonId: 'animation',
+              pkg: 'com.dreamer.agent-bridge.animation',
+            },
+            fx: { kinds: /^(capture_particle|setup_particle_material)$/, addonId: 'fx', pkg: 'com.dreamer.agent-bridge.fx' },
           };
           const matchAddon = Object.values(ADDON_HINT).find(a => a.kinds.test(current.kind));
           if (matchAddon) {
@@ -417,11 +423,12 @@ async function run(argv) {
         'add-component (--asset PATH | --scene-object NAME) --type TYPENAME',
         'remove-component (--asset PATH | --scene-object NAME) --type TYPENAME',
         'remove-missing-scripts (--asset PATH | --scene-object PATH | --path FOLDER) [--dry-run] [--non-recursive]',
-        'set-property (--asset PATH | --scene-object NAME) [--component TYPE] --property PATH --value JSON',
+        'set-property (--asset PATH | --scene-object NAME) [--component TYPE] --property PATH --value JSON   (lists: sparse `{"_size":N,"<idx>":val}` for append/single-index update — see `help set-property`)',
         'create-prefab --name NAME [--path FOLDER]',
         'instantiate-prefab --asset PATH [--name NAME] [--parent /PATH] [--position {x,y,z}]',
         'create-gameobject --name NAME [--parent PATH] [--scene SCENE]',
         'delete-gameobject (--scene-object PATH | --asset PATH --child-path PATH)',
+        'delete-asset --asset PATH_OR_GUID [--trash]   (permanent unless --trash; routes through AssetDatabase.DeleteAsset for proper cleanup)',
         'rename (--scene-object PATH | --asset PATH [--child-path PATH]) --name NEW_NAME',
         'set-layer (--scene-object PATH | --asset PATH [--child-path PATH]) --layer NAME_OR_INDEX [--recursive]   (USE THIS instead of `set-property --property m_Layer`; layer name auto-resolves)',
         'reparent (--scene-object PATH | --asset PREFAB --child-path SOURCE) [--new-parent PATH] [--keep-world-space true|false] [--sibling-index N]   (omit --new-parent to move to root; prefab paths are relative to the prefab root)',
@@ -1180,6 +1187,15 @@ async function run(argv) {
         break;
       }
 
+      case 'delete-asset': {
+        if (!flags.asset) fail('--asset is required for delete-asset (path or 32-char GUID)');
+        const isGuidDA = /^[0-9a-f]{32}$/i.test(flags.asset);
+        const daArgs = isGuidDA ? { guid: flags.asset } : { assetPath: flags.asset };
+        if (flags.trash === true || flags.trash === 'true') daArgs.moveToTrash = true;
+        await submitCommand('delete_asset', daArgs, flags);
+        break;
+      }
+
       case 'delete-gameobject': {
         if (!flags['scene-object'] && !flags.asset) fail('--scene-object or --asset is required for delete-gameobject');
         const dgArgs = {};
@@ -1241,6 +1257,7 @@ async function run(argv) {
         }
         if (flags['child-path']) dupArgs.childPath = flags['child-path'];
         if (flags.name) dupArgs.newName = flags.name;
+        if (flags['save-path']) dupArgs.savePath = flags['save-path'];
         await submitCommand('duplicate', dupArgs, flags);
         break;
       }
@@ -2067,10 +2084,16 @@ async function run(argv) {
       }
 
       case 'capture-particle': {
-        const target = flags.asset || positional[1];
-        if (!target) fail('Usage: dreamer capture-particle --asset Assets/FX/Explosion.prefab [--frames 5] [--duration 2.0] [--times "[0.1,0.5,1.0]"] [--size 512x512] [--angle front|iso|top|...] [--bg "#000000"] [--seed N] [--transparent]');
-        const isGuidCP = /^[0-9a-f]{32}$/i.test(target);
-        const cpArgs = isGuidCP ? { guid: target } : { assetPath: target };
+        const sceneTarget = flags['scene-object'];
+        const target = flags.asset || (sceneTarget ? null : positional[1]);
+        if (!target && !sceneTarget) fail('Usage: dreamer capture-particle (--asset Assets/FX/Explosion.prefab | --scene-object PATH) [--frames 5] [--duration 2.0] [--times "[0.1,0.5,1.0]"] [--size 512x512] [--angle front|iso|top|...] [--bg "#000000"] [--seed N] [--transparent]');
+        let cpArgs;
+        if (sceneTarget) {
+          cpArgs = { sceneObjectPath: sceneTarget };
+        } else {
+          const isGuidCP = /^[0-9a-f]{32}$/i.test(target);
+          cpArgs = isGuidCP ? { guid: target } : { assetPath: target };
+        }
         if (flags.frames !== undefined) cpArgs.frames = parseInt(flags.frames, 10);
         if (flags.duration !== undefined) cpArgs.duration = parseFloat(flags.duration);
         if (flags.times) {

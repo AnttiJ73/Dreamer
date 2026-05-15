@@ -13,6 +13,11 @@ module.exports = {
       cli: '--name',
       description: 'Name of the duplicate. Defaults to "<original>_Copy".',
     },
+    savePath: {
+      type: 'string',
+      cli: '--save-path',
+      description: 'Destination folder under Assets/ or Packages/ (asset mode only). Defaults to the source folder. Scene mode ignores this — duplicates land next to the source GameObject.',
+    },
   },
   constraints: [commonArgs.targetAtLeastOne()],
   result: {

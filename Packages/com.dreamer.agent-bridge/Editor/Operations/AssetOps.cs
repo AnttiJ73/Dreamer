@@ -247,6 +247,36 @@ namespace Dreamer.AgentBridge
             return CommandResult.Ok(json.ToString());
         }
 
+        /// <summary>Delete an asset via AssetDatabase. Args: { assetPath | guid, moveToTrash? }. The .meta file is removed automatically. Permanent delete is not undoable from Unity — pass moveToTrash for a recoverable system-trash variant.</summary>
+        public static CommandResult DeleteAsset(Dictionary<string, object> args)
+        {
+            string assetPath = ResolveAssetPath(args);
+            if (assetPath == null)
+                return CommandResult.Fail("Provide 'assetPath' or 'guid'.");
+            // Folder OR file path — LoadMainAssetAtPath returns the DefaultAsset for folders,
+            // and the asset object for files. Empty string covers the "not in DB" case.
+            if (AssetDatabase.LoadMainAssetAtPath(assetPath) == null && !AssetDatabase.IsValidFolder(assetPath))
+                return CommandResult.Fail($"No asset at '{assetPath}'.");
+
+            bool moveToTrash = SimpleJson.GetBool(args, "moveToTrash", false);
+            bool ok;
+            if (moveToTrash)
+                ok = AssetDatabase.MoveAssetToTrash(assetPath);
+            else
+                ok = AssetDatabase.DeleteAsset(assetPath);
+
+            if (!ok)
+                return CommandResult.Fail($"Failed to delete '{assetPath}'. The asset may be open in a scene, locked by version control, or part of a non-empty folder.");
+
+            AssetDatabase.SaveAssets();
+
+            return CommandResult.Ok(SimpleJson.Object()
+                .Put("deleted", true)
+                .Put("assetPath", assetPath)
+                .Put("trashed", moveToTrash)
+                .ToString());
+        }
+
         /// <summary>Force Unity to rescan disk. Essential because Unity on Windows doesn't reliably detect external changes without focus. Auto-heals .cs files misclassified as unknown by force-reimporting them when the caller passes `changedFiles[]`.</summary>
         public static CommandResult RefreshAssets(Dictionary<string, object> args)
         {

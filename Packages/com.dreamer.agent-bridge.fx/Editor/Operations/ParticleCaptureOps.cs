@@ -20,11 +20,36 @@ namespace Dreamer.AgentBridge.FX
 
         public static CommandResult CaptureParticle(Dictionary<string, object> args)
         {
-            string assetPath = AssetOps.ResolveAssetPath(args);
-            if (assetPath == null)
-                return CommandResult.Fail("Provide 'assetPath' or 'guid' (path to a prefab containing a ParticleSystem).");
-            if (!assetPath.EndsWith(".prefab", StringComparison.OrdinalIgnoreCase))
-                return CommandResult.Fail($"'{assetPath}' is not a .prefab. capture-particle handles GameObject prefabs only (Phase 1).");
+            // Source resolution: scene-object first (clones the live GO into the sandbox so the
+            // user's scene is never touched), else prefab asset.
+            string sceneObjectPath = SimpleJson.GetString(args, "sceneObjectPath");
+            string assetPath = null;
+            GameObject source;
+            string rootLabel;
+            bool isSceneSource;
+
+            if (!string.IsNullOrEmpty(sceneObjectPath))
+            {
+                isSceneSource = true;
+                var sceneGo = PropertyOps.FindSceneObject(sceneObjectPath, out string findError);
+                if (sceneGo == null)
+                    return CommandResult.Fail(findError ?? $"Scene object not found at '{sceneObjectPath}'.");
+                source = sceneGo;
+                rootLabel = sceneObjectPath;
+            }
+            else
+            {
+                isSceneSource = false;
+                assetPath = AssetOps.ResolveAssetPath(args);
+                if (assetPath == null)
+                    return CommandResult.Fail("Provide 'sceneObjectPath' (live scene GameObject) OR 'assetPath' / 'guid' (prefab).");
+                if (!assetPath.EndsWith(".prefab", StringComparison.OrdinalIgnoreCase))
+                    return CommandResult.Fail($"'{assetPath}' is not a .prefab. capture-particle handles GameObject prefabs or live scene objects.");
+                source = AssetDatabase.LoadAssetAtPath<GameObject>(assetPath);
+                if (source == null)
+                    return CommandResult.Fail($"Failed to load prefab at '{assetPath}'.");
+                rootLabel = assetPath;
+            }
 
             int width  = SimpleJson.GetInt(args, "width", 512);
             int height = SimpleJson.GetInt(args, "height", 512);
@@ -66,20 +91,17 @@ namespace Dreamer.AgentBridge.FX
             bool transparent = SimpleJson.GetBool(args, "transparent", false);
             if (transparent) background = new Color(0f, 0f, 0f, 0f);
 
-            var prefab = AssetDatabase.LoadAssetAtPath<GameObject>(assetPath);
-            if (prefab == null)
-                return CommandResult.Fail($"Failed to load prefab at '{assetPath}'.");
+            // Verify there's at least one ParticleSystem in the source subtree before spawning.
+            var sourceSystems = source.GetComponentsInChildren<ParticleSystem>(true);
+            if (sourceSystems.Length == 0)
+                return CommandResult.Fail($"'{rootLabel}' contains no ParticleSystem components. capture-particle requires at least one.");
 
-            // Verify there's at least one ParticleSystem in the prefab subtree before spawning.
-            var prefabSystems = prefab.GetComponentsInChildren<ParticleSystem>(true);
-            if (prefabSystems.Length == 0)
-                return CommandResult.Fail($"'{assetPath}' contains no ParticleSystem components. capture-particle requires at least one.");
-
-            // --auto-material: ensure every PSR has a placeholder material before we capture,
-            // so the user doesn't get a black/magenta image from a freshly-created prefab.
-            if (SimpleJson.GetBool(args, "autoMaterial", false))
+            // --auto-material is asset-only: setup-particle-material writes to a prefab path and
+            // can't safely apply to a scene GO (would dirty the user's scene). Scene callers should
+            // assign a material manually (or convert to prefab once).
+            if (SimpleJson.GetBool(args, "autoMaterial", false) && !isSceneSource)
             {
-                var prsList = prefab.GetComponentsInChildren<ParticleSystemRenderer>(true);
+                var prsList = source.GetComponentsInChildren<ParticleSystemRenderer>(true);
                 bool needsSetup = false;
                 foreach (var r in prsList) if (r.sharedMaterial == null) { needsSetup = true; break; }
                 if (needsSetup)
@@ -89,7 +111,7 @@ namespace Dreamer.AgentBridge.FX
                     if (!setupResult.success)
                         return CommandResult.Fail("auto-material failed: " + setupResult.error);
                     // Reload prefab now that the material has been assigned + saved.
-                    prefab = AssetDatabase.LoadAssetAtPath<GameObject>(assetPath);
+                    source = AssetDatabase.LoadAssetAtPath<GameObject>(assetPath);
                 }
             }
 
@@ -115,7 +137,10 @@ namespace Dreamer.AgentBridge.FX
                 }
                 pru.ambientColor = new Color(0.4f, 0.4f, 0.45f);
 
-                instance = UnityEngine.Object.Instantiate(prefab);
+                // Instantiate works for prefab assets AND for scene GameObjects — Unity deep-clones
+                // the subtree including any component overrides currently live in the scene. The
+                // clone is HideAndDontSave so it never lands in the user's scene/asset DB.
+                instance = UnityEngine.Object.Instantiate(source);
                 instance.hideFlags = HideFlags.HideAndDontSave;
                 instance.transform.position = Vector3.zero;
                 instance.transform.rotation = Quaternion.identity;
@@ -123,7 +148,7 @@ namespace Dreamer.AgentBridge.FX
 
                 var systems = instance.GetComponentsInChildren<ParticleSystem>(true);
                 if (systems.Length == 0)
-                    return CommandResult.Fail("Instantiated prefab has no ParticleSystem (lost during instantiation?).");
+                    return CommandResult.Fail("Cloned source has no ParticleSystem (lost during instantiation?).");
 
                 // Drive Simulate from the top-level systems only — calling Simulate(withChildren=true)
                 // on each root walks the parent→child chain so sub-emitters receive the right events.
@@ -195,8 +220,13 @@ namespace Dreamer.AgentBridge.FX
 
                 // Pass B: capture each frame into memory, compose into a grid.
                 EnsureScreenshotDir();
-                string assetGuid = AssetDatabase.AssetPathToGUID(assetPath);
-                string stem = Path.GetFileNameWithoutExtension(assetPath);
+                // Scene mode has no asset path → use a stable placeholder for the guid slug and the
+                // GameObject name for the stem. Filenames stay unique across re-captures via the tick.
+                // Must be >=8 chars because the filename builder slices assetGuid[0..8].
+                string assetGuid = !string.IsNullOrEmpty(assetPath) ? AssetDatabase.AssetPathToGUID(assetPath) : "sceneobj";
+                string stem = !string.IsNullOrEmpty(assetPath)
+                    ? Path.GetFileNameWithoutExtension(assetPath)
+                    : SanitizeFileStem(source.name);
                 long ticks = DateTime.UtcNow.Ticks;
                 bool individualFrames = SimpleJson.GetBool(args, "individualFrames", false);
                 bool emitGif = SimpleJson.GetBool(args, "gif", true);
@@ -338,7 +368,9 @@ namespace Dreamer.AgentBridge.FX
                     var resultJson = SimpleJson.Object()
                         .Put("captured", true)
                         .Put("path", gridPath)
-                        .Put("assetPath", assetPath)
+                        .Put("source", isSceneSource ? "scene" : "asset")
+                        .Put("assetPath", assetPath ?? "")
+                        .Put("sceneObjectPath", sceneObjectPath ?? "")
                         .Put("rootName", instance.name.Replace("(Clone)", ""))
                         .Put("particleSystems", systems.Length)
                         .Put("loops", anyLoops)
@@ -482,6 +514,22 @@ namespace Dreamer.AgentBridge.FX
                 Directory.CreateDirectory(DefaultDir);
                 File.WriteAllText(Path.Combine(DefaultDir, ".gitignore"), "*\n!.gitignore\n");
             }
+        }
+
+        // Strip filesystem-hostile chars from a scene GameObject name when no asset path is available.
+        // Keeps ASCII letters/digits/underscore/dash, replaces everything else with '_'.
+        static string SanitizeFileStem(string raw)
+        {
+            if (string.IsNullOrEmpty(raw)) return "scene";
+            var sb = new System.Text.StringBuilder(raw.Length);
+            foreach (char c in raw)
+            {
+                bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+                       || (c >= '0' && c <= '9') || c == '_' || c == '-';
+                sb.Append(ok ? c : '_');
+            }
+            string s = sb.ToString();
+            return s.Length > 0 ? s : "scene";
         }
 
         static JsonBuilder BoundsJson(Bounds b) =>

@@ -24,6 +24,7 @@ const KIND_DEFS = {
   save_assets:      { label: 'Save Assets',        requirements: null },
   refresh_assets:   { label: 'Refresh Assets',     requirements: null },
   reimport_scripts: { label: 'Reimport Scripts',   requirements: null },
+  delete_asset:     { label: 'Delete Asset',       requirements: null },
   compile_status:   { label: 'Compile Status',     requirements: null },
   console:          { label: 'Console',            requirements: null },
   add_child_to_prefab: { label: 'Add Child to Prefab', requirements: null },

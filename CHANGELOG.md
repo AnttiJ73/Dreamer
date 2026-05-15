@@ -9,6 +9,30 @@ tags, breaking changes bump the minor version (0.x.0), fixes bump patch.
 
 ## [Unreleased]
 
+### Added — `delete-asset` command
+
+`./bin/dreamer delete-asset --asset PATH_OR_GUID [--trash] --wait` routes through `AssetDatabase.DeleteAsset` (or `MoveAssetToTrash` with `--trash`) so deletions go through Unity's code path — SourceAssetDB stays consistent, activity log records the action, and `.meta` files are cleaned up automatically. Avoids the OS-level `rm` workaround that bypassed AssetDatabase.
+
+### Added — `duplicate --save-path FOLDER` for asset mode
+
+Asset-mode `duplicate` no longer forces the copy into the source folder. Pass `--save-path Assets/SomeOther/Folder` to land the duplicate elsewhere. Folder must exist under `Assets/` or `Packages/` (validated via `AssetDatabase.IsValidFolder`). Scene mode (`--scene-object`) ignores the flag — duplicates still land next to the source GameObject.
+
+### Added — `capture-particle --scene-object PATH` (scene-source particle capture)
+
+Capture-particle no longer requires a prefab. Pass `--scene-object PATH` to clone a live scene GameObject into the sandbox PreviewRenderUtility scene and capture there. The live scene object is **never touched, never flickers** — Unity's `Instantiate` deep-clones the subtree (including any component overrides currently live in the scene) into a `HideAndDontSave` instance that's destroyed after the capture. Round-trip workflow: `set-particle-property --scene-object … → capture-particle --scene-object … → read grid PNG → repeat` without ever exporting to a prefab. Result includes `source: "scene" | "asset"` plus the original `sceneObjectPath` for traceability.
+
+### Fixed — `set-property` on integer-valued enum field writes the **value**, not the declaration ordinal
+
+`SerializedProperty.enumValueIndex` is a 0-based ordinal into `enumNames` — for enums with non-sequential values (e.g. `= 18` after a deleted `= 2` entry), writing index 18 actually stored the underlying enum value at index 18 (which was 19, drift+1 per gap). Switched the numeric write path to `sp.intValue` which stores the actual integer; for gap-free enums the two coincide, for enums with gaps the value is now correct. String-name path (`--value "EnemySpawn"`) unchanged — it already used the name lookup.
+
+### Changed — Unknown-command-kind error now hints at the `animation` and `fx` add-ons
+
+`Unknown command kind '<kind>' [unity-bridge]` already pointed at `ugui` / `sprite-2d` installs for those add-on's kinds; now it also recognises animation kinds (`create_animation_clip`, `add_animator_state`, `create_animator_override_controller`, all 28 animator/clip/mask kinds) and fx kinds (`capture_particle`, `setup_particle_material`) — so downstream agents who hit the error get `Run: ./bin/dreamer addon install animation` instead of guessing the addon name.
+
+### Changed — `set-property --help` line surfaces sparse-list syntax
+
+Top-level help now mentions the sparse `{"_size":N,"<idx>":val}` form for list append / single-index update. The full schema (`help set-property`) already documented this in pitfalls + examples; the discoverability gap was the bare usage line.
+
 ### Fixed — Bridge + daemon now opt out of Windows EcoQoS power throttling
 
 Win11 22H2+ aggressively throttles unfocused processes — the .NET ThreadPool timers that drive the bridge's heartbeat/poll/state ticks stall under load even though they live off the Unity main thread, and the daemon's Node event loop slips behind under multi-instance contention. End result: the daemon flags Unity as disconnected after ~25s without heartbeat, even though nothing has actually crashed (one such event is in the daemon log: `2026-05-09T15:02:02 disconnected after 25.2s without heartbeat`).

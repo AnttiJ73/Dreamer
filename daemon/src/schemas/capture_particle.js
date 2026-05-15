@@ -4,10 +4,10 @@ const { commonArgs } = require('./_common');
 
 module.exports = {
   kind: 'capture_particle',
-  summary: 'Spawn a particle-system prefab into a sandboxed preview scene, run `ParticleSystem.Simulate(t)` deterministically at N timestamps, and compose all frames into ONE grid PNG (left-to-right, top-to-bottom, with `t=0.50s` timestamp labels above each cell). Closes the visual-feedback gap for VFX iteration: edit a property with `set-particle-property`, capture again, Read the single grid PNG to judge the change at every moment of the effect. Asset-only (Phase 1) — instantiates into a PreviewRenderUtility scene so the user\'s active scene is untouched. Output lands in `DreamerScreenshots/`.',
+  summary: 'Spawn a particle-system source (prefab OR live scene GameObject) into a sandboxed preview scene, run `ParticleSystem.Simulate(t)` deterministically at N timestamps, and compose all frames into ONE grid PNG (left-to-right, top-to-bottom, with `t=0.50s` timestamp labels above each cell). Closes the visual-feedback gap for VFX iteration: edit a property with `set-particle-property`, capture again, Read the single grid PNG to judge the change at every moment of the effect. Scene mode clones the GameObject into the preview scene — the live scene object is NEVER touched and never flickers. Output lands in `DreamerScreenshots/`.',
   requirements: null,
   args: {
-    ...commonArgs.target(['asset', 'guid']),
+    ...commonArgs.target(['asset', 'guid', 'scene']),
     frames: {
       type: 'integer',
       cli: '--frames',
@@ -80,7 +80,7 @@ module.exports = {
       description: 'If the prefab\'s ParticleSystemRenderer has no material assigned, run `setup-particle-material` first to create + assign a default white-additive placeholder. Saves a manual round-trip when capturing a freshly-created particle prefab. No-op if a material is already set.',
     },
   },
-  constraints: [commonArgs.targetAtLeastOne(['asset', 'guid'])],
+  constraints: [commonArgs.targetAtLeastOne(['asset', 'guid', 'scene'])],
   result: {
     type: 'object',
     fields: {
@@ -119,6 +119,12 @@ module.exports = {
       args: { assetPath: 'Assets/FX/Explosion.prefab' },
     },
     {
+      title: 'Capture a live scene particle without prefabbing it',
+      cli: './bin/dreamer capture-particle --scene-object "/Effects/Fire" --frames 5 --wait',
+      args: { sceneObjectPath: '/Effects/Fire' },
+      note: 'The live GameObject is cloned into a sandbox; your scene is never touched. Pair with `set-particle-property --scene-object …` for an in-scene tweak → capture loop without exporting to a prefab.',
+    },
+    {
       title: 'Tight burst-falloff sampling — most detail near t=0',
       cli: './bin/dreamer capture-particle --asset Assets/FX/Spark.prefab --times "[0,0.05,0.15,0.5,1.5]" --wait',
       args: { assetPath: 'Assets/FX/Spark.prefab', times: [0, 0.05, 0.15, 0.5, 1.5] },
@@ -136,7 +142,7 @@ module.exports = {
   ],
   pitfalls: [
     'The default output is ONE grid composite PNG (cell layout: 5 frames → 3×2, 10 frames → 5×2, otherwise near-square). Read just `result.path` — no need to chase per-frame files. Pass `--individual-frames` if you specifically need separate PNGs.',
-    'Asset-only in Phase 1 — pass a `.prefab` path. Scene-object capture isn\'t supported yet (would require destructive simulate-then-restore on a live PS). Workflow: tweak a copy of your effect prefab, capture, copy values back to the live one when satisfied.',
+    'Scene mode (`--scene-object`) clones the live GameObject into the preview scene — your live scene is never touched, never flickers. The clone inherits whatever component overrides + child values are currently in the scene. To capture the prefab\'s on-disk state instead, pass `--asset PATH` (different snapshot moment).',
     'Looping systems (`main.loop=true`) need an explicit `--duration` to bound the capture. Without one, the command picks a sensible default but it may not match your intent — pass the exact second-count of the cycle you want to inspect.',
     'For pixel-identical re-captures across edits, use `--seed N`. Without it, prefabs that have `useAutoRandomSeed=true` (the default) will produce different particles each run, making diff comparisons noisy.',
     'Camera auto-frames to the *union* of bounds across all sample times. If one frame has a far-flung outlier, every other frame will look small. To avoid: use `--times` with samples that share scale, or split into two captures.',

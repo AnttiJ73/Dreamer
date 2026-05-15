@@ -194,7 +194,22 @@ namespace Dreamer.AgentBridge
                 }
             }
 
-            string dir = System.IO.Path.GetDirectoryName(assetPath).Replace('\\', '/');
+            // --save-path overrides the default "duplicate into source folder" behaviour.
+            // Validated as a folder under Assets/ or Packages/ — anything else would be
+            // outside the AssetDatabase scope and CopyAsset would refuse silently.
+            string targetFolder = SimpleJson.GetString(args, "savePath");
+            string dir;
+            if (!string.IsNullOrEmpty(targetFolder))
+            {
+                targetFolder = targetFolder.Replace('\\', '/').TrimEnd('/');
+                if (!AssetDatabase.IsValidFolder(targetFolder))
+                    return CommandResult.Fail($"savePath '{targetFolder}' is not a valid Unity folder. Must be under Assets/ or Packages/.");
+                dir = targetFolder;
+            }
+            else
+            {
+                dir = System.IO.Path.GetDirectoryName(assetPath).Replace('\\', '/');
+            }
             string ext = System.IO.Path.GetExtension(assetPath);
             string baseName = System.IO.Path.GetFileNameWithoutExtension(assetPath);
             string copyName = !string.IsNullOrEmpty(newName) ? newName : baseName + "_Copy";

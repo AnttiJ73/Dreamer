@@ -403,7 +403,11 @@ namespace Dreamer.AgentBridge
                             }
                             return $"Invalid enum value '{enumStr}'. Valid values: {string.Join(", ", sp.enumNames)}";
                         }
-                        sp.enumValueIndex = ToInt(value);
+                        // For numeric input we set intValue (underlying value), NOT enumValueIndex
+                        // (declaration ordinal). They coincide only for gap-free enums — for enums
+                        // with explicit non-sequential values (`= 18` after a deleted entry) the
+                        // ordinal write silently drifts. intValue stores the actual integer.
+                        sp.intValue = ToInt(value);
                         return null;
 
                     case SerializedPropertyType.Vector2:
